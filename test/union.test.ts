@@ -8,6 +8,7 @@ import {
     getTag,
     pred,
     when,
+    Trait,
     type Pred,
     type WhenArm,
 } from "../src/union.ts";
@@ -69,46 +70,75 @@ describe("union()", () => {
     });
 
     describe("with impl classes", () => {
-        class Trackable {
-            size!: number;
+        abstract class Trackable extends Trait<{ size: number }>() {
             tracked = true;
             version = 1;
         }
         class Timestamped {
             createdAt = 0;
             describe() {
-                return "noop";
+                return `I was created at: ${this.createdAt}`;
             }
         }
 
-        const Tagged = union({
-            // payload doesn't include tracked/version/createdAt — they come from impl
+        const Tagged = union([Trackable, Timestamped])({
+            // payload satisfies Trackable's requirement: { size: number }
             Box: (size: number) => ({ size }),
-            impl: [Trackable, Timestamped],
         });
 
         it("mixes in own instance properties from impl classes", () => {
             const b = Tagged.Box(10);
             expect(b.tracked).toBe(true);
             expect(b.version).toBe(1);
+            expect(b.createdAt).toBe(0);
         });
 
         it("mixes in own methods from impl classes", () => {
             const b = Tagged.Box(10);
             expect(b.describe).toBeTypeOf("function");
         });
+
         it("mixes in own properties from all impl classes", () => {
             const b = Tagged.Box(10);
             expect("createdAt" in b).toBe(true);
         });
 
         it("payload values shadow impl defaults", () => {
-            const Capped = union({
-                Item: (tracked: boolean) => ({ tracked }),
-                impl: [Trackable],
+            abstract class Shadowable extends Trait<{
+                size: number;
+                tracked: boolean;
+            }>() {
+                tracked = true;
+            }
+            const Capped = union([Shadowable])({
+                Item: (size: number, tracked: boolean) => ({ size, tracked }),
             });
-            const item = Capped.Item(false);
-            expect((item as any).tracked).toBe(false);
+            const item = Capped.Item(0, false);
+            expect(item.tracked).toBe(false);
+        });
+    });
+
+    describe("Trait requirement enforcement", () => {
+        it("plain classes used as impl impose no requirements", () => {
+            class NoReqs {
+                x = 1;
+            }
+            // Any payload is valid — no Trait<R> declared
+            const U = union([NoReqs])({
+                A: () => ({}),
+            });
+            expect(U.A().x).toBe(1);
+        });
+
+        it("impl class not extending Trait is treated as Trait<{}>", () => {
+            class Mixin {
+                extra = 42;
+            }
+            const U = union([Mixin])({
+                A: (n: number) => ({ n }),
+            });
+            expect(U.A(5).extra).toBe(42);
+            expect(U.A(5).n).toBe(5);
         });
     });
 });

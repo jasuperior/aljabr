@@ -6,13 +6,13 @@ export const __ = Symbol("default");
 export const tag = Symbol("aljabr.tag");
 export const predTag = Symbol("aljabr.pred");
 export const whenTag = Symbol("aljabr.when");
+const requirements: unique symbol = Symbol("aljabr.requirements");
 
 export function getTag<E extends { [tag]: string }>(variant: E): E[typeof tag] {
     return variant[tag];
 }
 
-// Helper to extract constructor types
-type Constructor = new (...args: any[]) => any;
+type AbstractConstructor<T = {}> = abstract new (...args: any[]) => T;
 
 // Helper to merge multiple classes together (A | B becomes A & B)
 type UnionToIntersection<U> = (U extends any ? (k: U) => void : never) extends (
@@ -20,6 +20,17 @@ type UnionToIntersection<U> = (U extends any ? (k: U) => void : never) extends (
 ) => void
     ? I
     : never;
+
+// Extracts the required payload properties encoded by Trait<R>()
+type RequiredFromImpl<T> = T extends { [requirements]: infer R } ? R : {};
+
+// Intersects requirements across all impl classes
+type AllRequired<Impl extends AbstractConstructor[]> =
+    UnionToIntersection<RequiredFromImpl<Impl[number]>>;
+
+// Computes the mixin type contributed by impl classes
+type ImplMixinFromImpl<Impl extends AbstractConstructor[]> =
+    UnionToIntersection<InstanceType<Impl[number]>>;
 
 // Extracts the structural types from your generated factories
 export type Union<
@@ -35,13 +46,30 @@ export type FactoryPayload<Trait, Ignore extends keyof any = never> = Omit<
     typeof tag | Ignore
 >;
 
-// Computes the mixin type contributed by impl classes
-type ImplMixin<Def> = Def extends { impl: infer Impl extends Constructor[] }
-    ? UnionToIntersection<InstanceType<Impl[number]>>
-    : {};
+// A valid variant is a factory function whose return type extends Req, or a plain object
+type ValidVariant<Req> = ((...args: any[]) => Req) | Req;
 
 // ==========================================
-// 2. PRED & WHEN
+// 2. TRAIT FACTORY
+// ==========================================
+
+/**
+ * Create an abstract base class that encodes required payload properties R.
+ * Impl classes extending Trait<R>() declare to the type system that each
+ * variant factory must return an object satisfying R.
+ *
+ * @example
+ * abstract class Trackable extends Trait<{ size: number }>() {
+ *     tracked = true
+ * }
+ */
+export function Trait<R extends object>() {
+    abstract class T {}
+    return T as AbstractConstructor<R> & { readonly [requirements]: R };
+}
+
+// ==========================================
+// 3. PRED & WHEN
 // ==========================================
 
 /** A wrapped predicate for use in pattern objects. Distinguishes predicates from literal values. */
@@ -53,7 +81,9 @@ export type Pred<T, S extends T = T> = {
 };
 
 /** Wrap a predicate function for use in a `when()` pattern object. */
-export function pred<T = any, S extends T = T>(fn: (val: T) => val is S): Pred<T, S>;
+export function pred<T = any, S extends T = T>(
+    fn: (val: T) => val is S,
+): Pred<T, S>;
 export function pred<T = any>(fn: (val: T) => boolean): Pred<T>;
 export function pred(fn: (val: any) => any): any {
     return { [predTag]: true, fn };
@@ -68,36 +98,90 @@ export type WhenArm<V, R> = {
 };
 
 /** Define a match arm, optionally with a guard predicate. */
-export function when<V = any, R = any>(pattern: typeof __, handler: (val: V) => R): WhenArm<V, R>;
-export function when<V = any, R = any>(guard: (val: V) => boolean, handler: (val: V) => R): WhenArm<V, R>;
-export function when<V = any, R = any>(pattern: object, handler: (val: V) => R): WhenArm<V, R>;
+export function when<V = any, R = any>(
+    pattern: typeof __,
+    handler: (val: V) => R,
+): WhenArm<V, R>;
+export function when<V = any, R = any>(
+    guard: (val: V) => boolean,
+    handler: (val: V) => R,
+): WhenArm<V, R>;
+export function when<V = any, R = any>(
+    pattern: object,
+    handler: (val: V) => R,
+): WhenArm<V, R>;
 export function when<V = any, R = any>(
     pattern: object,
     guard: (val: V) => boolean,
     handler: (val: V) => R,
 ): WhenArm<V, R>;
-export function when(patternOrGuard: any, guardOrHandler: any, handler?: any): any {
+export function when(
+    patternOrGuard: any,
+    guardOrHandler: any,
+    handler?: any,
+): any {
     if (handler !== undefined) {
-        return { [whenTag]: true, pattern: patternOrGuard, guard: guardOrHandler, handler };
+        return {
+            [whenTag]: true,
+            pattern: patternOrGuard,
+            guard: guardOrHandler,
+            handler,
+        };
     }
     if (typeof patternOrGuard === "function") {
-        return { [whenTag]: true, pattern: {}, guard: patternOrGuard, handler: guardOrHandler };
+        return {
+            [whenTag]: true,
+            pattern: {},
+            guard: patternOrGuard,
+            handler: guardOrHandler,
+        };
     }
-    return { [whenTag]: true, pattern: patternOrGuard, guard: undefined, handler: guardOrHandler };
+    return {
+        [whenTag]: true,
+        pattern: patternOrGuard,
+        guard: undefined,
+        handler: guardOrHandler,
+    };
 }
 
 // ==========================================
-// 3. THE `union` FACTORY
+// 4. THE `union` FACTORY
 // ==========================================
 
+/**
+ * With-impl form: union(impls)(factories)
+ * Each variant factory's return type must satisfy AllRequired<Impl>.
+ * Type errors surface on the specific non-conforming variant.
+ */
+export function union<Impl extends AbstractConstructor[]>(
+    impls: Impl,
+): <Factories extends Record<string, ValidVariant<AllRequired<Impl>>>>(
+    factories: Factories,
+) => {
+    [K in keyof Factories & string]: Factories[K] extends (...args: any[]) => any
+        ? (
+              ...args: Parameters<Factories[K]>
+          ) => ReturnType<Factories[K]> & { [tag]: K } & ImplMixinFromImpl<Impl>
+        : () => Factories[K] & { [tag]: K } & ImplMixinFromImpl<Impl>;
+};
+
+/** No-impl form: union(factories) */
 export function union<Def extends Record<string, any>>(
-    definition: Def,
+    factories: Def,
 ): {
-    [K in Exclude<keyof Def, "impl"> & string]: Def[K] extends (...args: any[]) => any
-        ? (...args: Parameters<Def[K]>) => ReturnType<Def[K]> & { [tag]: K } & ImplMixin<Def>
-        : () => Def[K] & { [tag]: K } & ImplMixin<Def>;
-} {
-    const { impl, ...factories } = definition as any;
+    [K in keyof Def & string]: Def[K] extends (...args: any[]) => any
+        ? (...args: Parameters<Def[K]>) => ReturnType<Def[K]> & { [tag]: K }
+        : () => Def[K] & { [tag]: K };
+};
+
+export function union(factoriesOrImpls: any): any {
+    if (Array.isArray(factoriesOrImpls)) {
+        return (factories: any) => buildUnion(factories, factoriesOrImpls);
+    }
+    return buildUnion(factoriesOrImpls, []);
+}
+
+function buildUnion(factories: Record<string, any>, impl: any[]): any {
     const result: any = {};
 
     for (const key in factories) {
@@ -114,8 +198,11 @@ export function union<Def extends Record<string, any>>(
                 configurable: false,
             });
 
-            if (impl && Array.isArray(impl)) {
-                const instances = impl.map((ImplCls: any) => new ImplCls());
+            if (impl.length > 0) {
+                const instances = impl.flatMap((ImplCls: any) => {
+                    const inst = new ImplCls();
+                    return [inst, expandProto(inst)];
+                });
                 return Object.assign(Object.create(proto), ...instances, payload);
             }
 
@@ -125,3 +212,11 @@ export function union<Def extends Record<string, any>>(
 
     return result;
 }
+
+const expandProto = (obj: any) => {
+    return Object.getOwnPropertyNames(Object.getPrototypeOf(obj)).reduce(
+        (acc, curr) =>
+            curr == "constructor" ? acc : { ...acc, [curr]: obj[curr] },
+        {},
+    );
+};
