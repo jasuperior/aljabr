@@ -2,31 +2,39 @@
 // 3. THE MATCH ENGINE
 // ==========================================
 
-import { __, tag } from "./union";
+import { __, tag, predTag, whenTag, type Pred, type WhenArm } from "./union";
 
-type Arm<Variant, ReturnType> =
-    | [pattern: Partial<Variant>, handler: (val: Variant) => ReturnType]
-    | [pattern: typeof __, handler: (val: Variant) => ReturnType];
+type VariantMatcher<V, R> =
+    | ((val: V) => R)
+    | WhenArm<V, R>
+    | Array<WhenArm<V, R>>;
 
-type VariantMatcher<Variant, ReturnType> =
-    | ((val: Variant) => ReturnType)
-    | Array<Arm<Variant, ReturnType>>;
-
-type ExactMatchers<Enum extends { [tag]: string }, ReturnType> = {
+type ExactMatchers<Enum extends { [tag]: string }, R> = {
     [Variant in Enum[typeof tag]]: VariantMatcher<
         Extract<Enum, { [tag]: Variant }>,
-        ReturnType
+        R
     >;
 };
 
-type FallbackMatchers<Enum extends { [tag]: string }, ReturnType> = {
+type FallbackMatchers<Enum extends { [tag]: string }, R> = {
     [Variant in Enum[typeof tag]]?: VariantMatcher<
         Extract<Enum, { [tag]: Variant }>,
-        ReturnType
+        R
     >;
 } & {
-    [__]: (val: Enum) => ReturnType;
+    [__]: (val: Enum) => R;
 };
+
+function matchesPattern(pattern: object, value: any): boolean {
+    return Object.keys(pattern).every((key) => {
+        const p = (pattern as any)[key];
+        const v = value[key];
+        if (p !== null && typeof p === "object" && predTag in p) {
+            return (p as Pred<any>).fn(v);
+        }
+        return p === v;
+    });
+}
 
 export function match<E extends { [tag]: string }, R>(
     value: E,
@@ -51,18 +59,50 @@ export function match<E extends { [tag]: string }, R>(
         return matcher(value);
     }
 
+    // Single when() arm
+    if (typeof matcher === "object" && whenTag in matcher) {
+        const { pattern, guard, handler } = matcher as WhenArm<any, R>;
+
+        if (pattern === __) return handler(value);
+
+        if (
+            matchesPattern(pattern as object, value) &&
+            (!guard || guard(value))
+        ) {
+            return handler(value);
+        }
+
+        if (matchers[__]) return matchers[__](value);
+        throw new Error(`No matching arm and no fallback for variant "${value[tag]}".`);
+    }
+
+    // Array of when() arms
     if (Array.isArray(matcher)) {
-        for (const [pattern, handler] of matcher) {
+        let hasGuardedArm = false;
+
+        for (const arm of matcher as Array<WhenArm<any, R>>) {
+            const { pattern, guard, handler } = arm;
+
             if (pattern === __) return handler(value);
 
-            const isMatch = Object.keys(pattern).every(
-                (key) => (pattern as any)[key] === (value as any)[key],
+            const hasPred = Object.values(pattern as object).some(
+                (v) => v !== null && typeof v === "object" && predTag in v,
             );
+            if (guard || hasPred) hasGuardedArm = true;
 
-            if (isMatch) return handler(value);
+            if (
+                matchesPattern(pattern as object, value) &&
+                (!guard || guard(value))
+            ) {
+                return handler(value);
+            }
         }
+
+        const suffix = hasGuardedArm
+            ? ` Guarded/pred arms require a catch-all when(__, handler) as the last arm.`
+            : "";
         throw new Error(
-            `Non-exhaustive array matcher for variant: ${value[tag]}`,
+            `Non-exhaustive matcher for variant "${value[tag]}".${suffix}`,
         );
     }
 
