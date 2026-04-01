@@ -3,18 +3,17 @@ import typescriptLogo from "./assets/typescript.svg";
 import viteLogo from "./assets/vite.svg";
 import heroImg from "./assets/hero.png";
 import { setupCounter } from "./counter.ts";
-import { __, union, type Union } from "./union.ts";
+import { __, union, getTag, type Union } from "./union.ts";
 import { match } from "./match.ts";
 
 // --- Define your behaviors ---
 
 class BaseEvent {
-    type!: string;
     name!: string;
     timestamp?: number = Date.now();
 
     log() {
-        console.log(`[${this.timestamp}] ${this.type} fired.`);
+        console.log(`[${this.timestamp}] ${getTag(this as any)} fired.`);
     }
 }
 

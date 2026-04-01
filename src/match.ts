@@ -2,7 +2,7 @@
 // 3. THE MATCH ENGINE
 // ==========================================
 
-import { __ } from "./union";
+import { __, tag } from "./union";
 
 type Arm<Variant, ReturnType> =
     | [pattern: Partial<Variant>, handler: (val: Variant) => ReturnType]
@@ -12,39 +12,39 @@ type VariantMatcher<Variant, ReturnType> =
     | ((val: Variant) => ReturnType)
     | Array<Arm<Variant, ReturnType>>;
 
-type ExactMatchers<Enum extends { type: string }, ReturnType> = {
-    [Variant in Enum["type"]]: VariantMatcher<
-        Extract<Enum, { type: Variant }>,
+type ExactMatchers<Enum extends { [tag]: string }, ReturnType> = {
+    [Variant in Enum[typeof tag]]: VariantMatcher<
+        Extract<Enum, { [tag]: Variant }>,
         ReturnType
     >;
 };
 
-type FallbackMatchers<Enum extends { type: string }, ReturnType> = {
-    [Variant in Enum["type"]]?: VariantMatcher<
-        Extract<Enum, { type: Variant }>,
+type FallbackMatchers<Enum extends { [tag]: string }, ReturnType> = {
+    [Variant in Enum[typeof tag]]?: VariantMatcher<
+        Extract<Enum, { [tag]: Variant }>,
         ReturnType
     >;
 } & {
     [__]: (val: Enum) => ReturnType;
 };
 
-export function match<E extends { type: string }, R>(
+export function match<E extends { [tag]: string }, R>(
     value: E,
     matchers: ExactMatchers<E, R>,
 ): R;
-export function match<E extends { type: string }, R>(
+export function match<E extends { [tag]: string }, R>(
     value: E,
     matchers: FallbackMatchers<E, R>,
 ): R;
-export function match<E extends { type: string }, R>(
+export function match<E extends { [tag]: string }, R>(
     value: E,
     matchers: any,
 ): R {
-    const matcher = matchers[value.type];
+    const matcher = matchers[value[tag]];
 
     if (!matcher) {
         if (matchers[__]) return matchers[__](value);
-        throw new Error(`Unhandled variant: ${value.type}`);
+        throw new Error(`Unhandled variant: ${value[tag]}`);
     }
 
     if (typeof matcher === "function") {
@@ -62,9 +62,9 @@ export function match<E extends { type: string }, R>(
             if (isMatch) return handler(value);
         }
         throw new Error(
-            `Non-exhaustive array matcher for variant: ${value.type}`,
+            `Non-exhaustive array matcher for variant: ${value[tag]}`,
         );
     }
 
-    throw new Error(`Invalid matcher for variant: ${value.type}`);
+    throw new Error(`Invalid matcher for variant: ${value[tag]}`);
 }

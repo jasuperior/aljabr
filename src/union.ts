@@ -3,6 +3,11 @@
 // ==========================================
 
 export const __ = Symbol("default");
+export const tag = Symbol("aljabr.tag");
+
+export function getTag<E extends { [tag]: string }>(variant: E): E[typeof tag] {
+    return variant[tag];
+}
 
 // Helper to extract constructor types
 type Constructor = new (...args: any[]) => any;
@@ -22,10 +27,10 @@ export type Union<
     ? { [K in keyof T]: ReturnType<T[K]> }[keyof T]
     : ReturnType<T[VariantName]>;
 
-// Automatically strips methods, the 'type' key, and user-ignored keys from the Trait
+// Automatically strips methods, the tag symbol, and user-ignored keys from the Trait
 export type FactoryPayload<Trait, Ignore extends keyof any = never> = Omit<
     { [K in keyof Trait as Trait[K] extends Function ? never : K]: Trait[K] },
-    "type" | Ignore
+    typeof tag | Ignore
 >;
 
 // Derives the required payload fields from an impl array
@@ -59,12 +64,12 @@ export function union<
           (
               ...args: Parameters<Def[K]>
           ) => ReturnType<Def[K]> & {
-              type: K;
+              [tag]: K;
           } & (Def["impl"] extends Constructor[]
                   ? UnionToIntersection<InstanceType<Def["impl"][number]>>
                   : {})
         : // Constant Variant
-          () => Def[K] & { type: K } & (Def["impl"] extends Constructor[]
+          () => Def[K] & { [tag]: K } & (Def["impl"] extends Constructor[]
                   ? UnionToIntersection<InstanceType<Def["impl"][number]>>
                   : {});
 } {
@@ -75,15 +80,22 @@ export function union<
         const item = factories[key];
         result[key] = (...args: any[]) => {
             const payload =
-                typeof item === "function" ? item(...args) : item;
-            const variant = { ...payload, type: key };
+                typeof item === "function" ? item(...args) : { ...item };
+
+            const proto = Object.create(null);
+            Object.defineProperty(proto, tag, {
+                value: key,
+                enumerable: false,
+                writable: false,
+                configurable: false,
+            });
 
             if (impl && Array.isArray(impl)) {
                 const instances = impl.map((ImplCls: any) => new ImplCls());
-                return Object.assign({}, ...instances, variant);
+                return Object.assign(Object.create(proto), ...instances, payload);
             }
 
-            return variant;
+            return Object.assign(Object.create(proto), payload);
         };
     }
 
