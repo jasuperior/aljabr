@@ -11,7 +11,7 @@ import { match } from "./match.ts";
 class BaseEvent {
     type!: string;
     name!: string;
-    timestamp = Date.now();
+    timestamp?: number = Date.now();
 
     log() {
         console.log(`[${this.timestamp}] ${this.type} fired.`);
@@ -27,10 +27,17 @@ class Monad {
 
 // --- Define the Union ---
 
-export const WebEvent = union()({
-    PageLoad: {},
-    KeyPress: (key: string) => ({ key }),
-    Click: (x: number, y: number) => ({ x, y }),
+// export const WebEvent = union({
+//     PageLoad: { name: "Loading " },
+//     KeyPress: (key: string) => ({ key }),
+//     Click: (x: number, y: number) => ({ x, y }),
+
+//     impl: [Monad, BaseEvent], // Pass as many as you want!
+// });
+export const WebEvent = union({
+    PageLoad: { name: "jhkjh" },
+    KeyPress: (key: string) => ({ key, name: "hkjh" }),
+    Click: (x: number, y: number) => ({ x, y, name: "" }),
 
     impl: [Monad, BaseEvent], // Pass as many as you want!
 });
@@ -41,11 +48,14 @@ export type WebEvent<T extends keyof typeof WebEvent | never = never> = Union<
     T
 >;
 
-let x: WebEvent = WebEvent.PageLoad();
+let x = WebEvent.PageLoad() as WebEvent;
 
-let y = match<WebEvent, string | number>(x, {
-    KeyPress: ({ key }) => key,
-    [__]: () => "nil" as string | number,
+let y = match(x, {
+    KeyPress: [
+        [{}, ({ key }) => key],
+        [__, () => ""],
+    ],
+    [__]: () => "nil",
 });
 
 document.querySelector<HTMLDivElement>("#app")!.innerHTML = `
