@@ -1,6 +1,6 @@
 # aljabr
 
-> *Al-jabr* (الجبر) — the Arabic word that gave us "algebra." Bringing structure to chaos is, as it turns out, an ancient art.
+> _Al-jabr_ (الجبر) — the Arabic word that gave us "algebra." Bringing structure to chaos is, as it turns out, an ancient art.
 
 **aljabr** is a TypeScript library for defining tagged union types (algebraic sum types) and consuming them with exhaustive pattern matching. Define your variants once, get type-safe constructors, mix in shared behavior, and match over every case without ceremony.
 
@@ -27,48 +27,50 @@ TypeScript discriminated unions are powerful, but verbose. You write the type, t
 ```ts
 // Doing it by hand
 type Shape =
-  | { kind: "circle"; radius: number }
-  | { kind: "rect"; w: number; h: number }
+    | { kind: "circle"; radius: number }
+    | { kind: "rect"; w: number; h: number };
 
 function area(s: Shape): number {
-  switch (s.kind) {
-    case "circle": return Math.PI * s.radius ** 2
-    case "rect": return s.w * s.h
-    // Forgot "triangle"? TypeScript won't always catch it.
-  }
+    switch (s.kind) {
+        case "circle":
+            return Math.PI * s.radius ** 2;
+        case "rect":
+            return s.w * s.h;
+        // Forgot "triangle"? TypeScript won't always catch it.
+    }
 }
 ```
 
 aljabr eliminates the ceremony and tightens the guarantees:
 
 ```ts
-import { union, match, Union } from "aljabr"
+import { union, match, Union } from "aljabr";
 
 const Shape = union({
-  Circle: (radius: number) => ({ radius }),
-  Rect:   (w: number, h: number) => ({ w, h }),
-})
-type Shape = Union<typeof Shape>
+    Circle: (radius: number) => ({ radius }),
+    Rect: (w: number, h: number) => ({ w, h }),
+});
+type Shape = Union<typeof Shape>;
 
 const area = (s: Shape): number =>
-  match(s, {
-    Circle: ({ radius }) => Math.PI * radius ** 2,
-    Rect:   ({ w, h }) => w * h,
-    // Miss a variant? Compile error. Every time.
-  })
+    match(s, {
+        Circle: ({ radius }) => Math.PI * radius ** 2,
+        Rect: ({ w, h }) => w * h,
+        // Miss a variant? Compile error. Every time.
+    });
 ```
 
 ### Why not `ts-pattern`?
 
 [`ts-pattern`](https://github.com/gvergnaud/ts-pattern) is excellent and more feature-rich. aljabr is smaller, tag-first, and opinionated: your variants carry their own identity via a symbol discriminant, so `match()` dispatches by tag — not by structural inference over arbitrary objects. The tradeoffs:
 
-| | aljabr | ts-pattern |
-|---|---|---|
-| Dispatch mechanism | Symbol tag on prototype | Structural inference |
-| Serialization safety | Tag invisible to JSON | Discriminant field is enumerable |
-| Shared variant behavior | Impl class mixins + Trait constraints | Not in scope |
-| Pattern matching breadth | Variant-scoped arms | Full structural, deep matching |
-| Bundle size | Tiny | Small |
+|                          | aljabr                                | ts-pattern                       |
+| ------------------------ | ------------------------------------- | -------------------------------- |
+| Dispatch mechanism       | Symbol tag on prototype               | Structural inference             |
+| Serialization safety     | Tag invisible to JSON                 | Discriminant field is enumerable |
+| Shared variant behavior  | Impl class mixins + Trait constraints | Not in scope                     |
+| Pattern matching breadth | Variant-scoped arms                   | Full structural, deep matching   |
+| Bundle size              | Tiny                                  | Small                            |
 
 aljabr is for cases where you're defining the union yourself and want the full stack — factory, mixin, match — in one coherent API.
 
@@ -79,7 +81,7 @@ aljabr is for cases where you're defining the union yourself and want the full s
 > aljabr is not yet published to npm. To use it today, clone the repo and import from source, or build the library and reference the `dist/` output.
 
 ```sh
-git clone https://github.com/your-org/aljabr
+git clone https://github.com/jasuperior/aljabr
 cd aljabr && pnpm install && pnpm build
 ```
 
@@ -98,16 +100,16 @@ npm install aljabr
 ### 1. Define a union
 
 ```ts
-import { union, Union } from "aljabr"
+import { union, Union } from "aljabr";
 
 const Result = union({
-  Ok:  (value: number) => ({ value }),
-  Err: (message: string) => ({ message }),
-})
-type Result = Union<typeof Result>
+    Ok: (value: number) => ({ value }),
+    Err: (message: string) => ({ message }),
+});
+type Result = Union<typeof Result>;
 
-const ok  = Result.Ok(42)       // { value: 42 }
-const err = Result.Err("oops")  // { message: "oops" }
+const ok = Result.Ok(42); // { value: 42 }
+const err = Result.Err("oops"); // { message: "oops" }
 ```
 
 Variant instances are plain objects with a non-enumerable symbol tag on the prototype — safe to spread, serialize, or log without surprise.
@@ -115,13 +117,13 @@ Variant instances are plain objects with a non-enumerable symbol tag on the prot
 ### 2. Match over it
 
 ```ts
-import { match } from "aljabr"
+import { match } from "aljabr";
 
 function display(r: Result): string {
-  return match(r, {
-    Ok:  ({ value })   => `Value: ${value}`,
-    Err: ({ message }) => `Error: ${message}`,
-  })
+    return match(r, {
+        Ok: ({ value }) => `Value: ${value}`,
+        Err: ({ message }) => `Error: ${message}`,
+    });
 }
 ```
 
@@ -132,24 +134,24 @@ Miss a variant? Compile error. Add a variant and forget to handle it? Compile er
 Impl classes let you mix properties and methods into every variant without inheritance:
 
 ```ts
-import { union, Trait, Union, getTag } from "aljabr"
+import { union, Trait, Union, getTag } from "aljabr";
 
 abstract class Auditable extends Trait<{ id: string }>() {
-  createdAt = Date.now()
-  describe() {
-    return `[${getTag(this as any)}] id=${(this as any).id}`
-  }
+    createdAt = Date.now();
+    describe() {
+        return `[${getTag(this as any)}] id=${(this as any).id}`;
+    }
 }
 
 const Event = union([Auditable])({
-  Created: (id: string) => ({ id }),
-  Deleted: (id: string) => ({ id }),
-})
-type Event = Union<typeof Event>
+    Created: (id: string) => ({ id }),
+    Deleted: (id: string) => ({ id }),
+});
+type Event = Union<typeof Event>;
 
-const e = Event.Created("abc-123")
-e.createdAt  // number
-e.describe() // "[Created] id=abc-123"
+const e = Event.Created("abc-123");
+e.createdAt; // number
+e.describe(); // "[Created] id=abc-123"
 ```
 
 `Trait<{ id: string }>()` tells the type system that every variant factory must return an object with an `id: string`. If one doesn't, you get a compile error on that specific variant.
@@ -159,22 +161,25 @@ e.describe() // "[Created] id=abc-123"
 For variants that need sub-matching — conditional handling based on field values, predicates, or runtime guards:
 
 ```ts
-import { union, match, when, pred, __, Union } from "aljabr"
+import { union, match, when, pred, __, Union } from "aljabr";
 
 const Key = union({
-  Press: (key: string, shift: boolean) => ({ key, shift }),
-})
-type Key = Union<typeof Key>
+    Press: (key: string, shift: boolean) => ({ key, shift }),
+});
+type Key = Union<typeof Key>;
 
 const handle = (k: Key): string =>
-  match(k, {
-    Press: [
-      when({ key: "Enter" },                            () => "submit"),
-      when({ key: pred((k) => k.startsWith("F")) },    () => "function key"),
-      when((v) => v.shift,                             () => "shifted"),
-      when(__,                                          () => "character"),
-    ],
-  })
+    match(k, {
+        Press: [
+            when({ key: "Enter" }, () => "submit"),
+            when({ key: pred((k) => k.startsWith("F")) }, () => "function key"),
+            when(
+                (v) => v.shift,
+                () => "shifted",
+            ),
+            when(__, () => "character"),
+        ],
+    });
 ```
 
 Arms are evaluated left to right; the first match wins. The `when(__, ...)` catch-all at the end ensures exhaustiveness within the variant's arm list.
