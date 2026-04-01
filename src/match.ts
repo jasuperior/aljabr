@@ -36,6 +36,44 @@ function matchesPattern(pattern: object, value: any): boolean {
     });
 }
 
+/**
+ * Dispatch on a tagged variant and return a result.
+ *
+ * Two exhaustiveness modes:
+ *
+ * **ExactMatchers** — every variant must be handled; no `[__]` needed or allowed:
+ * ```ts
+ * match(shape, {
+ *   Circle: ({ radius }) => Math.PI * radius ** 2,
+ *   Rect:   ({ w, h }) => w * h,
+ * })
+ * ```
+ *
+ * **FallbackMatchers** — partial variant coverage with a required `[__]` catch-all:
+ * ```ts
+ * match(event, {
+ *   Click: ({ x, y }) => `${x},${y}`,
+ *   [__]:  () => "ignored",
+ * })
+ * ```
+ *
+ * Each variant's matcher may be:
+ * - A function `(val) => result`
+ * - A single {@link when} arm
+ * - An array of {@link when} arms (first match wins)
+ *
+ * @param value - A variant instance produced by {@link union}
+ * @param matchers - An object mapping variant names to their handlers
+ * @returns The result produced by the matching handler
+ *
+ * @throws {Error} If no handler is defined for the variant and no `[__]` fallback exists
+ * @throws {Error} If a single `when()` arm doesn't match and no `[__]` fallback exists
+ * @throws {Error} If an array of `when()` arms exhausts with no match (with a hint to add
+ *   `when(__, handler)` as the last arm when guarded or pred arms are present)
+ *
+ * @see {@link when} for constructing pattern arms
+ * @see {@link __} for the catch-all symbol
+ */
 export function match<E extends { [tag]: string }, R>(
     value: E,
     matchers: ExactMatchers<E, R>,
