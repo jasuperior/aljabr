@@ -35,16 +35,10 @@ export type FactoryPayload<Trait, Ignore extends keyof any = never> = Omit<
     typeof tag | Ignore
 >;
 
-// Derives the required payload fields from an impl array
-type ImplConstraint<Def> = Def extends { impl: infer Impl extends Constructor[] }
-    ? FactoryPayload<UnionToIntersection<InstanceType<Impl[number]>>>
-    : Record<string, any>;
-
-// Validates a variant: for functions checks return type; for objects checks directly
-type ValidateVariant<V, Constraint> =
-    V extends (...args: any[]) => infer R
-        ? R extends Constraint ? V : never
-        : V extends Constraint ? V : never;
+// Computes the mixin type contributed by impl classes
+type ImplMixin<Def> = Def extends { impl: infer Impl extends Constructor[] }
+    ? UnionToIntersection<InstanceType<Impl[number]>>
+    : {};
 
 // ==========================================
 // 2. PRED & WHEN
@@ -59,8 +53,8 @@ export type Pred<T, S extends T = T> = {
 };
 
 /** Wrap a predicate function for use in a `when()` pattern object. */
-export function pred<T, S extends T>(fn: (val: T) => val is S): Pred<T, S>;
-export function pred<T>(fn: (val: T) => boolean): Pred<T>;
+export function pred<T = any, S extends T = T>(fn: (val: T) => val is S): Pred<T, S>;
+export function pred<T = any>(fn: (val: T) => boolean): Pred<T>;
 export function pred(fn: (val: any) => any): any {
     return { [predTag]: true, fn };
 }
@@ -74,10 +68,10 @@ export type WhenArm<V, R> = {
 };
 
 /** Define a match arm, optionally with a guard predicate. */
-export function when<V, R>(pattern: typeof __, handler: (val: V) => R): WhenArm<V, R>;
-export function when<V, R>(guard: (val: V) => boolean, handler: (val: V) => R): WhenArm<V, R>;
-export function when<V, R>(pattern: object, handler: (val: V) => R): WhenArm<V, R>;
-export function when<V, R>(
+export function when<V = any, R = any>(pattern: typeof __, handler: (val: V) => R): WhenArm<V, R>;
+export function when<V = any, R = any>(guard: (val: V) => boolean, handler: (val: V) => R): WhenArm<V, R>;
+export function when<V = any, R = any>(pattern: object, handler: (val: V) => R): WhenArm<V, R>;
+export function when<V = any, R = any>(
     pattern: object,
     guard: (val: V) => boolean,
     handler: (val: V) => R,
@@ -96,30 +90,12 @@ export function when(patternOrGuard: any, guardOrHandler: any, handler?: any): a
 // 3. THE `union` FACTORY
 // ==========================================
 
-export function union<
-    Def extends { impl?: Constructor[] }
->(
-    definition: Def & {
-        [K in keyof Def]: K extends "impl"
-            ? Def["impl"]
-            : ValidateVariant<Def[K], ImplConstraint<Def>>;
-    },
+export function union<Def extends Record<string, any>>(
+    definition: Def,
 ): {
-    [K in Exclude<keyof Def, "impl">]: Def[K] extends (
-        ...args: any[]
-    ) => any
-        ? // Function Variant
-          (
-              ...args: Parameters<Def[K]>
-          ) => ReturnType<Def[K]> & {
-              [tag]: K;
-          } & (Def["impl"] extends Constructor[]
-                  ? UnionToIntersection<InstanceType<Def["impl"][number]>>
-                  : {})
-        : // Constant Variant
-          () => Def[K] & { [tag]: K } & (Def["impl"] extends Constructor[]
-                  ? UnionToIntersection<InstanceType<Def["impl"][number]>>
-                  : {});
+    [K in Exclude<keyof Def, "impl"> & string]: Def[K] extends (...args: any[]) => any
+        ? (...args: Parameters<Def[K]>) => ReturnType<Def[K]> & { [tag]: K } & ImplMixin<Def>
+        : () => Def[K] & { [tag]: K } & ImplMixin<Def>;
 } {
     const { impl, ...factories } = definition as any;
     const result: any = {};
