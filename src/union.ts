@@ -116,6 +116,26 @@ export type FactoryPayload<Trait, Ignore extends keyof any = never> = Omit<
 // A valid variant is a factory function whose return type extends Req, or a plain object
 type ValidVariant<Req> = ((...args: any[]) => Req) | Req;
 
+/**
+ * Convenience type for a tagged variant instance.
+ * Use as the cast target in factory bodies to encode tag, payload, and impl mixin generically.
+ *
+ * @typeParam Tag     - The string literal variant name (must match the factory key)
+ * @typeParam Payload - The plain data shape this variant carries
+ * @typeParam Impl    - Optional: an impl class instance type (e.g. `Thenable<T, Result<T,E>>`)
+ *
+ * @example
+ * type Accepted<T> = Variant<"Accept", { value: T }, Thenable<T, Result<T>>>
+ * const Result = union([Thenable]).typed({
+ *   Accept: <T>(value: T) => ({ value } as Accepted<T>),
+ * })
+ */
+export type Variant<
+    Tag extends string,
+    Payload extends object,
+    Impl = unknown,
+> = Payload & { [tag]: Tag } & (unknown extends Impl ? {} : Impl);
+
 // ==========================================
 // 2. TRAIT FACTORY
 // ==========================================
@@ -321,17 +341,33 @@ export function when(
  * @see {@link match} for consuming variants
  * @see {@link Union} for extracting the TypeScript union type from the factory object
  */
+interface UnionBuilder<Impl extends AbstractConstructor[]> {
+    /** Existing inferred path — generics erased, impl mixin auto-applied. */
+    <Factories extends Record<string, ValidVariant<AllRequired<Impl>>>>(
+        factories: Factories,
+    ): {
+        [K in keyof Factories & string]: Factories[K] extends (...args: any[]) => any
+            ? (
+                  ...args: Parameters<Factories[K]>
+              ) => ReturnType<Factories[K]> & { [tag]: K } & ImplMixinFromImpl<Impl>
+            : () => Factories[K] & { [tag]: K } & ImplMixinFromImpl<Impl>;
+    };
+
+    /**
+     * Identity passthrough: factory types flow through unchanged.
+     * Use when factories carry explicit generic signatures (via {@link Variant} casts).
+     * The impl mixin must be included manually in each `Variant<>` cast.
+     *
+     * Property — call directly: `union([Impl]).typed({ ... })`
+     */
+    readonly typed: <Factories extends Record<string, (...args: any[]) => any>>(
+        factories: Factories,
+    ) => Factories;
+}
+
 export function union<Impl extends AbstractConstructor[]>(
     impls: Impl,
-): <Factories extends Record<string, ValidVariant<AllRequired<Impl>>>>(
-    factories: Factories,
-) => {
-    [K in keyof Factories & string]: Factories[K] extends (...args: any[]) => any
-        ? (
-              ...args: Parameters<Factories[K]>
-          ) => ReturnType<Factories[K]> & { [tag]: K } & ImplMixinFromImpl<Impl>
-        : () => Factories[K] & { [tag]: K } & ImplMixinFromImpl<Impl>;
-};
+): UnionBuilder<Impl>;
 
 /** No-impl form: union(factories) */
 export function union<Def extends Record<string, any>>(
@@ -344,7 +380,9 @@ export function union<Def extends Record<string, any>>(
 
 export function union(factoriesOrImpls: any): any {
     if (Array.isArray(factoriesOrImpls)) {
-        return (factories: any) => buildUnion(factories, factoriesOrImpls);
+        const builder = (factories: any) => buildUnion(factories, factoriesOrImpls);
+        builder.typed = (factories: any) => buildUnion(factories, factoriesOrImpls);
+        return builder;
     }
     return buildUnion(factoriesOrImpls, []);
 }
