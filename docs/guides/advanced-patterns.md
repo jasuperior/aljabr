@@ -262,6 +262,180 @@ Each call to a `State.*` constructor produces a new, immutable-by-convention val
 
 ---
 
+---
+
+## Generic variant types
+
+By default, `union()` infers factory return types through `ReturnType<F>`, which instantiates any generic type variable to `unknown`. This means `Result.Accept(3).value` is typed as `unknown` even though the value is clearly a `number`.
+
+To preserve type parameters through factory definitions, aljabr provides two tools: the `Variant<Tag, Payload, Impl>` helper type and the `.typed()` builder property.
+
+### The problem
+
+```ts
+const Box = union({
+    Wrap: (value: any) => ({ value }),
+});
+
+Box.Wrap(42).value // any — type information lost
+```
+
+TypeScript cannot automatically thread `T` through `Parameters<F>` / `ReturnType<F>`. The solution is to write the generic signature explicitly once, as a type cast on each factory body.
+
+### `Variant<Tag, Payload, Impl>`
+
+`Variant<>` is a convenience type that assembles a complete tagged variant type from its three constituents:
+
+```ts
+import { Variant, tag } from "aljabr";
+
+type Wrapped<T> = Variant<"Wrap", { value: T }>;
+// equivalent to: { value: T } & { [tag]: "Wrap" }
+```
+
+The optional third parameter attaches an impl class instance type — mixins, trait methods, etc.:
+
+```ts
+type Wrapped<T> = Variant<"Wrap", { value: T }, SomeMixin<T>>;
+```
+
+### `.typed()` — identity passthrough builder
+
+When you use `union([Impl])`, the returned builder has a `.typed` property. Calling `.typed({ ... })` accepts the same factory object but passes each factory's type through unchanged rather than mapping through `Parameters<>` / `ReturnType<>`. This lets the factories carry explicit generic signatures:
+
+```ts
+const Box = union([]).typed({
+    Wrap: <T>(value: T) => ({ value } as Variant<"Wrap", { value: T }>),
+});
+
+Box.Wrap(42).value   // number ✓
+Box.Wrap("hi").value // string ✓
+```
+
+### Building a generic `Option<T>`
+
+A simple nullable wrapper — one value variant, one empty variant:
+
+```ts
+import { union, match, Variant, Union } from "aljabr";
+
+type Some<T> = Variant<"Some", { value: T }>;
+type None    = Variant<"None", { value: null }>;
+
+export type Option<T> = Some<T> | None;
+
+export const Option = union([]).typed({
+    Some: <T>(value: T)  => ({ value }       as Some<T>),
+    None: ()             => ({ value: null } as None),
+});
+
+// Usage
+Option.Some(42).value  // number
+Option.None().value    // null
+
+// Match
+function unwrapOr<T>(opt: Option<T>, fallback: T): T {
+    return match(opt, {
+        Some: ({ value }) => value,
+        None: ()          => fallback,
+    });
+}
+
+unwrapOr(Option.Some(3), 0)  // 3
+unwrapOr(Option.None(),  0)  // 0
+```
+
+### Building a generic `Result<T, E>`
+
+A fuller example that combines `Variant<>`, `.typed()`, and an impl mixin for Promise-like chaining. The key insight: define named variant aliases once, then reuse them as both cast targets in the factory and members of the `Result<T, E>` union type.
+
+```ts
+import { union, match, Trait, Variant } from "aljabr";
+
+// Impl class — shared behavior across all variants.
+// then() returns Result<R1, R2>, enabling typed .then() chains.
+abstract class Thenable<T> extends Trait<{ value: unknown }>() {
+    then<R1 = T, R2 = never>(
+        onAccepted?: ((value: T) => R1 | PromiseLike<R1>) | null,
+        onRejected?: ((reason: any) => R2 | PromiseLike<R2>) | null,
+    ): Result<R1, R2> {
+        return match(this as unknown as Result, {
+            Accept: ({ value }) => {
+                const accepted = onAccepted ? onAccepted(value as T) : value;
+                return "then" in (accepted as any)
+                    ? Result.Delay(accepted as any)
+                    : Result.Accept(accepted);
+            },
+            Delay:  ({ pending }) => Result.Delay(pending.then(onAccepted as any, onRejected as any)),
+            Reject: ({ error })   => onRejected ? Result.Accept(onRejected(error)) : Result.Reject(error),
+        }) as any as Result<R1, R2>;
+    }
+}
+
+// Named variant aliases — defined once, used in both the union type and the factory casts.
+export type Accepted<T> = Variant<"Accept", { value: T },                            Thenable<T>>;
+export type Delayed<T>  = Variant<"Delay",  { pending: PromiseLike<T>; value: null }, Thenable<T>>;
+export type Rejected<E> = Variant<"Reject", { error: E; value: null },               Thenable<never>>;
+
+export type Result<T = unknown, E = never> = Accepted<T> | Delayed<T> | Rejected<E>;
+
+export const Result = union([Thenable]).typed({
+    Accept: <T>(value: T)                => ({ value }               as Accepted<T>),
+    Delay:  <T>(pending: PromiseLike<T>) => ({ pending, value: null } as Delayed<T>),
+    Reject: <E>(error: E)                => ({ error,  value: null }  as Rejected<E>),
+});
+```
+
+**What you get:**
+
+```ts
+Result.Accept(3).value                    // number ✓
+Result.Reject(new Error()).error           // Error  ✓
+Result.Delay(Promise.resolve(42)).pending // PromiseLike<number> ✓
+
+// Typed chains
+Result.Accept(3).then(n => n * 2)
+// → Result<number, never> ✓
+
+// Awaitable
+const value = await Result.Accept("hello");
+// → "hello" (string) ✓
+
+// Match with full narrowing
+match(Result.Accept(3), {
+    Accept: ({ value }) => `got ${value}`,  // value: number
+    Delay:  ({ pending }) => `waiting...`,
+    Reject: ({ error }) => `error: ${error}`,
+});
+```
+
+### How it compares to the plain `union()` form
+
+| | `union(factories)` | `union([Impl]).typed(factories)` |
+|---|---|---|
+| Factory signatures | Inferred via `ReturnType<F>` | Passed through unchanged |
+| Generic type params | Instantiated to `unknown` | Preserved as written |
+| Impl mixin in type | Automatic | Must include in `Variant<>` cast |
+| Best for | Non-generic unions | Unions with type-parameterized variants |
+
+The direct `union(factories)` form remains the right choice for non-generic unions like `WebEvent` or `State`. Reach for `.typed()` when you need type parameters to survive the factory boundary.
+
+### Pattern: variant aliases as exported types
+
+Because `Accepted<T>`, `Delayed<T>`, etc. are plain type aliases, consumers can import and use them directly:
+
+```ts
+import type { Accepted, Rejected, Result } from "./result";
+
+function onlyAccepted<T>(r: Result<T>): r is Accepted<T> {
+    return r[tag] === "Accept";
+}
+```
+
+This is especially useful for writing helper functions that operate on a single variant without needing the full union.
+
+---
+
 ## See also
 
 - [Getting Started](./getting-started.md)

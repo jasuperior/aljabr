@@ -3,7 +3,7 @@
 These exports live in `src/union.ts` and are re-exported from the package root.
 
 ```ts
-import { union, Trait, pred, when, getTag, __, tag, Union, FactoryPayload } from "aljabr"
+import { union, Trait, pred, when, getTag, __, tag, Union, FactoryPayload, Variant } from "aljabr"
 ```
 
 ---
@@ -279,6 +279,64 @@ const Shape = union({ Circle: (r: number) => ({ r }), Dot: { x: 0 } })
 type Shape  = Union<typeof Shape>           // Circle instance | Dot instance
 type Circle = Union<typeof Shape, "Circle"> // Circle instance only
 ```
+
+### `Variant<Tag, Payload, Impl?>`
+
+```ts
+type Variant<
+  Tag extends string,
+  Payload extends object,
+  Impl = unknown,
+>
+```
+
+Assembles a complete tagged variant type from its three parts: the tag string literal, the payload shape, and an optional impl mixin instance type. Use as the `as`-cast target in `.typed()` factory bodies to encode generic type parameters.
+
+```ts
+import { Variant, tag } from "aljabr";
+
+// Without impl
+type Some<T> = Variant<"Some", { value: T }>;
+// { value: T } & { [tag]: "Some" }
+
+// With impl mixin
+type Accepted<T> = Variant<"Accept", { value: T }, Thenable<T>>;
+// { value: T } & { [tag]: "Accept" } & Thenable<T>
+```
+
+When `Impl` is omitted (or `unknown`), no mixin type is added. When provided, it is intersected with the payload and tag.
+
+See [Generic variant types](../guides/advanced-patterns.md#generic-variant-types) for a full walkthrough.
+
+### `union([Impl]).typed`
+
+```ts
+readonly typed: <Factories extends Record<string, (...args: any[]) => any>>(
+  factories: Factories,
+) => Factories
+```
+
+A property on the builder returned by `union([Impl])`. Calling `.typed({ ... })` accepts the same factory object as the standard curried call, but passes each factory's type through unchanged instead of mapping through `Parameters<>` / `ReturnType<>`. This preserves generic type variables on factory functions.
+
+```ts
+const Option = union([]).typed({
+    Some: <T>(value: T) => ({ value } as Variant<"Some", { value: T }>),
+    None: ()            => ({ value: null } as Variant<"None", { value: null }>),
+});
+
+Option.Some(42).value   // number ✓
+Option.Some("hi").value // string ✓
+```
+
+**When to use `.typed()` vs the plain call form:**
+
+| | Plain call | `.typed()` |
+|---|---|---|
+| Generic type params | Instantiated to `unknown` | Preserved |
+| Impl mixin in type | Automatic | Must include in `Variant<>` cast |
+| Suitable for | Non-generic unions | Generic unions like `Result<T,E>`, `Option<T>` |
+
+The impl class passed to `union([Impl])` still applies at runtime — instances are merged onto each variant — but the impl's type must be explicitly included in each `Variant<>` cast for TypeScript to see it.
 
 ### `FactoryPayload<Trait, Ignore?>`
 

@@ -16,6 +16,7 @@
 - **`when()` arms** — structural patterns, guard functions, `pred()` wrappers, and catch-alls, composable in any order
 - **First-match-wins** — multiple `when()` arms per variant, evaluated left to right
 - **Helpful runtime errors** — non-exhaustive matches throw with messages that tell you exactly what to fix
+- **Generic variant types** — `Variant<Tag, Payload, Impl>` helper + `.typed()` builder preserve type parameters through factory definitions
 - **Zero dependencies** — pure TypeScript, no runtime footprint
 
 ---
@@ -194,7 +195,7 @@ Arms are evaluated left to right; the first match wins. The `when(__, ...)` catc
 - [`when()`](docs/api/union.md#when) — construct a pattern match arm
 - [`getTag()`](docs/api/union.md#gettag) — read the variant name from an instance
 - [`match()`](docs/api/match.md) — exhaustive pattern matching engine
-- [Type utilities](docs/api/union.md#types) — `Union<T>`, `FactoryPayload<T>`
+- [Type utilities](docs/api/union.md#types) — `Union<T>`, `FactoryPayload<T>`, `Variant<Tag, Payload, Impl>`
 
 ## Guides
 
