@@ -65,8 +65,9 @@ type UnionToIntersection<U> = (U extends any ? (k: U) => void : never) extends (
 type RequiredFromImpl<T> = T extends { [requirements]: infer R } ? R : {};
 
 // Intersects requirements across all impl classes
-type AllRequired<Impl extends AbstractConstructor[]> =
-    UnionToIntersection<RequiredFromImpl<Impl[number]>>;
+type AllRequired<Impl extends AbstractConstructor[]> = UnionToIntersection<
+    RequiredFromImpl<Impl[number]>
+>;
 
 // Computes the mixin type contributed by impl classes
 type ImplMixinFromImpl<Impl extends AbstractConstructor[]> =
@@ -346,10 +347,14 @@ interface UnionBuilder<Impl extends AbstractConstructor[]> {
     <Factories extends Record<string, ValidVariant<AllRequired<Impl>>>>(
         factories: Factories,
     ): {
-        [K in keyof Factories & string]: Factories[K] extends (...args: any[]) => any
+        [K in keyof Factories & string]: Factories[K] extends (
+            ...args: any[]
+        ) => any
             ? (
                   ...args: Parameters<Factories[K]>
-              ) => ReturnType<Factories[K]> & { [tag]: K } & ImplMixinFromImpl<Impl>
+              ) => ReturnType<Factories[K]> & {
+                  [tag]: K;
+              } & ImplMixinFromImpl<Impl>
             : () => Factories[K] & { [tag]: K } & ImplMixinFromImpl<Impl>;
     };
 
@@ -380,8 +385,10 @@ export function union<Def extends Record<string, any>>(
 
 export function union(factoriesOrImpls: any): any {
     if (Array.isArray(factoriesOrImpls)) {
-        const builder = (factories: any) => buildUnion(factories, factoriesOrImpls);
-        builder.typed = (factories: any) => buildUnion(factories, factoriesOrImpls);
+        const builder = (factories: any) =>
+            buildUnion(factories, factoriesOrImpls);
+        builder.typed = (factories: any) =>
+            buildUnion(factories, factoriesOrImpls);
         return builder;
     }
     return buildUnion(factoriesOrImpls, []);
@@ -409,10 +416,10 @@ function buildUnion(factories: Record<string, any>, impl: any[]): any {
                     const inst = new ImplCls();
                     return [inst, expandProto(inst)];
                 });
-                return Object.assign(Object.create(proto), ...instances, payload);
+                return createVariant(proto, ...instances, payload);
             }
 
-            return Object.assign(Object.create(proto), payload);
+            return createVariant(proto, payload);
         };
     }
 
@@ -425,4 +432,8 @@ const expandProto = (obj: any) => {
             curr == "constructor" ? acc : { ...acc, [curr]: obj[curr] },
         {},
     );
+};
+
+const createVariant = (proto: any, ...impl: any[]) => {
+    return Object.assign(Object.create(proto), ...impl);
 };

@@ -2,7 +2,7 @@ import { describe, expect, it, expectTypeOf } from "vitest";
 import {
     Result,
     type Accepted,
-    type Delayed,
+    type Expected,
     type Rejected,
 } from "../src/example";
 import { getTag } from "../src/union";
@@ -37,8 +37,8 @@ describe("Result type preservation", () => {
         expectTypeOf(r.error).toEqualTypeOf<Error>();
     });
     it("Delay preserves pending type", () => {
-        const r = Result.Delay(Promise.resolve(42));
-        expectTypeOf(r).toExtend<Delayed<number>>();
+        const r = Result.Expect(Promise.resolve(42));
+        expectTypeOf(r).toExtend<Expected<number>>();
         expectTypeOf(r.pending).toEqualTypeOf<PromiseLike<number>>();
     });
     it("then() chain returns Result", () => {

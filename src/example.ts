@@ -80,22 +80,22 @@ abstract class Thenable<T> extends Trait<{ value: unknown }>() {
                     const accepted = onAccepted
                         ? onAccepted(value as T)
                         : value;
-                    const isDelayed = "then" in (accepted as any);
-                    return isDelayed
-                        ? Result.Delay(accepted as any)
+                    const isExpected = "then" in (accepted as any);
+                    return isExpected
+                        ? Result.Expect(accepted as any)
                         : Result.Accept(accepted);
                 } catch (e) {
                     const rejected: any = onRejected ? onRejected(e) : e;
-                    const isDelayed = "then" in rejected;
-                    return isDelayed
-                        ? Result.Delay(rejected)
+                    const isExpected = "then" in rejected;
+                    return isExpected
+                        ? Result.Expect(rejected)
                         : onRejected
                           ? Result.Accept(rejected)
                           : Result.Reject(rejected);
                 }
             },
-            Delay: ({ pending }) => {
-                return Result.Delay(
+            Expect: ({ pending }) => {
+                return Result.Expect(
                     pending.then(onAccepted as any, onRejected as any),
                 );
             },
@@ -109,8 +109,8 @@ abstract class Thenable<T> extends Trait<{ value: unknown }>() {
 }
 
 export type Accepted<T> = Variant<"Accept", { value: T }, Thenable<T>>;
-export type Delayed<T> = Variant<
-    "Delay",
+export type Expected<T> = Variant<
+    "Expect",
     { pending: PromiseLike<T>; value: null },
     Thenable<T>
 >;
@@ -122,17 +122,17 @@ export type Rejected<E> = Variant<
 
 export type Result<T = unknown, E = never> =
     | Accepted<T>
-    | Delayed<T>
+    | Expected<T>
     | Rejected<E>;
 
 export const Result = union([Thenable]).typed({
     Accept: <T>(value: T) => ({ value }) as Accepted<T>,
-    Delay: <T>(pending: PromiseLike<T>) =>
-        ({ pending, value: null }) as Delayed<T>,
+    Expect: <T>(pending: PromiseLike<T>) =>
+        ({ pending, value: null }) as Expected<T>,
     Reject: <E>(error: E) => ({ error, value: null }) as Rejected<E>,
 });
 
-const ok = Result.Delay(Result.Accept(9));
+const ok = Result.Expect(Result.Accept(9));
 const ok2 = ok.then(
     (value) => value,
     (v) => {
