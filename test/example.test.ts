@@ -4,7 +4,7 @@ import {
     type Accepted,
     type Expected,
     type Rejected,
-} from "../src/example";
+} from "../src/prelude/result";
 import { getTag } from "../src/union";
 
 describe("Result", () => {
@@ -19,15 +19,13 @@ describe("Result", () => {
         let r = Result.Accept(3);
         let value = r.then(async (v) => await Result.Accept(v));
         expect(await value).toBe(3);
-        // expect(value.pending).toBe(value);
-        expect(getTag(value)).toBe("Delay");
+        expect(getTag(value)).toBe("Expect");
     });
 });
 
 describe("Result type preservation", () => {
     it("Accept preserves value type", () => {
         const r = Result.Accept(3);
-        // r.value
         expectTypeOf(r).toExtend<Accepted<number>>();
         expectTypeOf(r.value).toEqualTypeOf<number>();
     });
@@ -36,13 +34,12 @@ describe("Result type preservation", () => {
         expectTypeOf(r).toExtend<Rejected<Error>>();
         expectTypeOf(r.error).toEqualTypeOf<Error>();
     });
-    it("Delay preserves pending type", () => {
+    it("Expect preserves pending type", () => {
         const r = Result.Expect(Promise.resolve(42));
         expectTypeOf(r).toExtend<Expected<number>>();
         expectTypeOf(r.pending).toEqualTypeOf<PromiseLike<number>>();
     });
     it("then() chain returns Result", () => {
-        // typed assignment compiles iff then() returns Result<number, never>
         const r: Result<number, never> = Result.Accept(3).then((n) => n + 1);
         expect(r).toBeDefined();
     });

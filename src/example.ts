@@ -9,8 +9,9 @@ import {
     type Variant,
 } from "./union.ts";
 import { match } from "./match.ts";
+import { Result, Option, Signal, Tree, Validation } from "./prelude/index.ts";
 
-// --- Define your behaviors ---
+// --- Example 1: Simple union with shared behaviors ---
 
 class BaseEvent {
     name!: string;
@@ -22,20 +23,17 @@ class BaseEvent {
 }
 
 class Monad {
-    // A simple mapping method as an example
     map<T>(fn: (val: this) => T): T {
         return fn(this);
     }
 }
 
-// --- Define the Union ---
-
 export const WebEvent = union({
-    PageLoad: { name: "jhkjh" },
-    KeyPress: (key: string) => ({ key, name: "hkjh" }),
-    Click: (x: number, y: number) => ({ x, y, name: "" }),
+    PageLoad: { name: "page-load" },
+    KeyPress: (key: string) => ({ key, name: "key-press" }),
+    Click: (x: number, y: number) => ({ x, y, name: "click" }),
 
-    impl: [Monad, BaseEvent], // Pass as many as you want!
+    impl: [Monad, BaseEvent],
 });
 WebEvent.KeyPress("Enter");
 
@@ -61,90 +59,101 @@ let y = match(x, {
 });
 console.log(y);
 
-// --- Example 2 ---
-abstract class Thenable<T> extends Trait<{ value: unknown }>() {
-    then<TResult1 = T, TResult2 = never>(
-        onAccepted?:
-            | ((value: T) => TResult1 | PromiseLike<TResult1>)
-            | null
-            | undefined,
-        onRejected?:
-            | ((reason: any) => TResult2 | PromiseLike<TResult2>)
-            | null
-            | undefined,
-    ): Result<TResult1, TResult2> {
-        // Cast to any: implementation detail, external signature is authoritative.
-        return match(this as unknown as Result, {
-            Accept: ({ value }) => {
-                try {
-                    const accepted = onAccepted
-                        ? onAccepted(value as T)
-                        : value;
-                    const isExpected = "then" in (accepted as any);
-                    return isExpected
-                        ? Result.Expect(accepted as any)
-                        : Result.Accept(accepted);
-                } catch (e) {
-                    const rejected: any = onRejected ? onRejected(e) : e;
-                    const isExpected = "then" in rejected;
-                    return isExpected
-                        ? Result.Expect(rejected)
-                        : onRejected
-                          ? Result.Accept(rejected)
-                          : Result.Reject(rejected);
-                }
-            },
-            Expect: ({ pending }) => {
-                return Result.Expect(
-                    pending.then(onAccepted as any, onRejected as any),
-                );
-            },
-            Reject: ({ error }) => {
-                return onRejected
-                    ? Result.Accept(onRejected(error))
-                    : Result.Reject(error);
-            },
-        }) as any as Result<TResult1, TResult2>;
-    }
-}
-
-export type Accepted<T> = Variant<"Accept", { value: T }, Thenable<T>>;
-export type Expected<T> = Variant<
-    "Expect",
-    { pending: PromiseLike<T>; value: null },
-    Thenable<T>
->;
-export type Rejected<E> = Variant<
-    "Reject",
-    { error: E; value: null },
-    Thenable<never>
->;
-
-export type Result<T = unknown, E = never> =
-    | Accepted<T>
-    | Expected<T>
-    | Rejected<E>;
-
-export const Result = union([Thenable]).typed({
-    Accept: <T>(value: T) => ({ value }) as Accepted<T>,
-    Expect: <T>(pending: PromiseLike<T>) =>
-        ({ pending, value: null }) as Expected<T>,
-    Reject: <E>(error: E) => ({ error, value: null }) as Rejected<E>,
-});
+// --- Example 2: Result — async-aware error handling ---
 
 const ok = Result.Expect(Result.Accept(9));
 const ok2 = ok.then(
     (value) => value,
-    (v) => {
-        return "hanmel";
-    },
+    () => "error",
 );
 ok2.then(
-    (value) => {
-        console.log(value); // value is type number. should be type number | string
-    },
-    (value) => {
-        console.log(value); // value has type any. Should be type E if it exists
-    },
+    (value) => console.log("resolved:", value),
+    (value) => console.log("rejected:", value),
 );
-// console.log(ok.value);
+
+// --- Example 3: Option — null-safe chaining ---
+
+const name = Option.Some("alice");
+const upper = name
+    .map((s) => s.toUpperCase())
+    .getOrElse("anonymous");
+console.log(upper); // "ALICE"
+
+const missing: Option<string> = Option.None();
+const fallback = missing.getOrElse("default");
+console.log(fallback); // "default"
+
+const result = Option.Some(42).toResult("value was missing");
+console.log(getTag(result)); // "Accept"
+
+// --- Example 4: Signal — reactive lifecycle ---
+
+const sig = Signal.Active(100);
+console.log(sig.isActive()); // true
+console.log(sig.get());      // 100
+
+const disposed = Signal.Disposed();
+console.log(disposed.isActive()); // false
+console.log(disposed.get());      // null
+
+match(sig as Signal<number>, {
+    Unset: () => console.log("waiting for value"),
+    Active: ({ value }) => console.log("current value:", value),
+    Disposed: () => console.log("signal ended"),
+});
+
+// --- Example 5: Tree — recursive data structures ---
+
+const tree = Tree.Branch(
+    1,
+    Tree.Branch(2, Tree.Leaf(4), Tree.Leaf(5)),
+    Tree.Leaf(3),
+);
+
+const sum = tree.fold((acc, v) => acc + v, 0);
+console.log("sum:", sum); // 15
+
+const doubled = tree.map((v) => v * 2);
+console.log("depth:", doubled.depth()); // 2
+
+// --- Example 6: Validation — error accumulation ---
+
+const validateAge = (age: number) =>
+    age >= 0
+        ? Validation.Valid<number, string>(age)
+        : Validation.Invalid<number, string>(["Age must be non-negative"]);
+
+const validateName = (name: string) =>
+    name.length > 0
+        ? Validation.Valid<string, string>(name)
+        : Validation.Invalid<string, string>(["Name is required"]);
+
+const person = validateAge(25).combine(validateName("Bob"));
+console.log(getTag(person)); // "Valid"
+
+const bad = validateAge(-1).combine(validateName(""));
+console.log(getTag(bad)); // "Invalid"
+match(bad, {
+    Valid: ({ value }) => console.log("person:", value),
+    Invalid: ({ errors }) => console.log("errors:", errors),
+});
+
+// --- Example 7: Custom Trait for user-defined unions ---
+
+abstract class Serializable extends Trait<{ id: string }>() {
+    serialize(): string {
+        return JSON.stringify({ tag: getTag(this as any), id: (this as any).id });
+    }
+}
+
+type Created = Variant<"Created", { id: string; at: number }, Serializable>;
+type Deleted = Variant<"Deleted", { id: string }, Serializable>;
+type DomainEvent = Created | Deleted;
+
+const DomainEvent = union([Serializable]).typed({
+    Created: (id: string, at: number) => ({ id, at }) as Created,
+    Deleted: (id: string) => ({ id }) as Deleted,
+});
+
+const ev = DomainEvent.Created("abc-123", Date.now());
+console.log(ev.serialize());
