@@ -363,25 +363,25 @@ abstract class Thenable<T> extends Trait<{ value: unknown }>() {
             Accept: ({ value }) => {
                 const accepted = onAccepted ? onAccepted(value as T) : value;
                 return "then" in (accepted as any)
-                    ? Result.Delay(accepted as any)
+                    ? Result.Expect(accepted as any)
                     : Result.Accept(accepted);
             },
-            Delay:  ({ pending }) => Result.Delay(pending.then(onAccepted as any, onRejected as any)),
+            Expect: ({ pending }) => Result.Expect(pending.then(onAccepted as any, onRejected as any)),
             Reject: ({ error })   => onRejected ? Result.Accept(onRejected(error)) : Result.Reject(error),
         }) as any as Result<R1, R2>;
     }
 }
 
 // Named variant aliases — defined once, used in both the union type and the factory casts.
-export type Accepted<T> = Variant<"Accept", { value: T },                            Thenable<T>>;
-export type Delayed<T>  = Variant<"Delay",  { pending: PromiseLike<T>; value: null }, Thenable<T>>;
-export type Rejected<E> = Variant<"Reject", { error: E; value: null },               Thenable<never>>;
+export type Accepted<T> = Variant<"Accept", { value: T },                             Thenable<T>>;
+export type Expected<T> = Variant<"Expect", { pending: PromiseLike<T>; value: null }, Thenable<T>>;
+export type Rejected<E> = Variant<"Reject", { error: E; value: null },                Thenable<never>>;
 
-export type Result<T = unknown, E = never> = Accepted<T> | Delayed<T> | Rejected<E>;
+export type Result<T = unknown, E = never> = Accepted<T> | Expected<T> | Rejected<E>;
 
 export const Result = union([Thenable]).typed({
     Accept: <T>(value: T)                => ({ value }               as Accepted<T>),
-    Delay:  <T>(pending: PromiseLike<T>) => ({ pending, value: null } as Delayed<T>),
+    Expect: <T>(pending: PromiseLike<T>) => ({ pending, value: null } as Expected<T>),
     Reject: <E>(error: E)                => ({ error,  value: null }  as Rejected<E>),
 });
 ```
@@ -389,9 +389,9 @@ export const Result = union([Thenable]).typed({
 **What you get:**
 
 ```ts
-Result.Accept(3).value                    // number ✓
-Result.Reject(new Error()).error           // Error  ✓
-Result.Delay(Promise.resolve(42)).pending // PromiseLike<number> ✓
+Result.Accept(3).value                     // number ✓
+Result.Reject(new Error()).error            // Error  ✓
+Result.Expect(Promise.resolve(42)).pending // PromiseLike<number> ✓
 
 // Typed chains
 Result.Accept(3).then(n => n * 2)
@@ -404,7 +404,7 @@ const value = await Result.Accept("hello");
 // Match with full narrowing
 match(Result.Accept(3), {
     Accept: ({ value }) => `got ${value}`,  // value: number
-    Delay:  ({ pending }) => `waiting...`,
+    Expect: ({ pending }) => `waiting...`,
     Reject: ({ error }) => `error: ${error}`,
 });
 ```
@@ -415,7 +415,7 @@ match(Result.Accept(3), {
 |---|---|---|
 | Factory signatures | Inferred via `ReturnType<F>` | Passed through unchanged |
 | Generic type params | Instantiated to `unknown` | Preserved as written |
-| Impl mixin in type | Automatic | Must include in `Variant<>` cast |
+| Impl mixin in type  | Automatic | Must include in `Variant<>` cast |
 | Best for | Non-generic unions | Unions with type-parameterized variants |
 
 The direct `union(factories)` form remains the right choice for non-generic unions like `WebEvent` or `State`. Reach for `.typed()` when you need type parameters to survive the factory boundary.

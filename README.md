@@ -187,7 +187,84 @@ Arms are evaluated left to right; the first match wins. The `when(__, ...)` catc
 
 ---
 
+## Prelude
+
+aljabr ships a second entry point — `aljabr/prelude` — containing a standard library of algebraic data types and reactive primitives, all built on the same `union` + `match` foundation.
+
+```ts
+import { Result, Option, Validation, Signal, Derived, watchEffect } from "aljabr/prelude"
+```
+
+### Functional containers
+
+```ts
+// Result — synchronous success, async pending, or failure. Directly awaitable.
+const user = await Result.Accept(42).then(id => fetchUser(id))
+
+// Option — null-safe chaining
+const city = Option.Some(user)
+    .flatMap(u => u.address ? Option.Some(u.address) : Option.None())
+    .map(a => a.city.toUpperCase())
+    .getOrElse("UNKNOWN")
+
+// Validation — accumulate all errors, not just the first
+const form = validateName(input.name)
+    .combine(validateAge(input.age))
+    .combine(validateEmail(input.email))
+
+match(form, {
+    Valid:   ({ value: [[name, age], email] }) => submit({ name, age, email }),
+    Invalid: ({ errors }) => errors.forEach(showError),
+})
+```
+
+### Reactive primitives
+
+A fine-grained reactive system with explicit, pattern-matchable lifecycle states:
+
+```ts
+const x = Signal.create(1)
+const y = Signal.create(2)
+const sum = Derived.create(() => (x.get() ?? 0) + (y.get() ?? 0))
+
+batch(() => { x.set(10); y.set(20) })
+sum.get() // 30 — re-evaluated once, not twice
+
+// Async derived — preserves stale value while reloading
+const userId  = Signal.create(1)
+const profile = AsyncDerived.create(async () => fetchProfile(userId.get()!))
+
+match(profile.state, {
+    Loading:   () => <Spinner />,
+    Ready:     ({ value }) => <Profile user={value} />,
+    Reloading: ({ value }) => <Profile user={value} stale />,
+    // ...
+})
+```
+
+### Reactive effects and persistence
+
+```ts
+// watchEffect — run an async thunk, re-run it when dependencies change
+const handle = watchEffect(
+    async () => api.search(query.get()!),
+    (result) => updateResults(result),
+    { eager: true },
+)
+handle.stop()
+
+// persistedSignal — survive page reloads
+const theme = persistedSignal<"light" | "dark">("light", { key: "app.theme" })
+theme.set("dark") // written to localStorage; restored on next load
+```
+
+**[Full Prelude documentation →](docs/api/prelude/index.md)**
+
+---
+
 ## API Reference
+
+### Core
 
 - [`union()`](docs/api/union.md) — define a sum type and get variant constructors
 - [`Trait<R>()`](docs/api/union.md#traitr) — declare required payload properties on impl classes
@@ -196,6 +273,19 @@ Arms are evaluated left to right; the first match wins. The `when(__, ...)` catc
 - [`getTag()`](docs/api/union.md#gettag) — read the variant name from an instance
 - [`match()`](docs/api/match.md) — exhaustive pattern matching engine
 - [Type utilities](docs/api/union.md#types) — `Union<T>`, `FactoryPayload<T>`, `Variant<Tag, Payload, Impl>`
+
+### Prelude (`aljabr/prelude`)
+
+- [Prelude overview](docs/api/prelude/index.md) — all modules at a glance
+- [`Result<T, E>`](docs/api/prelude/result.md) — synchronous/async success or failure
+- [`Option<T>`](docs/api/prelude/option.md) — present or absent value
+- [`Validation<T, E>`](docs/api/prelude/validation.md) — error-accumulating validation
+- [`Signal<T>`](docs/api/prelude/signal.md) — reactive mutable container
+- [`Derived<T>` / `AsyncDerived<T, E>`](docs/api/prelude/derived.md) — lazy computed reactive values
+- [`Effect<T, E>` / `watchEffect`](docs/api/prelude/effect.md) — reactive async effects
+- [`Tree<T>`](docs/api/prelude/tree.md) — recursive binary tree
+- [Persistence](docs/api/prelude/persist.md) — `persistedSignal`, `syncToStore`
+- [Reactive context](docs/api/prelude/context.md) — `batch`, `runInContext`, `createOwner`
 
 ## Guides
 
