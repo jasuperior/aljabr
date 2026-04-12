@@ -1,6 +1,10 @@
 import { union, Trait, type Variant } from "../union.ts";
 import { match } from "../match.ts";
-import { type Computation, getCurrentComputation } from "./context.ts";
+import {
+    type Computation,
+    getCurrentComputation,
+    scheduleNotification,
+} from "./context.ts";
 
 // ---------------------------------------------------------------------------
 // SignalState<T> — immutable lifecycle union (the former Signal<T>)
@@ -121,7 +125,7 @@ export class Signal<T> {
         this.#state = SignalState.Active(value);
 
         for (const comp of [...this.#subscribers.keys()]) {
-            comp.dirty();
+            scheduleNotification(comp);
         }
     }
 

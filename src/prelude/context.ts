@@ -24,6 +24,44 @@ export type Computation = {
 
 const stack: Computation[] = [];
 
+// ---------------------------------------------------------------------------
+// Batch scheduler
+// ---------------------------------------------------------------------------
+
+let batchDepth = 0;
+const pendingComputations = new Set<Computation>();
+
+/**
+ * Schedule a dirty notification for `comp`. If a batch is active the
+ * notification is deferred; otherwise it fires immediately.
+ *
+ * Use this instead of calling `comp.dirty()` directly so that all
+ * notification paths respect the current batch state.
+ */
+export function scheduleNotification(comp: Computation): void {
+    if (batchDepth > 0) {
+        pendingComputations.add(comp);
+    } else {
+        comp.dirty();
+    }
+}
+
+function flushPending(): void {
+    // Keep batchDepth elevated so that any dirty() calls made during the
+    // flush (e.g. cascading Derived → subscriber propagation) are queued
+    // rather than fired immediately, and picked up by the next while-iteration.
+    batchDepth++;
+    try {
+        while (pendingComputations.size > 0) {
+            const pending = [...pendingComputations];
+            pendingComputations.clear();
+            for (const comp of pending) comp.dirty();
+        }
+    } finally {
+        batchDepth--;
+    }
+}
+
 /** Returns the currently-executing computation, or null if outside any context. */
 export function getCurrentComputation(): Computation | null {
     return stack.length > 0 ? stack[stack.length - 1] : null;
@@ -72,23 +110,55 @@ export function createOwner(parent?: Computation | null): Computation {
 }
 
 /**
- * Run a function inside a specific owner context.
- * Useful for associating reactivity across async or worker boundaries.
+ * Run a function inside a specific owner context, re-establishing it as the
+ * active computation so that:
+ * - Signal reads inside `fn` register `owner` as a subscriber
+ * - `Signal.create()` / `Derived.create()` calls inside `fn` are owned by `owner`
+ *   and disposed when `owner` is disposed
  *
- * @todo Implement full cross-boundary context passing (worker/SSR support).
- * Currently equivalent to `trackIn(owner, fn)`.
+ * This is the primary tool for preserving reactive ownership across async
+ * boundaries (e.g. after `await`, inside a `setTimeout`, or in a Worker).
+ * Capture the owner before crossing the boundary, then call `runInContext`
+ * on the other side to restore it.
+ *
+ * @example Async boundary
+ * const owner = createOwner(null);
+ * const result = await someAsyncWork();
+ * // Re-enter the owner after the await to keep ownership intact
+ * runInContext(owner, () => {
+ *   const s = Signal.create(result); // owned by `owner`
+ * });
+ *
+ * @example Worker boundary (conceptual)
+ * // In main thread: capture the owner reference
+ * const owner = createOwner(null);
+ * // Pass owner.id or a serialized token to the worker, then on receipt:
+ * runInContext(owner, () => processWorkerResult(data));
  */
 export function runInContext<T>(owner: Computation, fn: () => T): T {
     return trackIn(owner, fn);
 }
 
 /**
- * Batch multiple signal writes into a single notification pass,
- * preventing intermediate re-evaluations.
+ * Batch multiple signal writes into a single notification pass.
  *
- * @todo Not yet implemented — currently executes `fn` immediately without batching.
- * The API surface is intentionally locked here so future batching is non-breaking.
+ * All `Signal.set()` calls inside `fn` are collected; dependents are
+ * notified exactly once after `fn` returns, regardless of how many of
+ * their dependencies changed. Nested `batch()` calls are safe — the
+ * flush only runs when the outermost batch exits.
+ *
+ * @example
+ * batch(() => {
+ *   x.set(1);
+ *   y.set(2); // dependents of x and y are notified once, not twice
+ * });
  */
 export function batch(fn: () => void): void {
-    fn();
+    batchDepth++;
+    try {
+        fn();
+    } finally {
+        batchDepth--;
+        if (batchDepth === 0) flushPending();
+    }
 }

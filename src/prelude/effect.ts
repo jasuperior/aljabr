@@ -139,53 +139,58 @@ export const Effect = union([Computable]).typed({
 
 type WatchHandle = { stop(): void };
 
+type WatchOptions = {
+    /**
+     * When `true`, the effect re-runs automatically whenever a dependency
+     * changes, without the caller needing to invoke `.run()` on the `Stale`
+     * value. The `onChange` callback still fires so callers can observe each
+     * completed result.
+     *
+     * @default false
+     */
+    eager?: boolean;
+};
+
 /**
  * Run an async thunk reactively. Any `Signal.get()` calls inside `thunk`
  * are automatically tracked as dependencies. When a dependency changes, the
  * effect transitions to `Stale` and `onChange` is called with the stale
  * variant so the caller can decide when to re-run.
  *
- * Call `.run()` on the `Stale` value to re-execute the thunk.
+ * Call `.run()` on the `Stale` value to re-execute the thunk, or pass
+ * `{ eager: true }` to have it re-run automatically on every dependency change.
  *
  * Returns a handle with `stop()` to cancel tracking and dispose the
  * underlying computation.
  *
- * @example
+ * @example Lazy (default)
  * const src = Signal.create("hello");
  * const handle = watchEffect(
  *   async () => src.get()!.toUpperCase(),
- *   (stale) => {
- *     console.log("stale, last value:", stale.signal.get());
- *     stale.run().then(done => console.log("refreshed:", done.signal.get()));
- *   },
+ *   (stale) => stale.run().then(done => console.log(done.signal.get())),
  * );
- * src.set("world"); // triggers onChange with Stale
+ * src.set("world"); // onChange called with Stale; caller drives re-run
  * handle.stop();
  *
- * @todo Add `eager: true` option to auto-rerun on dependency change without
- * requiring the caller to invoke `.run()` on the Stale value.
+ * @example Eager
+ * const handle = watchEffect(
+ *   async () => src.get()!.toUpperCase(),
+ *   (done) => console.log("latest:", done.signal.get()),
+ *   { eager: true },
+ * );
+ * src.set("world"); // re-runs immediately; onChange called with Done result
  */
 export function watchEffect<T, E = never>(
     thunk: () => Promise<T>,
-    onChange: (stale: Stale<T, E>) => void,
+    onChange: (result: Stale<T, E> | Done<T, E>) => void,
+    options: WatchOptions = {},
 ): WatchHandle {
+    const { eager = false } = options;
     const computation: Computation = createOwner(getCurrentComputation());
 
     let lastDone: Done<T, E> | null = null;
 
-    computation.dirty = () => {
-        if (lastDone === null) return;
-        const stale = Effect.Stale(
-            lastDone.signal,
-            lastDone.error,
-            thunk,
-        ) as Stale<T, E>;
-        onChange(stale);
-    };
-
-    // Run the thunk immediately with dependency tracking
-    const run = async () => {
-        // Clear previous dependency subscriptions before re-tracking
+    const rerun = async () => {
         for (const source of [...computation.sources]) {
             source.unsubscribe(computation);
         }
@@ -193,19 +198,37 @@ export function watchEffect<T, E = never>(
 
         try {
             const value = await trackIn(computation, thunk);
-            lastDone = Effect.Done(SignalState.Active(value), null) as Done<
-                T,
-                E
-            >;
+            lastDone = Effect.Done(SignalState.Active(value), null) as Done<T, E>;
         } catch (e) {
-            lastDone = Effect.Done(
-                SignalState.Disposed(),
-                e as E,
-            ) as Done<T, E>;
+            lastDone = Effect.Done(SignalState.Disposed(), e as E) as Done<T, E>;
+        }
+        onChange(lastDone);
+    };
+
+    computation.dirty = () => {
+        if (lastDone === null) return;
+        if (eager) {
+            rerun();
+        } else {
+            const stale = Effect.Stale(lastDone.signal, lastDone.error, thunk) as Stale<T, E>;
+            onChange(stale);
         }
     };
 
-    run();
+    // Run immediately with dependency tracking; suppress initial onChange call
+    // so the caller only hears about *changes*, not the initial computation.
+    (async () => {
+        for (const source of [...computation.sources]) {
+            source.unsubscribe(computation);
+        }
+        computation.sources.clear();
+        try {
+            const value = await trackIn(computation, thunk);
+            lastDone = Effect.Done(SignalState.Active(value), null) as Done<T, E>;
+        } catch (e) {
+            lastDone = Effect.Done(SignalState.Disposed(), e as E) as Done<T, E>;
+        }
+    })();
 
     return {
         stop() {

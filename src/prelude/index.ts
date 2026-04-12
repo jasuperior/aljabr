@@ -4,5 +4,6 @@ export * from "./signal.ts";
 export * from "./derived.ts";
 export * from "./effect.ts";
 export * from "./context.ts";
+export * from "./persist.ts";
 export * from "./tree.ts";
 export * from "./validation.ts";
