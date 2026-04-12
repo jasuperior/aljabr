@@ -86,17 +86,18 @@ console.log(fallback); // "default"
 const result = Option.Some(42).toResult("value was missing");
 console.log(getTag(result)); // "Accept"
 
-// --- Example 4: Signal — reactive lifecycle ---
+// --- Example 4: Signal — reactive container ---
 
-const sig = Signal.Active(100);
-console.log(sig.isActive()); // true
-console.log(sig.get());      // 100
+const sig = Signal.create(100);
+console.log(sig.state.isActive()); // true
+console.log(sig.peek());           // 100
 
-const disposed = Signal.Disposed();
-console.log(disposed.isActive()); // false
-console.log(disposed.get());      // null
+const disposed = Signal.create<number>();
+disposed.dispose();
+console.log(disposed.state.isActive()); // false
+console.log(disposed.peek());           // null
 
-match(sig as Signal<number>, {
+match(sig.state, {
     Unset: () => console.log("waiting for value"),
     Active: ({ value }) => console.log("current value:", value),
     Disposed: () => console.log("signal ended"),
