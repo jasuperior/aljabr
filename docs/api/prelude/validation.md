@@ -1,18 +1,32 @@
 # API Reference: Validation
 
 ```ts
-import { Validation, type Valid, type Invalid } from "aljabr/prelude"
+import { Validation, type Unvalidated, type Valid, type Invalid } from "aljabr/prelude"
 ```
 
 ---
 
 ## Overview
 
-`Validation<T, E>` is a two-variant union for validating data that may fail in multiple ways simultaneously. Unlike [`Result`](./result.md), which short-circuits on the first error, `Validation` accumulates errors across independent checks via `combine()`. All variants share `map`, `combine`, and `toResult` via the `Combinable<T, E>` impl mixin.
+`Validation<T, E>` is a three-variant union for validating data that may fail in multiple ways simultaneously. Unlike [`Result`](./result.md), which short-circuits on the first error, `Validation` accumulates errors across independent checks via `combine()`. All variants share `map`, `combine`, and `toResult` via the `Combinable<T, E>` impl mixin.
 
 ---
 
 ## Variants
+
+### `Validation.Unvalidated<T, E>`
+
+The initial, not-yet-validated state. Carries no value or errors.
+
+```ts
+Validation.Unvalidated<T, E>(): Unvalidated<T, E>
+```
+
+| Property | Type | Description |
+|---|---|---|
+| `value` | `null` | Always null |
+
+`Unvalidated` passes through `map` and `combine` unchanged — any combination involving an `Unvalidated` side yields `Unvalidated`.
 
 ### `Validation.Valid<T, E>`
 
@@ -44,9 +58,10 @@ Validation.Invalid<T, E>(errors: E[]): Invalid<T, E>
 ## Type definitions
 
 ```ts
-type Valid<T, E>      = Variant<"Valid",   { value: T },              Combinable<T, E>>
-type Invalid<T, E>    = Variant<"Invalid", { errors: E[]; value: null }, Combinable<T, E>>
-type Validation<T, E> = Valid<T, E> | Invalid<T, E>
+type Unvalidated<T, E> = Variant<"Unvalidated", { value: null },              Combinable<T, E>>
+type Valid<T, E>       = Variant<"Valid",        { value: T },                 Combinable<T, E>>
+type Invalid<T, E>     = Variant<"Invalid",      { errors: E[]; value: null }, Combinable<T, E>>
+type Validation<T, E>  = Unvalidated<T, E> | Valid<T, E> | Invalid<T, E>
 ```
 
 ---
@@ -59,7 +74,7 @@ type Validation<T, E> = Valid<T, E> | Invalid<T, E>
 .map<U>(fn: (value: T) => U): Validation<U, E>
 ```
 
-Transform the valid value. Errors pass through unchanged.
+Transform the valid value. `Invalid` and `Unvalidated` pass through unchanged.
 
 ```ts
 Validation.Valid<number, string>(42).map(n => n * 2)
@@ -67,6 +82,9 @@ Validation.Valid<number, string>(42).map(n => n * 2)
 
 Validation.Invalid<number, string>(["too small"]).map(n => n * 2)
 // Invalid { errors: ["too small"] }
+
+Validation.Unvalidated<number, string>().map(n => n * 2)
+// Unvalidated
 ```
 
 ### `.combine<U>(other)`
@@ -75,10 +93,13 @@ Validation.Invalid<number, string>(["too small"]).map(n => n * 2)
 .combine<U>(other: Validation<U, E>): Validation<[T, U], E>
 ```
 
-Combine two validations. Errors from both are accumulated:
+Combine two validations. Errors from both are accumulated. `Unvalidated` on either side propagates:
 
 | `this` | `other` | Result |
 |---|---|---|
+| `Unvalidated` | _any_ | `Unvalidated` |
+| `Valid(a)` | `Unvalidated` | `Unvalidated` |
+| `Invalid(_)` | `Unvalidated` | `Unvalidated` |
 | `Valid(a)` | `Valid(b)` | `Valid([a, b])` |
 | `Valid(_)` | `Invalid(errs)` | `Invalid(errs)` |
 | `Invalid(errs)` | `Valid(_)` | `Invalid(errs)` |
@@ -104,7 +125,7 @@ badAge.combine(badName)
 .toResult(): Result<T, E[]>
 ```
 
-Convert to a `Result`: `Valid` → `Accept`, `Invalid` → `Reject` with the full errors array.
+Convert to a `Result`: `Valid` → `Accept`, `Invalid` → `Reject` with the full errors array, `Unvalidated` → `Reject` with an empty errors array.
 
 ```ts
 Validation.Valid<number, string>(42).toResult()
@@ -112,6 +133,9 @@ Validation.Valid<number, string>(42).toResult()
 
 Validation.Invalid<number, string>(["bad"]).toResult()
 // Rejected<string[]> { error: ["bad"] }
+
+Validation.Unvalidated<number, string>().toResult()
+// Rejected<string[]> { error: [] }
 ```
 
 ---
@@ -122,14 +146,34 @@ Validation.Invalid<number, string>(["bad"]).toResult()
 import { match } from "aljabr"
 
 match(validation, {
-    Valid:   ({ value })  => `ok: ${value}`,
-    Invalid: ({ errors }) => `errors: ${errors.join(", ")}`,
+    Unvalidated: ()           => "not yet validated",
+    Valid:       ({ value })  => `ok: ${value}`,
+    Invalid:     ({ errors }) => `errors: ${errors.join(", ")}`,
 })
 ```
 
 ---
 
 ## Examples
+
+### Using `Unvalidated` as initial state
+
+`Unvalidated` is the natural starting point for a field that hasn't been touched yet — distinct from `Invalid` (which implies the user submitted something wrong) and `Valid` (which implies a passing value exists).
+
+```ts
+let field: Validation<string, string> = Validation.Unvalidated()
+
+// User types something — validate on change
+field = input.length >= 3
+    ? Validation.Valid(input)
+    : Validation.Invalid(["Must be at least 3 characters"])
+
+match(field, {
+    Unvalidated: () => renderPlaceholder(),
+    Valid:       ({ value })  => renderSuccess(value),
+    Invalid:     ({ errors }) => renderErrors(errors),
+})
+```
 
 ### Form validation
 

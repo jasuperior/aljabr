@@ -207,14 +207,16 @@ const city = Option.Some(user)
     .map(a => a.city.toUpperCase())
     .getOrElse("UNKNOWN")
 
-// Validation — accumulate all errors, not just the first
+// Validation — three states: Unvalidated (initial), Valid, Invalid
+// Errors accumulate across all fields rather than short-circuiting.
 const form = validateName(input.name)
     .combine(validateAge(input.age))
     .combine(validateEmail(input.email))
 
 match(form, {
-    Valid:   ({ value: [[name, age], email] }) => submit({ name, age, email }),
-    Invalid: ({ errors }) => errors.forEach(showError),
+    Unvalidated: () => showPlaceholder(),
+    Valid:        ({ value: [[name, age], email] }) => submit({ name, age, email }),
+    Invalid:      ({ errors }) => errors.forEach(showError),
 })
 ```
 
@@ -241,6 +243,7 @@ match(profile.state, {
     // ...
 })
 ```
+
 
 ### Reactive effects and persistence
 
@@ -280,7 +283,7 @@ theme.set("dark") // written to localStorage; restored on next load
 - [`Result<T, E>`](docs/api/prelude/result.md) — synchronous/async success or failure
 - [`Option<T>`](docs/api/prelude/option.md) — present or absent value
 - [`Validation<T, E>`](docs/api/prelude/validation.md) — error-accumulating validation
-- [`Signal<T>`](docs/api/prelude/signal.md) — reactive mutable container
+- [`Signal<T, S>`](docs/api/prelude/signal.md) — reactive mutable container; accepts a custom state union `S` + `SignalProtocol<S, T>` for domain-specific lifecycles
 - [`Derived<T>` / `AsyncDerived<T, E>`](docs/api/prelude/derived.md) — lazy computed reactive values
 - [`Effect<T, E>` / `watchEffect`](docs/api/prelude/effect.md) — reactive async effects
 - [`Tree<T>`](docs/api/prelude/tree.md) — recursive binary tree

@@ -24,7 +24,7 @@ Types for modeling values that may be absent, failed, or require validation.
 |---|---|
 | [`Result<T, E>`](./result.md) | Synchronous success (`Accept`), async pending (`Expect`), or failure (`Reject`). Implements `.then()` — directly awaitable. |
 | [`Option<T>`](./option.md) | Present (`Some`) or absent (`None`). Chainable via `.map()`, `.flatMap()`, `.getOrElse()`. |
-| [`Validation<T, E>`](./validation.md) | Valid (`Valid`) or invalid with accumulated errors (`Invalid`). Combine independent checks without short-circuiting. |
+| [`Validation<T, E>`](./validation.md) | Three states: unvalidated (`Unvalidated`), valid (`Valid`), or invalid with accumulated errors (`Invalid`). Combine independent checks without short-circuiting. |
 
 ### Reactive primitives
 
@@ -32,7 +32,7 @@ A fine-grained push/pull reactive system with explicit lifecycle states.
 
 | Export | Description |
 |---|---|
-| [`Signal<T>`](./signal.md) | A mutable reactive container. Reads inside computations auto-subscribe; writes notify dependents. |
+| [`Signal<T, S>`](./signal.md) | A mutable reactive container. Default lifecycle is `SignalState<T>`; pass a `SignalProtocol<S, T>` to use any custom union as the state. Reads inside computations auto-subscribe; writes notify dependents. |
 | [`Derived<T>`](./derived.md) | A lazy computed value. Re-evaluates only when read after a dependency changes. Supports a writable form. |
 | [`AsyncDerived<T, E>`](./derived.md#asyncderivedT-E) | Like `Derived`, but async. Preserves the last known value in `Reloading` state for stale-while-revalidating. |
 
@@ -107,8 +107,9 @@ const result = validateName(input.name)
     .combine(validateEmail(input.email))
 
 match(result, {
-    Valid:   ({ value: [[name, age], email] }) => createUser({ name, age, email }),
-    Invalid: ({ errors }) => errors.forEach(showError),
+    Unvalidated: () => showPlaceholder(),
+    Valid:        ({ value: [[name, age], email] }) => createUser({ name, age, email }),
+    Invalid:      ({ errors }) => errors.forEach(showError),
 })
 ```
 
