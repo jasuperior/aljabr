@@ -2,7 +2,7 @@ import { union, Trait, type Variant } from "../union.ts";
 import { match } from "../match.ts";
 import { Result } from "./result.ts";
 
-export abstract class Combinable<T, E> extends Trait<{ value: unknown }>() {
+export abstract class Combinable<T, E> extends Trait<{ value: unknown }> {
     map<U>(fn: (value: T) => U): Validation<U, E> {
         return match(this as unknown as Validation<T, E>, {
             Unvalidated: () => Validation.Unvalidated(),

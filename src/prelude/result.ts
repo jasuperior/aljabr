@@ -1,7 +1,7 @@
 import { union, Trait, type Variant } from "../union.ts";
 import { match } from "../match.ts";
 
-export abstract class Thenable<T> extends Trait<{ value: unknown }>() {
+export abstract class Thenable<T> extends Trait<{ value: unknown }> {
     then<TResult1 = T, TResult2 = never>(
         onAccepted?:
             | ((value: T) => TResult1 | PromiseLike<TResult1>)

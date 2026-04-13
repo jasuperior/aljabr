@@ -70,7 +70,7 @@ describe("union()", () => {
     });
 
     describe("with impl classes", () => {
-        abstract class Trackable extends Trait<{ size: number }>() {
+        abstract class Trackable extends Trait<{ size: number }> {
             tracked = true;
             version = 1;
         }
@@ -107,7 +107,7 @@ describe("union()", () => {
             abstract class Shadowable extends Trait<{
                 size: number;
                 tracked: boolean;
-            }>() {
+            }> {
                 tracked = true;
             }
             const Capped = union([Shadowable])({

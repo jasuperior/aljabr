@@ -10,7 +10,7 @@ import {
 // SignalState<T> — immutable lifecycle union (the former Signal<T>)
 // ---------------------------------------------------------------------------
 
-export abstract class SignalLifecycle<T> extends Trait<{ value: unknown }>() {
+export abstract class SignalLifecycle<T> extends Trait<{ value: unknown }> {
     isActive(): boolean {
         return match(this as unknown as SignalState<T>, {
             Unset: () => false,

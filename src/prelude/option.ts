@@ -2,7 +2,7 @@ import { union, Trait, type Variant } from "../union.ts";
 import { match } from "../match.ts";
 import { Result } from "./result.ts";
 
-export abstract class Mappable<T> extends Trait<{ value: unknown }>() {
+export abstract class Mappable<T> extends Trait<{ value: unknown }> {
     map<U>(fn: (value: T) => U): Option<U> {
         return match(this as unknown as Option<T>, {
             Some: ({ value }) => Option.Some(fn(value)),

@@ -35,7 +35,8 @@ export const predTag = Symbol("aljabr.pred");
 
 /** @internal */
 export const whenTag = Symbol("aljabr.when");
-const requirements: unique symbol = Symbol("aljabr.requirements");
+/** @internal */
+export const requirements: unique symbol = Symbol("aljabr.requirements");
 
 /**
  * Extract the variant name string from a tagged variant instance.
@@ -61,8 +62,9 @@ type UnionToIntersection<U> = (U extends any ? (k: U) => void : never) extends (
     ? I
     : never;
 
-// Extracts the required payload properties encoded by Trait<R>()
-type RequiredFromImpl<T> = T extends { [requirements]: infer R } ? R : {};
+// Extracts the required payload properties encoded by Trait<R>
+type RequiredFromImpl<T> =
+    T extends abstract new (...args: any[]) => { readonly [requirements]: infer R } ? R : {};
 
 // Intersects requirements across all impl classes
 type AllRequired<Impl extends AbstractConstructor[]> = UnionToIntersection<
@@ -102,7 +104,7 @@ export type Union<
  * @typeParam Ignore - Optional keys to omit from the result
  *
  * @example
- * abstract class Node extends Trait<{ id: string; value: number }>() {}
+ * abstract class Node extends Trait<{ id: string; value: number }> {}
  * type NodePayload = FactoryPayload<InstanceType<typeof Node>>
  * // { id: string; value: number }
  *
@@ -142,21 +144,20 @@ export type Variant<
 // ==========================================
 
 /**
- * Creates an abstract base class that encodes required payload properties `R`.
+ * Abstract base class that encodes required payload properties `R` at the type level.
  *
- * Impl classes extending `Trait<R>()` declare to the type system that every
+ * Impl classes extending `Trait<R>` declare to the type system that every
  * variant factory in the union must return an object satisfying `R`. If a variant
  * doesn't conform, you get a compile error on that specific factory — not on the
  * whole `union()` call.
  *
- * Classes that don't extend `Trait<R>()` are treated as `Trait<{}>` — they mix in
+ * Classes that don't extend `Trait<R>` are treated as `Trait<{}>` — they mix in
  * behavior but impose no payload requirements.
  *
  * @typeParam R - The shape that every variant payload must extend
- * @returns An abstract class to extend in your impl class declaration
  *
  * @example
- * abstract class Trackable extends Trait<{ id: string }>() {
+ * abstract class Trackable extends Trait<{ id: string }> {
  *   tracked = true
  *   label() { return `[${(this as any).id}]` }
  * }
@@ -166,9 +167,9 @@ export type Variant<
  *   // Broken: (n: number) => ({ n }),   // ✗ compile error: missing `id`
  * })
  */
-export function Trait<R extends object>() {
-    abstract class T {}
-    return T as AbstractConstructor<R> & { readonly [requirements]: R };
+export abstract class Trait<R extends object = {}> {
+    /** @internal */
+    declare readonly [requirements]: R;
 }
 
 // ==========================================

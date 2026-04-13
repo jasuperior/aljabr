@@ -17,7 +17,7 @@ import {
 // both from prelude/index.ts would cause a collision. Users pattern-match on
 // DerivedState<T> using match() without needing the individual type names.
 
-abstract class DerivedLifecycle<T> extends Trait<{ value: unknown }>() {
+abstract class DerivedLifecycle<T> extends Trait<{ value: unknown }> {
     hasValue(): boolean {
         return match(this as unknown as DerivedState<T>, {
             Uncomputed: () => false,
@@ -242,7 +242,7 @@ export class Derived<T> {
 // AsyncDerivedState<T, E> — lifecycle union for async computed values
 // ---------------------------------------------------------------------------
 
-abstract class AsyncDerivedLifecycle<T, E> extends Trait<{ value: unknown }>() {
+abstract class AsyncDerivedLifecycle<T, E> extends Trait<{ value: unknown }> {
     hasValue(): boolean {
         return match(this as unknown as AsyncDerivedState<T, E>, {
             Uncomputed: () => false,

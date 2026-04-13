@@ -1,24 +1,59 @@
 {
-  "name": "aljabr",
-  "private": true,
-  "version": "0.0.0",
-  "type": "module",
-  "exports": {
-    ".": "./src/main.ts",
-    "./prelude": "./src/prelude/index.ts"
-  },
-  "scripts": {
-    "dev": "vite",
-    "build": "tsc && vite build",
-    "preview": "vite preview",
-    "test": "vitest run",
-    "test:watch": "vitest",
-    "test:coverage": "vitest run --coverage"
-  },
-  "devDependencies": {
-    "@types/node": "^25.5.0",
-    "typescript": "~5.9.3",
-    "vite": "^8.0.1",
-    "vitest": "^4.1.2"
-  }
+    "name": "aljabr",
+    "author": "ja.superior",
+    "version": "0.1.0",
+    "description": "A TypeScript library for modeling data with tagged union types (algebraic sum types), consuming them with exhaustive pattern matching, and composing reactive computations with signals",
+    "license": "Apache-2.0",
+    "keywords": [
+        "typescript",
+        "algebraic-data-types",
+        "tagged-union",
+        "sum-types",
+        "pattern-matching",
+        "functional-programming",
+        "signals",
+        "reactive"
+    ],
+    "repository": {
+        "type": "git",
+        "url": "https://github.com/jasuperior/aljabr.git"
+    },
+    "homepage": "https://github.com/jasuperior/aljabr",
+    "bugs": {
+        "url": "https://github.com/jasuperior/aljabr/issues"
+    },
+    "type": "module",
+    "main": "./dist/index.cjs",
+    "module": "./dist/index.js",
+    "types": "./dist/main.d.ts",
+    "exports": {
+        ".": {
+            "import": "./dist/index.js",
+            "require": "./dist/index.cjs",
+            "types": "./dist/main.d.ts"
+        },
+        "./prelude": {
+            "import": "./dist/prelude.js",
+            "require": "./dist/prelude.cjs",
+            "types": "./dist/prelude/index.d.ts"
+        }
+    },
+    "files": [
+        "dist"
+    ],
+    "scripts": {
+        "dev": "vite",
+        "build": "tsc && vite build",
+        "preview": "vite preview",
+        "test": "vitest run",
+        "test:watch": "vitest",
+        "test:coverage": "vitest run --coverage"
+    },
+    "devDependencies": {
+        "@types/node": "^25.5.0",
+        "typescript": "~5.9.3",
+        "vite": "^8.0.5",
+        "vite-plugin-dts": "^4.5.4",
+        "vitest": "^4.1.2"
+    }
 }

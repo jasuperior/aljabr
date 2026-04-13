@@ -45,7 +45,7 @@ function union<Impl extends AbstractConstructor[]>(
 Pass an array of impl classes first. The returned curried function accepts the factories. Every variant instance receives the impl classes' instance properties and methods mixed in, and the type system validates that each factory's return type satisfies all `Trait<R>` requirements declared by the impl classes.
 
 ```ts
-abstract class Timestamped extends Trait<{ id: string }>() {
+abstract class Timestamped extends Trait<{ id: string }> {
   createdAt = Date.now()
 }
 
@@ -72,21 +72,21 @@ The tag is **not** an own property and **not** enumerable — it won't appear in
 
 ---
 
-## `Trait<R>()`
+## `Trait<R>`
 
 ```ts
-function Trait<R extends object>(): AbstractConstructor<R>
+abstract class Trait<R extends object = {}>
 ```
 
-Creates an abstract base class that encodes required payload properties `R` at the type level. Impl classes extend it to declare what every variant's factory must return.
+Abstract base class that encodes required payload properties `R` at the type level. Impl classes extend it to declare what every variant's factory must return.
 
 ```ts
-abstract class HasId extends Trait<{ id: string }>() {
+abstract class HasId extends Trait<{ id: string }> {
   // shared implementation
   label() { return `[${(this as any).id}]` }
 }
 
-abstract class HasSize extends Trait<{ size: number }>() {
+abstract class HasSize extends Trait<{ size: number }> {
   isEmpty() { return (this as any).size === 0 }
 }
 
@@ -98,7 +98,7 @@ const Box = union([HasId, HasSize])({
 
 If a variant factory doesn't return an object satisfying all `Trait<R>` requirements from all impl classes, TypeScript surfaces an error on that specific factory — not on the whole union call.
 
-Classes that don't extend `Trait<R>()` are treated as `Trait<{}>` — they mix in properties and methods, but impose no payload requirements.
+Classes that don't extend `Trait<R>` are treated as `Trait<{}>` — they mix in properties and methods, but impose no payload requirements.
 
 ---
 
@@ -347,7 +347,7 @@ type FactoryPayload<Trait, Ignore extends keyof any = never>
 Derives the plain payload shape from a trait or impl class instance, stripping methods, the `[tag]` symbol, and any keys listed in `Ignore`. Useful for typing factory functions without repeating annotations.
 
 ```ts
-abstract class Node extends Trait<{ id: string; value: number }>() {}
+abstract class Node extends Trait<{ id: string; value: number }> {}
 
 type NodePayload = FactoryPayload<InstanceType<typeof Node>>
 // { id: string; value: number }

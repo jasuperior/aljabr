@@ -8,7 +8,7 @@ import {
     createOwner,
 } from "./context.ts";
 
-export abstract class Computable<T, E> extends Trait<{}>() {
+export abstract class Computable<T, E> extends Trait {
     async run(): Promise<Done<T, E>> {
         const self = this as unknown as Effect<T, E>;
         return await match(self, {

@@ -1,12 +1,22 @@
 import { defineConfig } from "vite";
 import { resolve } from "path";
+import dts from "vite-plugin-dts";
 
 export default defineConfig({
+    publicDir: false,
     build: {
         lib: {
-            entry: resolve(__dirname, "src/main.ts"),
-            name: "aljabr",
-            fileName: "aljabr",
+            entry: {
+                index: resolve(__dirname, "src/main.ts"),
+                prelude: resolve(__dirname, "src/prelude/index.ts"),
+            },
+            formats: ["es", "cjs"],
         },
     },
+    plugins: [
+        dts({
+            include: ["src"],
+            tsconfigPath: "./tsconfig.build.json",
+        }),
+    ],
 });

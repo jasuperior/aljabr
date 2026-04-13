@@ -1,7 +1,7 @@
 import { union, Trait, type Variant } from "../union.ts";
 import { match } from "../match.ts";
 
-export abstract class Traversable<T> extends Trait<{ value: unknown }>() {
+export abstract class Traversable<T> extends Trait<{ value: unknown }> {
     map<U>(fn: (value: T) => U): Tree<U> {
         return match(this as unknown as Tree<T>, {
             Leaf: ({ value }) => Tree.Leaf(fn(value)),

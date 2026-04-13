@@ -60,12 +60,12 @@ d.tags    // []
 
 ## Trait constraints
 
-Plain classes mix in behavior without imposing any requirements. `Trait<R>()` adds a type-level contract: every variant factory must return an object that satisfies `R`.
+Plain classes mix in behavior without imposing any requirements. `Trait<R>` adds a type-level contract: every variant factory must return an object that satisfies `R`.
 
 ```ts
 import { union, Trait, Union } from "aljabr"
 
-abstract class Identifiable extends Trait<{ id: string }>() {
+abstract class Identifiable extends Trait<{ id: string }> {
   describe() { return `[${(this as any).id}]` }
 }
 
@@ -80,11 +80,11 @@ The error surfaces on the specific variant that doesn't conform — not a crypti
 
 ### Combining Trait requirements
 
-When multiple impl classes each extend `Trait<R>()`, the requirements are intersected. Every variant must satisfy all of them:
+When multiple impl classes each extend `Trait<R>`, the requirements are intersected. Every variant must satisfy all of them:
 
 ```ts
-abstract class HasId    extends Trait<{ id: string }>() {}
-abstract class HasLabel extends Trait<{ label: string }>() {}
+abstract class HasId    extends Trait<{ id: string }> {}
+abstract class HasLabel extends Trait<{ label: string }> {}
 
 const Node = union([HasId, HasLabel])({
   Leaf:   (id: string, label: string) => ({ id, label }),
@@ -99,7 +99,7 @@ When writing factory functions for impl-based unions, typing the return can get 
 ```ts
 import { FactoryPayload } from "aljabr"
 
-abstract class HasId extends Trait<{ id: string; active: boolean }>() {}
+abstract class HasId extends Trait<{ id: string; active: boolean }> {}
 type Payload = FactoryPayload<InstanceType<typeof HasId>>
 // { id: string; active: boolean }
 
@@ -137,7 +137,7 @@ This matters: mutating one won't affect another, and you can safely attach addit
 When a variant's payload contains a key that an impl class also defines, the payload wins:
 
 ```ts
-abstract class Stateful extends Trait<{ active: boolean }>() {
+abstract class Stateful extends Trait<{ active: boolean }> {
   active = true  // default
 }
 
@@ -354,7 +354,7 @@ import { union, match, Trait, Variant } from "aljabr";
 
 // Impl class — shared behavior across all variants.
 // then() returns Result<R1, R2>, enabling typed .then() chains.
-abstract class Thenable<T> extends Trait<{ value: unknown }>() {
+abstract class Thenable<T> extends Trait<{ value: unknown }> {
     then<R1 = T, R2 = never>(
         onAccepted?: ((value: T) => R1 | PromiseLike<R1>) | null,
         onRejected?: ((reason: any) => R2 | PromiseLike<R2>) | null,
