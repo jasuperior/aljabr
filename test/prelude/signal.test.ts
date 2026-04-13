@@ -4,7 +4,13 @@ import {
     SignalState,
     type Active,
     type SignalState as SignalStateType,
+    type SignalProtocol,
 } from "../../src/prelude/signal";
+import {
+    Validation,
+    type Validation as ValidationType,
+} from "../../src/prelude/validation";
+import { match } from "../../src/match";
 import { getTag } from "../../src/union";
 
 // ---------------------------------------------------------------------------
@@ -150,5 +156,127 @@ describe("Signal reactivity", () => {
         trackIn(comp, () => s.peek());
         s.set(2);
         expect(dirty).toBe(false);
+    });
+    it("read() notifies a subscriber when set() is called", async () => {
+        const { createOwner, trackIn } = await import(
+            "../../src/prelude/context"
+        );
+        const s = Signal.create(1);
+        let dirty = false;
+        const comp = createOwner(null);
+        comp.dirty = () => { dirty = true; };
+        trackIn(comp, () => s.read());
+        s.set(2);
+        expect(dirty).toBe(true);
+    });
+});
+
+// ---------------------------------------------------------------------------
+// Signal<T, S> — custom state union
+// ---------------------------------------------------------------------------
+
+const validationProtocol: SignalProtocol<ValidationType<string, string>, string> = {
+    extract: (state) => match(state, {
+        Unvalidated: () => null,
+        Valid:       ({ value }) => value,
+        Invalid:     () => null,
+    }),
+};
+
+// Convenience factory — widens initial state to the full union type so
+// TypeScript infers S = Validation<string, string> rather than Unvalidated.
+const makeField = () =>
+    Signal.create(
+        Validation.Unvalidated() as ValidationType<string, string>,
+        validationProtocol,
+    );
+
+describe("Signal.create with custom protocol", () => {
+    it("starts with the provided initial state", () => {
+        const s = makeField();
+        expect(getTag(s.state)).toBe("Unvalidated");
+    });
+    it("get() extracts via protocol — returns null for Unvalidated", () => {
+        const s = makeField();
+        expect(s.get()).toBeNull();
+    });
+    it("set() accepts full variants", () => {
+        const s = makeField();
+        s.set(Validation.Valid("hello@example.com"));
+        expect(getTag(s.state)).toBe("Valid");
+        expect(s.get()).toBe("hello@example.com");
+    });
+    it("get() returns null for Invalid even after set()", () => {
+        const s = makeField();
+        s.set(Validation.Invalid(["bad format"]));
+        expect(s.get()).toBeNull();
+    });
+    it("peek() returns extracted value without tracking", () => {
+        const s = makeField();
+        s.set(Validation.Valid("test"));
+        expect(s.peek()).toBe("test");
+    });
+    it("dispose() makes set() a no-op", () => {
+        const s = makeField();
+        s.dispose();
+        s.set(Validation.Valid("after-dispose"));
+        expect(getTag(s.state)).toBe("Unvalidated");
+    });
+    it("isTerminal stops notifications when the terminal state is set", async () => {
+        const { createOwner, trackIn } = await import("../../src/prelude/context");
+        const terminalProtocol: SignalProtocol<ValidationType<string, string>, string> = {
+            extract: (state) => match(state, {
+                Unvalidated: () => null,
+                Valid:       ({ value }) => value,
+                Invalid:     () => null,
+            }),
+            isTerminal: (state) => getTag(state) === "Invalid",
+        };
+        const s = Signal.create(
+            Validation.Unvalidated() as ValidationType<string, string>,
+            terminalProtocol,
+        );
+        let notifyCount = 0;
+        const comp = createOwner(null);
+        comp.dirty = () => { notifyCount++; };
+        trackIn(comp, () => s.get());
+        s.set(Validation.Invalid(["error"]));
+        expect(notifyCount).toBe(0); // terminal — subscribers cleared, no notification
+        s.set(Validation.Valid("too late"));
+        expect(getTag(s.state)).toBe("Invalid"); // state frozen after terminal
+    });
+});
+
+describe("Signal<T, S> read()", () => {
+    it("returns the full state union (tracked)", async () => {
+        const { createOwner, trackIn } = await import("../../src/prelude/context");
+        const s = makeField();
+        let dirty = false;
+        const comp = createOwner(null);
+        comp.dirty = () => { dirty = true; };
+        trackIn(comp, () => s.read());
+        s.set(Validation.Invalid(["required"]));
+        expect(dirty).toBe(true);
+        const errors = match(s.state, {
+            Unvalidated: () => [] as string[],
+            Valid:       () => [] as string[],
+            Invalid:     ({ errors }) => errors,
+        });
+        expect(errors).toEqual(["required"]);
+    });
+});
+
+describe("Signal<T>.read() — default signal", () => {
+    it("returns SignalState<T> and registers a dependency", async () => {
+        const { createOwner, trackIn } = await import("../../src/prelude/context");
+        const s = Signal.create(42);
+        let dirty = false;
+        const comp = createOwner(null);
+        comp.dirty = () => { dirty = true; };
+        trackIn(comp, () => s.read());
+        s.set(99);
+        expect(dirty).toBe(true);
+        expect(getTag(s.read())).toBe("Active");
+        expectTypeOf(s.read()).toExtend<SignalStateType<number>>();
     });
 });

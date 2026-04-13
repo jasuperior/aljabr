@@ -40,20 +40,49 @@ export const SignalState = union([SignalLifecycle]).typed({
 });
 
 // ---------------------------------------------------------------------------
-// Signal<T> — reactive mutable container
+// SignalProtocol<S, T> — describes how to read T out of a custom state union S
+// ---------------------------------------------------------------------------
+
+export type SignalProtocol<S, T> = {
+    /**
+     * Extract the readable value from a state variant.
+     * Return `null` to indicate "no value available in this state."
+     */
+    extract: (state: S) => T | null;
+    /**
+     * Return `true` to stop notifying subscribers (equivalent to `Disposed`).
+     * Defaults to `() => false` if omitted — all state transitions notify.
+     */
+    isTerminal?: (state: S) => boolean;
+};
+
+// ---------------------------------------------------------------------------
+// Signal<T, S> — reactive mutable container
+//
+// S defaults to `never`, which selects the standard SignalState<T> lifecycle.
+// Provide S (a custom union) and a SignalProtocol<S, T> to replace the
+// lifecycle with any domain-specific state machine.
 // ---------------------------------------------------------------------------
 
 /**
  * A reactive, mutable value container.
  *
- * Reading via `get()` inside a reactive context (a `Derived` computation or
- * a `watchEffect` callback) automatically registers this signal as a
- * dependency. Writing via `set()` notifies all current dependents.
+ * **Default form** — `Signal<T>`:
+ * Reading via `get()` inside a reactive context automatically registers this
+ * signal as a dependency. Writing via `set(value)` wraps the value in `Active`
+ * and notifies all dependents. The lifecycle state (`Unset | Active | Disposed`)
+ * is available via `.state` and `.read()`.
  *
- * The current lifecycle state is available as `signal.state` and is fully
- * pattern-matchable via `match`.
+ * **Custom state form** — `Signal<T, S>`:
+ * Pass any union type `S` and a `SignalProtocol<S, T>` to `Signal.create()`.
+ * `set()` now accepts a full `S` variant. `get()` extracts `T | null` via the
+ * protocol's `extract` function. `read()` returns the full `S` state (tracked).
  *
- * @example
+ * `.read()` is a tracked read that returns the full state union (either
+ * `SignalState<T>` or `S`). Use it inside reactive contexts when you need to
+ * pattern-match on the state rather than just extract the value.
+ *
+ * @example Default signal
  * const count = Signal.create(0);
  * count.set(1);
  * match(count.state, {
@@ -61,44 +90,114 @@ export const SignalState = union([SignalLifecycle]).typed({
  *   Active:   ({ value }) => `value is ${value}`,
  *   Disposed: () => "cleaned up",
  * });
+ *
+ * @example Custom state signal (domain-specific lifecycle)
+ * const field = Signal.create(Validation.Unvalidated<string, string>(), {
+ *   extract: (state) => match(state, {
+ *     Unvalidated: () => null,
+ *     Valid:       ({ value }) => value,
+ *     Invalid:     () => null,
+ *   }),
+ * });
+ * field.set(Validation.Valid("hello@example.com"));
+ * field.get();    // "hello@example.com"
+ * field.read();   // Valid { value: "hello@example.com" }  (tracked)
  */
-export class Signal<T> {
-    #state: SignalState<T>;
+export class Signal<T, S = never> {
+    readonly #protocol: SignalProtocol<S, T> | null;
+    #rawState: SignalState<T> | S;
+    #disposed = false;
     readonly #subscribers = new Map<Computation, () => void>();
 
-    private constructor(initial?: T) {
-        this.#state =
-            initial !== undefined
-                ? SignalState.Active(initial)
-                : SignalState.Unset();
+    private constructor(
+        initialState: SignalState<T> | S,
+        protocol: SignalProtocol<S, T> | null = null,
+    ) {
+        this.#rawState = initialState;
+        this.#protocol = protocol;
     }
 
     /** Create a signal with no initial value (state starts as `Unset`). */
     static create<T>(): Signal<T>;
     /** Create a signal with an initial value (state starts as `Active`). */
     static create<T>(initial: T): Signal<T>;
-    static create<T>(initial?: T): Signal<T> {
-        const sig = new Signal<T>(initial as T);
+    /**
+     * Create a signal whose state is a custom union `S`.
+     * `set()` accepts full `S` variants. `get()` extracts `T | null` via
+     * `protocol.extract`. `read()` returns the full `S` state (tracked).
+     */
+    static create<S, T>(initial: S, protocol: SignalProtocol<S, T>): Signal<T, S>;
+    static create<T, S>(
+        initialOrState?: T | S,
+        protocol?: SignalProtocol<S, T>,
+    ): Signal<T> | Signal<T, S> {
         const owner = getCurrentComputation();
-        if (owner) owner.cleanups.add(() => sig.dispose());
-        return sig;
-    }
 
-    /** The current lifecycle state. Pattern-match this with `match`. */
-    get state(): SignalState<T> {
-        return this.#state;
+        if (protocol !== undefined) {
+            const sig = new Signal<T, S>(initialOrState as S, protocol);
+            if (owner) owner.cleanups.add(() => sig.dispose());
+            return sig;
+        }
+
+        const defaultState =
+            initialOrState !== undefined
+                ? SignalState.Active(initialOrState as T)
+                : SignalState.Unset();
+        const sig = new Signal<T>(defaultState, null);
+        if (owner) owner.cleanups.add(() => sig.dispose());
+        return sig as Signal<T>;
     }
 
     /**
-     * Read the current value. Registers this signal as a dependency in
-     * the currently active tracking context, if any.
+     * The current state. Untracked — safe to read outside reactive contexts.
+     * Pattern-match this with `match`.
+     *
+     * For tracked reads inside reactive contexts, use `read()` instead.
+     */
+    get state(): [S] extends [never] ? SignalState<T> : S {
+        return this.#rawState as [S] extends [never] ? SignalState<T> : S;
+    }
+
+    /**
+     * Read the current value, extracting `T | null` from the current state.
+     * Registers this signal as a dependency in the active tracking context.
+     *
+     * For the full state union (e.g. to access error payloads on `Invalid`),
+     * use `read()` instead.
      */
     get(): T | null {
         const comp = getCurrentComputation();
         if (comp && !this.#subscribers.has(comp)) {
             this.#trackComputation(comp);
         }
-        return this.#state.get();
+        if (this.#protocol !== null) {
+            return this.#protocol.extract(this.#rawState as S);
+        }
+        return (this.#rawState as SignalState<T>).get();
+    }
+
+    /**
+     * Read the full state union and register this signal as a dependency.
+     *
+     * Unlike `get()` which extracts only `T | null`, `read()` returns the
+     * complete state — use it when you need to pattern-match inside a reactive
+     * context (e.g. to handle `Invalid` errors, `Unset`, etc.).
+     *
+     * @example
+     * watchEffect(async () => {
+     *   return match(field.read(), {
+     *     Unvalidated: () => null,
+     *     Valid:       ({ value }) => submit(value),
+     *     Invalid:     ({ errors }) => displayErrors(errors),
+     *   });
+     * }, onChange);
+     */
+    read(): [S] extends [never] ? SignalState<T> : S {
+        const comp = getCurrentComputation();
+        if (comp && !this.#subscribers.has(comp)) {
+            this.#trackComputation(comp);
+        }
+        return this.#rawState as [S] extends [never] ? SignalState<T> : S;
     }
 
     /**
@@ -107,34 +206,55 @@ export class Signal<T> {
      * want to avoid triggering re-evaluation.
      */
     peek(): T | null {
-        return this.#state.get();
+        if (this.#protocol !== null) {
+            return this.#protocol.extract(this.#rawState as S);
+        }
+        return (this.#rawState as SignalState<T>).get();
     }
 
     /**
-     * Write a new value and notify all current dependents.
-     * No-op if the signal has been disposed.
+     * Write a new state and notify all current dependents.
+     *
+     * - Default `Signal<T>`: accepts a plain `T` value, wrapped in `Active`.
+     * - Custom `Signal<T, S>`: accepts a full `S` variant.
+     *
+     * No-op after disposal or after `isTerminal` returns `true` for the
+     * most recently set state.
      */
-    set(value: T): void {
-        const disposed = match(this.#state, {
-            Unset: () => false,
-            Active: () => false,
-            Disposed: () => true,
-        });
-        if (disposed) return;
-
-        this.#state = SignalState.Active(value);
-
-        for (const comp of [...this.#subscribers.keys()]) {
-            scheduleNotification(comp);
+    set(value: [S] extends [never] ? T : S): void {
+        if (this.#protocol !== null) {
+            if (this.#disposed) return;
+            const newState = value as unknown as S;
+            this.#rawState = newState;
+            if (this.#protocol.isTerminal?.(newState)) {
+                this.#disposed = true;
+                this.#subscribers.clear();
+                return;
+            }
+            for (const comp of [...this.#subscribers.keys()]) {
+                scheduleNotification(comp);
+            }
+        } else {
+            if (this.#disposed) return;
+            this.#rawState = SignalState.Active(value as unknown as T);
+            for (const comp of [...this.#subscribers.keys()]) {
+                scheduleNotification(comp);
+            }
         }
     }
 
     /**
-     * Transition to `Disposed` and clear all subscribers.
-     * After disposal, `set()` is a no-op and `get()` returns null.
+     * Dispose this signal and clear all subscribers.
+     *
+     * For default signals, transitions state to `Disposed`.
+     * For custom-union signals, marks the signal as inert without mutating
+     * the state union — subsequent `set()` calls are no-ops.
      */
     dispose(): void {
-        this.#state = SignalState.Disposed();
+        this.#disposed = true;
+        if (this.#protocol === null) {
+            this.#rawState = SignalState.Disposed();
+        }
         this.#subscribers.clear();
     }
 
