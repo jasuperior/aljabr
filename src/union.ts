@@ -366,7 +366,7 @@ interface UnionBuilder<Impl extends AbstractConstructor[]> {
      *
      * Property — call directly: `union([Impl]).typed({ ... })`
      */
-    readonly typed: <Factories extends Record<string, (...args: any[]) => any>>(
+    readonly typed: <Factories extends Record<string, (...args: any[]) => AllRequired<Impl>>>(
         factories: Factories,
     ) => Factories;
 }
