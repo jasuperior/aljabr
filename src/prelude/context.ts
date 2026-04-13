@@ -140,6 +140,24 @@ export function runInContext<T>(owner: Computation, fn: () => T): T {
 }
 
 /**
+ * Run `fn` outside any reactive tracking context.
+ * Signal reads inside `fn` will not register dependencies, and
+ * `Signal.create()` calls will not be auto-registered with any owner.
+ *
+ * Use this when you need to read a signal's current value without
+ * subscribing, or when creating reactive nodes that should be owned
+ * by a longer-lived context rather than the current computation.
+ */
+export function untrack<T>(fn: () => T): T {
+    const saved = stack.splice(0);
+    try {
+        return fn();
+    } finally {
+        stack.push(...saved);
+    }
+}
+
+/**
  * Batch multiple signal writes into a single notification pass.
  *
  * All `Signal.set()` calls inside `fn` are collected; dependents are

@@ -33,24 +33,24 @@ type PathValue<T, P extends Path<T>> = ...
 
 ```ts
 class Ref<T extends object> {
-  static create<T extends object>(initial: T): Ref<T>
+    static create<T extends object>(initial: T): Ref<T>;
 
-  // Tracked read — registers exactly `path` as a dependency in the current Computation.
-  // One call = one subscription. Does NOT subscribe to intermediate paths.
-  get<P extends Path<T>>(path: P): PathValue<T, P>
+    // Tracked read — registers exactly `path` as a dependency in the current Computation.
+    // One call = one subscription. Does NOT subscribe to intermediate paths.
+    get<P extends Path<T>>(path: P): PathValue<T, P>;
 
-  // Replace the subtree at `path` with `value`.
-  // Notifies ALL leaf Signal subscribers under `path` — no diffing.
-  // Equality guard: if ref-equal to current value, no notification is emitted.
-  set<P extends Path<T>>(path: P, value: PathValue<T, P>): void
+    // Replace the subtree at `path` with `value`.
+    // Notifies ALL leaf Signal subscribers under `path` — no diffing.
+    // Equality guard: if ref-equal to current value, no notification is emitted.
+    set<P extends Path<T>>(path: P, value: PathValue<T, P>): void;
 
-  // Deep structural diff of old vs new value at `path`.
-  // Only notifies leaf Signals whose values actually changed.
-  // Equality guard applied at each node before recursing (Strategy C).
-  patch<P extends Path<T>>(path: P, value: PathValue<T, P>): void
+    // Deep structural diff of old vs new value at `path`.
+    // Only notifies leaf Signals whose values actually changed.
+    // Equality guard applied at each node before recursing (Strategy C).
+    patch<P extends Path<T>>(path: P, value: PathValue<T, P>): void;
 
-  // Dispose all internal leaf Signals and remove from owner tree.
-  dispose(): void
+    // Dispose all internal leaf Signals and remove from owner tree.
+    dispose(): void;
 }
 ```
 
@@ -63,9 +63,9 @@ class Ref<T extends object> {
 
 ### `set` vs `patch` semantics
 
-| Method | Diffing | Use when |
-|---|---|---|
-| `set(path, value)` | None — notifies all leaves under path | You know exactly what changed, or value is a primitive |
+| Method               | Diffing                                      | Use when                                               |
+| -------------------- | -------------------------------------------- | ------------------------------------------------------ |
+| `set(path, value)`   | None — notifies all leaves under path        | You know exactly what changed, or value is a primitive |
 | `patch(path, value)` | Deep structural diff with ref-equality guard | Value is a complex object and only some fields changed |
 
 Both methods perform a top-level `===` equality guard before doing any work. If the new value is
@@ -116,7 +116,9 @@ move<P extends ArrayPath<T>>(path: P, from: number, to: number): void
 
 ## Phase 2 or 3 — `remove` / `delete`
 
-Scope TBD. Removing a property from an object-type Ref (or an element from an array by key rather
+Scope TBD.
+
+Removing a property from an object-type Ref (or an element from an array by key rather
 than splice) requires:
 
 - Disposing the leaf Signal at that path
@@ -125,16 +127,24 @@ than splice) requires:
 - TypeScript: making the path optional in the type after deletion (likely requires a type parameter
   mutation or separate `PartialRef<T>` variant)
 
+The user would like to enable `Ref`'s to accept `Signal` values as properties. Setting a property to a `Signal` or `Ref` type requires:
+
+- Deciding what happens when `.set(path, Signal<T>)` is called. does the signal delegate its values to the slot?
+- Deciding what happens when a `Signal` value is removed and replaced.
+    - Signal will have to be cleaned up somehow when detached
+- Deciding what happens when `.at(path)` if a `Signal` has been set? Should the source `Signal` be returned, or a new one?
+
 Defer until the scope is clear. Do not add to phase 1 or 2 without a full design pass.
 
 ---
 
 ## Deferred
 
-| Feature | Notes |
-|---|---|
-| `Unset` state | Phase 2 — requires careful typing of get() return |
-| `.at(path)` | Phase 2 — depends on stable handle caching strategy |
-| Array methods | Phase 2 — index reuse + keyed diffing needs separate design |
-| `remove`/`delete` | Phase 2 or 3 — PartialRef typing is non-trivial |
-| `Ref<T>` from `Ref<U>` projection | Not yet discussed — map/transform a Ref into another shape |
+| Feature                           | Notes                                                       |
+| --------------------------------- | ----------------------------------------------------------- |
+| `Unset` state                     | Phase 2 — requires careful typing of get() return           |
+| `.at(path)`                       | Phase 2 — depends on stable handle caching strategy         |
+| Array methods                     | Phase 2 — index reuse + keyed diffing needs separate design |
+| `remove`/`delete`                 | Phase 2 or 3 — PartialRef typing is non-trivial             |
+| `.set(path, Signal<T>)`           | Phase 2 or 3 — requires further clarification of scope.     |
+| `Ref<T>` from `Ref<U>` projection | Not yet discussed — map/transform a Ref into another shape  |
