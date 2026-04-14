@@ -1,0 +1,14 @@
+{
+    "anyBranch": false,
+    "cleanup": true,
+    "tests": true,
+    "yolo": false,
+    "publish": true,
+    "preview": false,
+    "tag": "latest",
+    "yarn": false,
+    "pnpm": false,
+    "contents": "dist",
+    "releaseDraft": true,
+    "2fa": true
+}

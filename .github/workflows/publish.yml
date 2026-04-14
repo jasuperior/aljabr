@@ -1,0 +1,28 @@
+name: Publish Package to npm
+
+on:
+    release:
+        types: [published]
+    workflow_dispatch: # Allows manual run from Actions tab
+
+jobs:
+    publish:
+        runs-on: ubuntu-latest
+        permissions:
+            contents: read
+            id-token: write # Required for OIDC and provenance
+        steps:
+            - uses: actions/checkout@v4
+
+            - uses: actions/setup-node@v4
+              with:
+                  node-version: "20.x"
+                  registry-url: "https://registry.npmjs.org"
+                  cache: "npm"
+
+            - run: npm ci
+            - run: npm run build # if you have a build step
+            - run: npm publish --provenance --access public
+              env:
+                  NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+                  NPM_CONFIG_PROVENANCE: true

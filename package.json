@@ -47,10 +47,16 @@
         "preview": "vite preview",
         "test": "vitest run",
         "test:watch": "vitest",
-        "test:coverage": "vitest run --coverage"
+        "test:coverage": "vitest run --coverage",
+        "release": "np",
+        "release:patch": "np patch",
+        "release:minor": "np minor",
+        "release:major": "np major"
     },
     "devDependencies": {
         "@types/node": "^25.5.0",
+        "@vitest/coverage-v8": "^4.1.2",
+        "np": "^11.0.3",
         "typescript": "~5.9.3",
         "vite": "^8.0.5",
         "vite-plugin-dts": "^4.5.4",
