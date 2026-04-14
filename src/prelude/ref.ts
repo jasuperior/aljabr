@@ -1,5 +1,6 @@
 import { Signal } from "./signal.ts";
 import { Derived } from "./derived.ts";
+import { Option } from "./option.ts";
 import { getCurrentComputation, untrack } from "./context.ts";
 
 // ---------------------------------------------------------------------------
@@ -75,6 +76,8 @@ type RefHolder = {
     unset: boolean;
     signals: Map<string, Signal<unknown>>;
     handles: Map<string, Ref<any> | Derived<unknown>>;
+    bindings: Map<string, () => void>;       // path → unsubscribe fn
+    boundSignals: Map<string, Signal<unknown>>; // path → source signal
     disposed: boolean;
 };
 
@@ -242,6 +245,8 @@ export class Ref<T extends object> {
             unset: initial === undefined,
             signals: new Map(),
             handles: new Map(),
+            bindings: new Map(),
+            boundSignals: new Map(),
             disposed: false,
         };
         const ref = new Ref<T>(holder, "");
@@ -281,6 +286,13 @@ export class Ref<T extends object> {
             ? undefined
             : getAtPath(this.#holder.state, fullPath);
         if (current === value) return;
+        // Implicitly unbind — a plain write always wins over a live binding
+        const unsub = this.#holder.bindings.get(fullPath);
+        if (unsub) {
+            unsub();
+            this.#holder.bindings.delete(fullPath);
+            this.#holder.boundSignals.delete(fullPath);
+        }
         this.#holder.state = this.#holder.unset
             ? setAtPath(null, fullPath, value)
             : setAtPath(this.#holder.state, fullPath, value);
@@ -439,6 +451,48 @@ export class Ref<T extends object> {
     }
 
     /**
+     * Establish a live binding from `signal` to `path`.
+     *
+     * When `signal` changes, the Ref path is updated synchronously. Re-binding
+     * a path silently replaces the existing subscription. Calling `set(path, v)`
+     * after binding implicitly unbinds — plain writes always win.
+     *
+     * When the source signal is disposed, the path receives `undefined` and
+     * the binding is released.
+     */
+    bind<P extends Path<T>>(path: P, signal: Signal<PathValue<T, P>>): void {
+        if (this.#holder.disposed) return;
+        const fullPath = resolveFullPath(this.#prefix, path as string);
+        this.#attachBinding(fullPath, signal as Signal<unknown>);
+    }
+
+    /**
+     * Release the binding at `path` without writing a value.
+     * The path retains its last known value. No-op if no binding exists.
+     */
+    unbind<P extends Path<T>>(path: P): void {
+        const fullPath = resolveFullPath(this.#prefix, path as string);
+        const unsub = this.#holder.bindings.get(fullPath);
+        if (unsub) {
+            unsub();
+            this.#holder.bindings.delete(fullPath);
+            this.#holder.boundSignals.delete(fullPath);
+        }
+    }
+
+    /**
+     * Returns the raw bound `Signal` at `path`, or `null` if no binding exists.
+     *
+     * Use this to access the full custom state `S` of a `Signal<T, S>` that
+     * was bound via `.bind()`. `.at()` and `.maybeAt()` only expose the
+     * extracted `T` value.
+     */
+    boundAt<P extends Path<T>>(path: P): Signal<PathValue<T, P>> | null {
+        const fullPath = resolveFullPath(this.#prefix, path as string);
+        return (this.#holder.boundSignals?.get(fullPath) as Signal<PathValue<T, P>>) ?? null;
+    }
+
+    /**
      * Dispose this Ref and all internal reactive nodes.
      *
      * No-op on sub-Refs created via `.at()` — only the root Ref (created via
@@ -448,14 +502,150 @@ export class Ref<T extends object> {
         if (this.#prefix !== "") return; // sub-Refs are not root owners
         if (this.#holder.disposed) return;
         this.#holder.disposed = true;
+        for (const unsub of this.#holder.bindings.values()) unsub();
+        this.#holder.bindings.clear();
+        this.#holder.boundSignals.clear();
         for (const sig of this.#holder.signals.values()) sig.dispose();
         this.#holder.signals.clear();
         this.#holder.handles.clear();
     }
 
+    /**
+     * Remove the value at `path` and all descendant paths.
+     *
+     * All descendant signals receive `undefined` and notify their subscribers.
+     * Cached `.at()` sub-Ref handles remain alive and transition to `isUnset`.
+     * Any binding at `path` or a descendant is also released.
+     * `get(path)` returns `undefined` after deletion.
+     */
+    delete<P extends Path<T>>(path: P): void {
+        if (this.#holder.disposed) return;
+        const fullPath = resolveFullPath(this.#prefix, path as string);
+
+        // Release any bindings at or under this path
+        for (const [key, unsub] of [...this.#holder.bindings]) {
+            if (key === fullPath || key.startsWith(fullPath + ".")) {
+                unsub();
+                this.#holder.bindings.delete(key);
+            }
+        }
+
+        // Remove the subtree from state
+        this.#holder.state = this.#deleteAtPath(this.#holder.state, fullPath.split("."));
+
+        // If root state becomes empty/null, mark unset
+        if (this.#prefix === "" && (this.#holder.state === null || this.#holder.state === undefined)) {
+            this.#holder.unset = true;
+        }
+
+        // Notify all signals at or under fullPath with undefined
+        for (const [key, sig] of this.#holder.signals) {
+            if (key === fullPath || key.startsWith(fullPath + ".")) {
+                sig.set(undefined as unknown);
+            }
+        }
+
+        // Update ancestor signals to reflect the structural change
+        const parts = fullPath.split(".");
+        for (let i = parts.length - 1; i > 0; i--) {
+            const ancestorPath = parts.slice(0, i).join(".");
+            const sig = this.#holder.signals.get(ancestorPath);
+            if (sig) sig.set(getAtPath(this.#holder.state, ancestorPath));
+        }
+
+        // Transition any cached sub-Ref handle to isUnset
+        const subRef = this.#holder.handles.get(fullPath);
+        if (subRef instanceof Ref) {
+            subRef.#holder.unset = true;
+        }
+    }
+
+    /**
+     * Returns a `Derived<Option<V>>` handle for `path` — `Some(value)` when
+     * the path exists, `None` when deleted or unset.
+     *
+     * Use this when you need to observe the presence or absence of a path.
+     * `.at()` is unchanged and deletion-unaware.
+     */
+    maybeAt<P extends Path<T>>(
+        path: P,
+    ): Derived<Option<PathValue<T, P>>> {
+        // eslint-disable-next-line @typescript-eslint/no-this-alias
+        const self = this;
+        return untrack(() =>
+            Derived.create((): Option<PathValue<T, P>> => {
+                const value = self.get(path);
+                return value === undefined
+                    ? Option.None()
+                    : Option.Some(value as NonNullable<PathValue<T, P>>);
+            }),
+        );
+    }
+
     // -------------------------------------------------------------------------
     // Internal
     // -------------------------------------------------------------------------
+
+    #attachBinding(fullPath: string, signal: Signal<unknown>): void {
+        // Release any existing binding at this path
+        const existing = this.#holder.bindings.get(fullPath);
+        if (existing) {
+            existing();
+            this.#holder.bindings.delete(fullPath);
+            this.#holder.boundSignals.delete(fullPath);
+        }
+
+        // Write the current value immediately
+        const current = signal.get();
+        this.#setRaw(fullPath, current);
+
+        // Subscribe for future changes
+        const unsub = signal.subscribe((value) => {
+            if (value === null) {
+                // Source signal disposed — push undefined and release binding
+                this.#setRaw(fullPath, undefined);
+                this.#holder.bindings.delete(fullPath);
+                this.#holder.boundSignals.delete(fullPath);
+            } else {
+                this.#setRaw(fullPath, value);
+            }
+        });
+
+        this.#holder.bindings.set(fullPath, unsub);
+        this.#holder.boundSignals.set(fullPath, signal);
+    }
+
+    /** Write a value directly to the state + notify related signals, without unbinding. */
+    #setRaw(fullPath: string, value: unknown): void {
+        this.#holder.state = this.#holder.unset
+            ? setAtPath(null, fullPath, value)
+            : setAtPath(this.#holder.state, fullPath, value);
+        this.#holder.unset = false;
+        this.#notifyRelated(fullPath);
+    }
+
+    #deleteAtPath(obj: unknown, parts: string[]): unknown {
+        if (parts.length === 0 || obj == null) return obj;
+        const [head, ...tail] = parts;
+        if (tail.length === 0) {
+            if (Array.isArray(obj)) {
+                const arr = [...obj];
+                arr.splice(Number(head), 1);
+                return arr;
+            }
+            const record = { ...(obj as Record<string, unknown>) };
+            delete record[head];
+            return record;
+        }
+        if (Array.isArray(obj)) {
+            const arr = [...obj];
+            arr[Number(head)] = this.#deleteAtPath(arr[Number(head)], tail);
+            return arr;
+        }
+        const record = { ...(obj as Record<string, unknown>) };
+        record[head] = this.#deleteAtPath(record[head], tail);
+        return record;
+    }
 
     #getOrCreateSignal(fullPath: string): Signal<unknown> {
         let sig = this.#holder.signals.get(fullPath);

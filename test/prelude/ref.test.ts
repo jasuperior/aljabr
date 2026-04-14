@@ -1,6 +1,9 @@
 import { describe, expect, it, expectTypeOf, vi } from "vitest";
 import { Ref, type PathValue } from "../../src/prelude/ref";
+import { Signal } from "../../src/prelude/signal";
 import { Derived } from "../../src/prelude/derived";
+import { Option, type Some, type None } from "../../src/prelude/option";
+import { getTag } from "../../src/union";
 import { batch, createOwner, trackIn } from "../../src/prelude/context";
 
 // ---------------------------------------------------------------------------
@@ -605,6 +608,248 @@ describe("batch + Ref", () => {
 
         expect(dirty).toHaveBeenCalledTimes(1);
         expect(ref.get("user.name")).toBe("Carol");
+    });
+});
+
+// ---------------------------------------------------------------------------
+// delete
+// ---------------------------------------------------------------------------
+
+describe("ref.delete", () => {
+    it("removes an object key — get returns undefined", () => {
+        const ref = makeState();
+        ref.delete("user.name");
+        expect(ref.get("user.name")).toBeUndefined();
+    });
+
+    it("cascades to descendant signals", () => {
+        const ref = makeState();
+        const nameComp = createOwner(null);
+        const nameDirty = vi.fn();
+        nameComp.dirty = nameDirty;
+        const ageComp = createOwner(null);
+        const ageDirty = vi.fn();
+        ageComp.dirty = ageDirty;
+
+        trackIn(nameComp, () => ref.get("user.name"));
+        trackIn(ageComp, () => ref.get("user.age"));
+
+        ref.delete("user");
+
+        expect(nameDirty).toHaveBeenCalledTimes(1);
+        expect(ageDirty).toHaveBeenCalledTimes(1);
+    });
+
+    it("notifies exact-path subscribers", () => {
+        const ref = makeState();
+        const comp = createOwner(null);
+        const dirty = vi.fn();
+        comp.dirty = dirty;
+
+        trackIn(comp, () => ref.get("active"));
+        ref.delete("active");
+        expect(dirty).toHaveBeenCalledTimes(1);
+    });
+
+    it("does not notify unrelated path subscribers", () => {
+        const ref = makeState();
+        const comp = createOwner(null);
+        const dirty = vi.fn();
+        comp.dirty = dirty;
+
+        trackIn(comp, () => ref.get("active"));
+        ref.delete("user.name");
+        expect(dirty).not.toHaveBeenCalled();
+    });
+
+    it("cached .at() sub-Ref stays alive and transitions to isUnset", () => {
+        const ref = makeState();
+        const userRef = ref.at("user") as Ref<{ name: string; age: number }>;
+        ref.delete("user");
+        expect(userRef.isUnset).toBe(true);
+        expect(ref.at("user")).toBe(userRef); // same cached instance
+    });
+
+    it("re-setting a deleted path restores the value", () => {
+        const ref = makeState();
+        ref.delete("user.name");
+        ref.set("user.name", "Carol");
+        expect(ref.get("user.name")).toBe("Carol");
+    });
+
+    it("releases a binding at the deleted path", () => {
+        const ref = makeState();
+        const sig = Signal.create("Bound");
+        ref.bind("user.name", sig);
+        ref.delete("user.name");
+        sig.set("After delete");
+        // Binding released — the set on sig should not update the ref
+        expect(ref.get("user.name")).toBeUndefined();
+    });
+});
+
+// ---------------------------------------------------------------------------
+// maybeAt
+// ---------------------------------------------------------------------------
+
+describe("ref.maybeAt", () => {
+    it("returns Some(value) when path exists", () => {
+        const ref = makeState();
+        const handle = ref.maybeAt("user.name");
+        const result = handle.get();
+        expect(result).not.toBeNull();
+        expect(getTag(result!)).toBe("Some");
+        expect((result as Some<string>).value).toBe("Alice");
+    });
+
+    it("returns None after the path is deleted", () => {
+        const ref = makeState();
+        const handle = ref.maybeAt("user.name");
+        ref.delete("user.name");
+        const result = handle.get();
+        expect(result).not.toBeNull();
+        expect(getTag(result!)).toBe("None");
+    });
+
+    it("returns None for an Unset Ref", () => {
+        const ref = Ref.create<State>();
+        const handle = ref.maybeAt("active");
+        const result = handle.get();
+        expect(result).not.toBeNull();
+        expect(getTag(result!)).toBe("None");
+    });
+
+    it("transitions from None to Some when path is re-set after deletion", () => {
+        const ref = makeState();
+        const handle = ref.maybeAt("active");
+        ref.delete("active");
+        expect(getTag(handle.get()!)).toBe("None");
+        ref.set("active", false);
+        expect(getTag(handle.get()!)).toBe("Some");
+    });
+
+    it("each call returns a fresh Derived (not cached)", () => {
+        const ref = makeState();
+        // maybeAt is not cached — this is intentional, it creates a new Derived
+        const a = ref.maybeAt("active");
+        const b = ref.maybeAt("active");
+        expect(a).not.toBe(b);
+    });
+});
+
+// ---------------------------------------------------------------------------
+// bind / unbind / boundAt
+// ---------------------------------------------------------------------------
+
+describe("ref.bind", () => {
+    it("sets the path to the signal's current value immediately", () => {
+        const ref = makeState();
+        const sig = Signal.create("Bound");
+        ref.bind("user.name", sig);
+        expect(ref.get("user.name")).toBe("Bound");
+    });
+
+    it("updates the path when the signal changes", () => {
+        const ref = makeState();
+        const sig = Signal.create("Bound");
+        ref.bind("user.name", sig);
+        sig.set("Updated");
+        expect(ref.get("user.name")).toBe("Updated");
+    });
+
+    it("notifies Ref subscribers when the bound signal changes", () => {
+        const ref = makeState();
+        const sig = Signal.create("Bound");
+        ref.bind("user.name", sig);
+
+        const comp = createOwner(null);
+        const dirty = vi.fn();
+        comp.dirty = dirty;
+        trackIn(comp, () => ref.get("user.name"));
+
+        sig.set("Updated");
+        expect(dirty).toHaveBeenCalledTimes(1);
+    });
+
+    it("re-binding replaces the existing subscription", () => {
+        const ref = makeState();
+        const sigA = Signal.create("A");
+        const sigB = Signal.create("B");
+        ref.bind("user.name", sigA);
+        ref.bind("user.name", sigB);
+
+        sigA.set("A-updated");
+        expect(ref.get("user.name")).toBe("B"); // still B, sigA detached
+
+        sigB.set("B-updated");
+        expect(ref.get("user.name")).toBe("B-updated");
+    });
+
+    it("source signal disposal sets path to undefined and releases binding", () => {
+        const ref = makeState();
+        const sig = Signal.create("Bound");
+        ref.bind("user.name", sig);
+        sig.dispose();
+        expect(ref.get("user.name")).toBeUndefined();
+        expect(ref.boundAt("user.name")).toBeNull();
+    });
+});
+
+describe("ref.set — implicit unbind", () => {
+    it("plain set() unbinds and the old signal no longer drives the path", () => {
+        const ref = makeState();
+        const sig = Signal.create("Bound");
+        ref.bind("user.name", sig);
+        ref.set("user.name", "Plain");
+        sig.set("Signal-updated");
+        expect(ref.get("user.name")).toBe("Plain");
+    });
+
+    it("boundAt returns null after implicit unbind via set()", () => {
+        const ref = makeState();
+        const sig = Signal.create("Bound");
+        ref.bind("user.name", sig);
+        ref.set("user.name", "Plain");
+        expect(ref.boundAt("user.name")).toBeNull();
+    });
+});
+
+describe("ref.unbind", () => {
+    it("releases the binding without changing the current value", () => {
+        const ref = makeState();
+        const sig = Signal.create("Bound");
+        ref.bind("user.name", sig);
+        ref.unbind("user.name");
+        expect(ref.get("user.name")).toBe("Bound"); // last value retained
+        sig.set("After unbind");
+        expect(ref.get("user.name")).toBe("Bound"); // no longer tracking
+    });
+
+    it("boundAt returns null after unbind", () => {
+        const ref = makeState();
+        const sig = Signal.create("Bound");
+        ref.bind("user.name", sig);
+        ref.unbind("user.name");
+        expect(ref.boundAt("user.name")).toBeNull();
+    });
+
+    it("is a no-op when no binding exists", () => {
+        const ref = makeState();
+        expect(() => ref.unbind("user.name")).not.toThrow();
+    });
+});
+
+describe("ref.boundAt", () => {
+    it("returns the bound signal", () => {
+        const ref = makeState();
+        const sig = Signal.create("Bound");
+        ref.bind("user.name", sig);
+        expect(ref.boundAt("user.name")).toBe(sig);
+    });
+
+    it("returns null when no binding exists", () => {
+        const ref = makeState();
+        expect(ref.boundAt("user.name")).toBeNull();
     });
 });
 

@@ -108,6 +108,7 @@ export class Signal<T, S = never> {
     #rawState: SignalState<T> | S;
     #disposed = false;
     readonly #subscribers = new Map<Computation, () => void>();
+    readonly #valueSubscribers = new Set<(value: T | null) => void>();
 
     private constructor(
         initialState: SignalState<T> | S,
@@ -231,16 +232,34 @@ export class Signal<T, S = never> {
                 this.#subscribers.clear();
                 return;
             }
+            const extracted = this.#protocol.extract(newState);
+            for (const cb of this.#valueSubscribers) cb(extracted);
             for (const comp of [...this.#subscribers.keys()]) {
                 scheduleNotification(comp);
             }
         } else {
             if (this.#disposed) return;
             this.#rawState = SignalState.Active(value as unknown as T);
+            const extracted = value as unknown as T;
+            for (const cb of this.#valueSubscribers) cb(extracted);
             for (const comp of [...this.#subscribers.keys()]) {
                 scheduleNotification(comp);
             }
         }
+    }
+
+    /**
+     * Register a synchronous callback that fires on every value change.
+     * The callback receives the extracted `T | null` value (same as `get()`).
+     * Returns an unsubscribe function.
+     *
+     * Unlike `get()`, this does not register a reactive dependency — it is a
+     * raw push subscription intended for bridging signals into external systems
+     * (e.g. `Ref.bind()`).
+     */
+    subscribe(callback: (value: T | null) => void): () => void {
+        this.#valueSubscribers.add(callback);
+        return () => this.#valueSubscribers.delete(callback);
     }
 
     /**
@@ -256,6 +275,9 @@ export class Signal<T, S = never> {
             this.#rawState = SignalState.Disposed();
         }
         this.#subscribers.clear();
+        // Notify value subscribers with null to signal disposal, then clear
+        for (const cb of this.#valueSubscribers) cb(null);
+        this.#valueSubscribers.clear();
     }
 
     /** @internal Remove a computation from this signal's subscriber set. */

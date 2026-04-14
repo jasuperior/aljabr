@@ -114,37 +114,95 @@ move<P extends ArrayPath<T>>(path: P, from: number, to: number): void
 
 ---
 
-## Phase 2 or 3 — `remove` / `delete`
+## Phase 3 — `delete(path)`
 
-Scope TBD.
+Single method for removing a property from an object or an element from an array by index
+(as opposed to `splice`, which is position-based).
 
-Removing a property from an object-type Ref (or an element from an array by key rather
-than splice) requires:
+```ts
+delete<P extends Path<T>>(path: P): void
+```
 
-- Disposing the leaf Signal at that path
-- Notifying any subscribers that the path no longer exists
-- Deciding what `.get(path)` returns after deletion (`undefined` vs `Unset` vs throws)
-- TypeScript: making the path optional in the type after deletion (likely requires a type parameter
-  mutation or separate `PartialRef<T>` variant)
+### Semantics
 
-The user would like to enable `Ref`'s to accept `Signal` values as properties. Setting a property to a `Signal` or `Ref` type requires:
+- Cascades to all descendant signals — each receives `undefined` and notifies its subscribers.
+- `get(path)` returns `undefined` after deletion. No distinction between "never set" and "deleted"
+  at the type level — `Path<T>` reflects the static shape of `T`, not runtime state.
+- Cached `.at()` sub-Ref handles remain alive and transition to `isUnset = true`. They are not
+  disposed; re-setting the path later reactivates the same handle.
+- Leaf signals at deleted paths are kept alive (not disposed) so existing handles stay valid.
+- `PartialRef<T>` / making the path optional in the type after deletion is deferred — the
+  `| undefined` return on `get()` is sufficient.
 
-- Deciding what happens when `.set(path, Signal<T>)` is called. does the signal delegate its values to the slot?
-- Deciding what happens when a `Signal` value is removed and replaced.
-    - Signal will have to be cleaned up somehow when detached
-- Deciding what happens when `.at(path)` if a `Signal` has been set? Should the source `Signal` be returned, or a new one?
+### `.maybeAt(path)` — deletion-aware handle
 
-Defer until the scope is clear. Do not add to phase 1 or 2 without a full design pass.
+```ts
+maybeAt<P extends Path<T>>(path: P): Derived<Option<PathValue<T, P>>>
+```
+
+Opt-in method for callers that need to observe presence/absence of a path. Returns
+`Derived<Option<V>>` — `Some(value)` when the path exists, `None` when deleted or unset.
+`.at(path)` is unchanged and deletion-unaware.
+
+---
+
+## Phase 3 — Signal bindings
+
+### `Signal.subscribe(callback)`
+
+A new method on `Signal<T>` that registers a synchronous callback fired on every value change.
+Returns an unsubscribe function. Required to implement live bindings in `Ref` without an async
+`watchEffect` bridge.
+
+```ts
+subscribe(callback: (value: T | null) => void): () => void
+```
+
+### `.bind(path, signal)` — live binding
+
+```ts
+bind<P extends Path<T>>(path: P, signal: Signal<PathValue<T, P>>): void
+```
+
+Establishes a live binding from `signal` to the Ref path. When `signal` changes, the Ref path
+is updated synchronously via `Signal.subscribe`.
+
+- Re-binding a path silently replaces the existing subscription.
+- When the source signal is disposed, the path receives `undefined` and the binding is torn down.
+- Calling `set(path, value)` on a bound path implicitly unbinds before writing — plain writes
+  always win.
+
+### `.unbind(path)` — explicit release
+
+```ts
+unbind<P extends Path<T>>(path: P): void
+```
+
+Releases the binding at `path` without writing a value. The path retains its last known value.
+
+### `.boundAt(path)` — escape hatch
+
+```ts
+boundAt<P extends Path<T>>(path: P): Signal<PathValue<T, P>> | null
+```
+
+Returns the raw bound `Signal` at `path`, or `null` if no binding exists. Use this when you
+need to access the full custom state `S` of a `Signal<T, S>` — `.at()` and `.maybeAt()` only
+expose the extracted `T` value.
+
+### Handle interaction summary
+
+| Method           | Binding-aware | Returns                          | Use when                                    |
+| ---------------- | ------------- | -------------------------------- | ------------------------------------------- |
+| `.at(path)`      | No            | `Ref<V>` or `Derived<V>`         | Standard reactive handle                    |
+| `.maybeAt(path)` | No            | `Derived<Option<V>>`             | Need to observe deletion / unset            |
+| `.boundAt(path)` | Yes           | `Signal<V> \| null`              | Need full `S` state of a custom-lifecycle signal |
 
 ---
 
 ## Deferred
 
-| Feature                           | Notes                                                       |
-| --------------------------------- | ----------------------------------------------------------- |
-| `Unset` state                     | Phase 2 — requires careful typing of get() return           |
-| `.at(path)`                       | Phase 2 — depends on stable handle caching strategy         |
-| Array methods                     | Phase 2 — index reuse + keyed diffing needs separate design |
-| `remove`/`delete`                 | Phase 2 or 3 — PartialRef typing is non-trivial             |
-| `.set(path, Signal<T>)`           | Phase 2 or 3 — requires further clarification of scope.     |
-| `Ref<T>` from `Ref<U>` projection | Not yet discussed — map/transform a Ref into another shape  |
+| Feature                           | Notes                                                            |
+| --------------------------------- | ---------------------------------------------------------------- |
+| `PartialRef<T>`                   | Deferred — `| undefined` on `get()` is sufficient for now        |
+| `Ref<T>` from `Ref<U>` projection | Not yet discussed — map/transform a Ref into another shape       |

@@ -280,3 +280,69 @@ describe("Signal<T>.read() — default signal", () => {
         expectTypeOf(s.read()).toExtend<SignalStateType<number>>();
     });
 });
+
+// ---------------------------------------------------------------------------
+// Signal.subscribe
+// ---------------------------------------------------------------------------
+
+describe("Signal.subscribe", () => {
+    it("fires synchronously when set() is called", () => {
+        const s = Signal.create(1);
+        const values: (number | null)[] = [];
+        s.subscribe((v) => values.push(v));
+        s.set(2);
+        s.set(3);
+        expect(values).toEqual([2, 3]);
+    });
+
+    it("does not fire for the initial value — only on subsequent set() calls", () => {
+        const s = Signal.create(1);
+        const values: (number | null)[] = [];
+        s.subscribe((v) => values.push(v));
+        expect(values).toEqual([]);
+    });
+
+    it("returned unsubscribe fn stops further callbacks", () => {
+        const s = Signal.create(1);
+        const values: (number | null)[] = [];
+        const unsub = s.subscribe((v) => values.push(v));
+        s.set(2);
+        unsub();
+        s.set(3);
+        expect(values).toEqual([2]);
+    });
+
+    it("multiple subscribers all receive the value", () => {
+        const s = Signal.create("a");
+        const a: (string | null)[] = [];
+        const b: (string | null)[] = [];
+        s.subscribe((v) => a.push(v));
+        s.subscribe((v) => b.push(v));
+        s.set("b");
+        expect(a).toEqual(["b"]);
+        expect(b).toEqual(["b"]);
+    });
+
+    it("fires null on dispose, then no further callbacks", () => {
+        const s = Signal.create(1);
+        const values: (number | null)[] = [];
+        s.subscribe((v) => values.push(v));
+        s.dispose();
+        s.set(2); // no-op after dispose
+        expect(values).toEqual([null]); // null signals disposal
+    });
+
+    it("works with custom-protocol signals, passing extracted value", () => {
+        type Opt = { _tag: "Some"; value: number } | { _tag: "None" };
+        const none = { _tag: "None" } as Opt;
+        const some = (v: number): Opt => ({ _tag: "Some", value: v });
+        const protocol: SignalProtocol<Opt, number> = {
+            extract: (s) => s._tag === "Some" ? (s as any).value : null,
+        };
+        const s = Signal.create(none, protocol);
+        const values: (number | null)[] = [];
+        s.subscribe((v) => values.push(v));
+        s.set(some(42));
+        expect(values).toEqual([42]);
+    });
+});
