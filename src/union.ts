@@ -63,8 +63,11 @@ type UnionToIntersection<U> = (U extends any ? (k: U) => void : never) extends (
     : never;
 
 // Extracts the required payload properties encoded by Trait<R>
-type RequiredFromImpl<T> =
-    T extends abstract new (...args: any[]) => { readonly [requirements]: infer R } ? R : {};
+type RequiredFromImpl<T> = T extends abstract new (...args: any[]) => {
+    readonly [requirements]: infer R;
+}
+    ? R
+    : {};
 
 // Intersects requirements across all impl classes
 type AllRequired<Impl extends AbstractConstructor[]> = UnionToIntersection<
@@ -322,7 +325,7 @@ export function when(
  *
  * **With-impl form** — attach mixin classes to all variants:
  * ```ts
- * abstract class Identifiable extends Trait<{ id: string }>() {
+ * abstract class Identifiable extends Trait<{ id: string }> {
  *   label() { return `[${(this as any).id}]` }
  * }
  *
@@ -351,9 +354,9 @@ interface UnionBuilder<Impl extends AbstractConstructor[]> {
         [K in keyof Factories & string]: Factories[K] extends (
             ...args: any[]
         ) => any
-            ? (
-                  ...args: Parameters<Factories[K]>
-              ) => ReturnType<Factories[K]> & {
+            ? (...args: Parameters<Factories[K]>) => ReturnType<
+                  Factories[K]
+              > & {
                   [tag]: K;
               } & ImplMixinFromImpl<Impl>
             : () => Factories[K] & { [tag]: K } & ImplMixinFromImpl<Impl>;
@@ -366,7 +369,9 @@ interface UnionBuilder<Impl extends AbstractConstructor[]> {
      *
      * Property — call directly: `union([Impl]).typed({ ... })`
      */
-    readonly typed: <Factories extends Record<string, (...args: any[]) => AllRequired<Impl>>>(
+    readonly typed: <
+        Factories extends Record<string, (...args: any[]) => AllRequired<Impl>>,
+    >(
         factories: Factories,
     ) => Factories;
 }

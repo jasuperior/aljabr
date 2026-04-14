@@ -79,15 +79,6 @@ aljabr is for cases where you're defining the union yourself and want the full s
 
 ## Installation
 
-> aljabr is not yet published to npm. To use it today, clone the repo and import from source, or build the library and reference the `dist/` output.
-
-```sh
-git clone https://github.com/jasuperior/aljabr
-cd aljabr && pnpm install && pnpm build
-```
-
-Once published:
-
 ```sh
 npm install aljabr
 # pnpm add aljabr
@@ -137,7 +128,7 @@ Impl classes let you mix properties and methods into every variant without inher
 ```ts
 import { union, Trait, Union, getTag } from "aljabr";
 
-abstract class Auditable extends Trait<{ id: string }>() {
+abstract class Auditable extends Trait<{ id: string }> {
     createdAt = Date.now();
     describe() {
         return `[${getTag(this as any)}] id=${(this as any).id}`;
@@ -155,7 +146,7 @@ e.createdAt; // number
 e.describe(); // "[Created] id=abc-123"
 ```
 
-`Trait<{ id: string }>()` tells the type system that every variant factory must return an object with an `id: string`. If one doesn't, you get a compile error on that specific variant.
+`Trait<{ id: string }>` tells the type system that every variant factory must return an object with an `id: string`. If one doesn't, you get a compile error on that specific variant.
 
 ### 4. Pattern arms with `when()`
 
@@ -192,32 +183,39 @@ Arms are evaluated left to right; the first match wins. The `when(__, ...)` catc
 aljabr ships a second entry point — `aljabr/prelude` — containing a standard library of algebraic data types and reactive primitives, all built on the same `union` + `match` foundation.
 
 ```ts
-import { Result, Option, Validation, Signal, Derived, watchEffect } from "aljabr/prelude"
+import {
+    Result,
+    Option,
+    Validation,
+    Signal,
+    Derived,
+    watchEffect,
+} from "aljabr/prelude";
 ```
 
 ### Functional containers
 
 ```ts
 // Result — synchronous success, async pending, or failure. Directly awaitable.
-const user = await Result.Accept(42).then(id => fetchUser(id))
+const user = await Result.Accept(42).then((id) => fetchUser(id));
 
 // Option — null-safe chaining
 const city = Option.Some(user)
-    .flatMap(u => u.address ? Option.Some(u.address) : Option.None())
-    .map(a => a.city.toUpperCase())
-    .getOrElse("UNKNOWN")
+    .flatMap((u) => (u.address ? Option.Some(u.address) : Option.None()))
+    .map((a) => a.city.toUpperCase())
+    .getOrElse("UNKNOWN");
 
 // Validation — three states: Unvalidated (initial), Valid, Invalid
 // Errors accumulate across all fields rather than short-circuiting.
 const form = validateName(input.name)
     .combine(validateAge(input.age))
-    .combine(validateEmail(input.email))
+    .combine(validateEmail(input.email));
 
 match(form, {
     Unvalidated: () => showPlaceholder(),
-    Valid:        ({ value: [[name, age], email] }) => submit({ name, age, email }),
-    Invalid:      ({ errors }) => errors.forEach(showError),
-})
+    Valid: ({ value: [[name, age], email] }) => submit({ name, age, email }),
+    Invalid: ({ errors }) => errors.forEach(showError),
+});
 ```
 
 ### Reactive primitives
@@ -247,26 +245,25 @@ match(profile.state, {
 `Ref<T>` extends this system to **structured objects and arrays**, with per-path subscriptions:
 
 ```ts
-import { Ref } from "aljabr/prelude"
+import { Ref } from "aljabr/prelude";
 
 const state = Ref.create({
     user: { name: "Alice", age: 30 },
     scores: [1, 2, 3],
-})
+});
 
 // Subscribe to exactly one leaf — "user.age" changes don't re-run this
-const greeting = Derived.create(() => `Hello, ${state.get("user.name")}`)
+const greeting = Derived.create(() => `Hello, ${state.get("user.name")}`);
 
-state.patch("user", { name: "Bob", age: 30 })  // only name subscribers notified
-state.push("scores", 4)                          // first-class array mutation
+state.patch("user", { name: "Bob", age: 30 }); // only name subscribers notified
+state.push("scores", 4); // first-class array mutation
 
 // Bind an external Signal to a path — live, synchronous, two-way
-const formField = Signal.create("Carol")
-state.bind("user.name", formField)
-formField.set("Dave")
-state.get("user.name")  // "Dave"
+const formField = Signal.create("Carol");
+state.bind("user.name", formField);
+formField.set("Dave");
+state.get("user.name"); // "Dave"
 ```
-
 
 ### Reactive effects and persistence
 
@@ -276,12 +273,12 @@ const handle = watchEffect(
     async () => api.search(query.get()!),
     (result) => updateResults(result),
     { eager: true },
-)
-handle.stop()
+);
+handle.stop();
 
 // persistedSignal — survive page reloads
-const theme = persistedSignal<"light" | "dark">("light", { key: "app.theme" })
-theme.set("dark") // written to localStorage; restored on next load
+const theme = persistedSignal<"light" | "dark">("light", { key: "app.theme" });
+theme.set("dark"); // written to localStorage; restored on next load
 ```
 
 **[Full Prelude documentation →](docs/api/prelude/index.md)**
@@ -293,7 +290,7 @@ theme.set("dark") // written to localStorage; restored on next load
 ### Core
 
 - [`union()`](docs/api/union.md) — define a sum type and get variant constructors
-- [`Trait<R>()`](docs/api/union.md#traitr) — declare required payload properties on impl classes
+- [`Trait<R>`](docs/api/union.md#traitr) — declare required payload properties on impl classes
 - [`pred()`](docs/api/union.md#pred) — wrap a predicate for use in `when()` patterns
 - [`when()`](docs/api/union.md#when) — construct a pattern match arm
 - [`getTag()`](docs/api/union.md#gettag) — read the variant name from an instance
