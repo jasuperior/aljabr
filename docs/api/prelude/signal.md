@@ -117,6 +117,37 @@ field.set(Validation.Valid("hello@example.com"))
 field.set(Validation.Invalid(["bad format"]))
 ```
 
+### `.subscribe(callback)`
+
+```ts
+signal.subscribe(callback: (value: T | null) => void): () => void
+```
+
+Register a **synchronous** callback that fires on every value change. The callback receives the same extracted `T | null` value as `get()`. Returns an unsubscribe function.
+
+Unlike `get()`, `subscribe()` does **not** register a reactive dependency — it is a raw push subscription intended for bridging signals into external systems (e.g. [`Ref.bind()`](./ref.md#bindpath-signal)).
+
+When the signal is **disposed**, the callback fires once with `null` before being cleared — allowing subscribers to react to lifecycle termination.
+
+```ts
+const count = Signal.create(0)
+
+const unsub = count.subscribe((value) => {
+    console.log("count changed:", value)
+})
+
+count.set(1)   // logs "count changed: 1"
+count.set(2)   // logs "count changed: 2"
+unsub()        // stop receiving updates
+count.set(3)   // no log
+
+// Disposal fires null then clears the subscriber
+const sig = Signal.create("hello")
+sig.subscribe((v) => console.log(v ?? "disposed"))
+sig.dispose()  // logs "disposed"
+sig.set("x")   // no-op and no log
+```
+
 ### `.dispose()`
 
 ```ts
@@ -127,6 +158,7 @@ Permanently deactivate the signal and clear all subscribers. Future `set()` call
 
 - **Default `Signal<T>`:** transitions state to `Disposed`.
 - **Custom `Signal<T, S>`:** marks the signal as inert without mutating the state union — `.state` retains its last value.
+- Any `subscribe()` callbacks fire once with `null` before being cleared.
 
 ```ts
 count.dispose()
@@ -337,6 +369,7 @@ watchEffect(
 ## See also
 
 - [`Derived`](./derived.md) — lazy computed values derived from signals
+- [`Ref<T>`](./ref.md) — structured reactive container built on top of `Signal`; uses `.subscribe()` for live bindings
 - [`watchEffect`](./effect.md#watcheffect) — run async effects reactively
 - [`batch`](./context.md#batch) — coalesce multiple writes into a single notification pass
 - [`persistedSignal`](./persist.md#persistedsignal) — automatically persist a signal to storage

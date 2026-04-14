@@ -244,6 +244,29 @@ match(profile.state, {
 })
 ```
 
+`Ref<T>` extends this system to **structured objects and arrays**, with per-path subscriptions:
+
+```ts
+import { Ref } from "aljabr/prelude"
+
+const state = Ref.create({
+    user: { name: "Alice", age: 30 },
+    scores: [1, 2, 3],
+})
+
+// Subscribe to exactly one leaf — "user.age" changes don't re-run this
+const greeting = Derived.create(() => `Hello, ${state.get("user.name")}`)
+
+state.patch("user", { name: "Bob", age: 30 })  // only name subscribers notified
+state.push("scores", 4)                          // first-class array mutation
+
+// Bind an external Signal to a path — live, synchronous, two-way
+const formField = Signal.create("Carol")
+state.bind("user.name", formField)
+formField.set("Dave")
+state.get("user.name")  // "Dave"
+```
+
 
 ### Reactive effects and persistence
 
@@ -284,6 +307,7 @@ theme.set("dark") // written to localStorage; restored on next load
 - [`Option<T>`](docs/api/prelude/option.md) — present or absent value
 - [`Validation<T, E>`](docs/api/prelude/validation.md) — error-accumulating validation
 - [`Signal<T, S>`](docs/api/prelude/signal.md) — reactive mutable container; accepts a custom state union `S` + `SignalProtocol<S, T>` for domain-specific lifecycles
+- [`Ref<T>`](docs/api/prelude/ref.md) — reactive container for structured objects and arrays; per-path subscriptions, live signal bindings, array mutation methods
 - [`Derived<T>` / `AsyncDerived<T, E>`](docs/api/prelude/derived.md) — lazy computed reactive values
 - [`Effect<T, E>` / `watchEffect`](docs/api/prelude/effect.md) — reactive async effects
 - [`Tree<T>`](docs/api/prelude/tree.md) — recursive binary tree

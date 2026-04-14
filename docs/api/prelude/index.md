@@ -32,7 +32,8 @@ A fine-grained push/pull reactive system with explicit lifecycle states.
 
 | Export | Description |
 |---|---|
-| [`Signal<T, S>`](./signal.md) | A mutable reactive container. Default lifecycle is `SignalState<T>`; pass a `SignalProtocol<S, T>` to use any custom union as the state. Reads inside computations auto-subscribe; writes notify dependents. |
+| [`Signal<T, S>`](./signal.md) | A mutable reactive container. Default lifecycle is `SignalState<T>`; pass a `SignalProtocol<S, T>` to use any custom union as the state. Reads inside computations auto-subscribe; writes notify dependents. Supports raw push subscriptions via `.subscribe()`. |
+| [`Ref<T>`](./ref.md) | A reactive container for structured objects and arrays. Tracks subscriptions per dot-separated path — `get("user.name")` subscribes to exactly that path. Supports deletion, live signal bindings, and array mutation methods. |
 | [`Derived<T>`](./derived.md) | A lazy computed value. Re-evaluates only when read after a dependency changes. Supports a writable form. |
 | [`AsyncDerived<T, E>`](./derived.md#asyncderivedT-E) | Like `Derived`, but async. Preserves the last known value in `Reloading` state for stale-while-revalidating. |
 
@@ -124,6 +125,29 @@ const sum = Derived.create(() => (x.get() ?? 0) + (y.get() ?? 0))
 
 batch(() => { x.set(10); y.set(20) })
 sum.get() // 30
+```
+
+### Ref — fine-grained structured state
+
+```ts
+import { Ref } from "aljabr/prelude"
+
+const state = Ref.create({
+    user: { name: "Alice", age: 30 },
+    scores: [1, 2, 3],
+})
+
+// Subscribe to exactly one path — sibling changes don't re-run this
+const nameDisplay = Derived.create(() => `Hello, ${state.get("user.name")}`)
+
+state.patch("user", { name: "Bob", age: 30 })  // only name subscribers notified
+state.push("scores", 4)                          // array mutation, no full-array diff
+
+// Live binding — formField drives state.user.name
+const formField = Signal.create("Carol")
+state.bind("user.name", formField)
+formField.set("Dave")
+state.get("user.name")  // "Dave"
 ```
 
 ### watchEffect — reactive async side effects
