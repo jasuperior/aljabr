@@ -315,3 +315,21 @@ theme.set("dark"); // written to localStorage; restored on next load
 
 - [Getting Started](docs/guides/getting-started.md) — walkthrough from first union to real-world patterns
 - [Advanced Patterns](docs/guides/advanced-patterns.md) — impl classes, Trait constraints, complex `when()` compositions
+
+---
+
+## Roadmap (v0.3.0)
+
+The next major release expands aljabr across seven progressive phases, each building on the tag-first, zero-dependency foundation:
+
+| Phase | Focus |
+| ----- | ----- |
+| **1 — Deep Structural Matching** | `select` bindings for nested extraction, wildcards, combinators (`P.union`, `P.not`), and alignment with the TC39 pattern matching proposal |
+| **2 — Data Boundary (`aljabr/schema`)** | Decode untyped external data (API payloads, form inputs) into typed variants; bidirectional encode/decode roundtrips |
+| **3 — Resilient Async Lifecycles** | Declarative `Schedule` policies (exponential backoff, jitter) and native timeout/race primitives for `AsyncDerived` |
+| **4 — Resource Scoping & DI** | `Scope` finalizers for safe teardown of WebSockets, timers, and file handles; type-safe context injection via Tags and Layers |
+| **5 — Error & Defect Tracking** | Formal separation of expected domain errors from unexpected runtime panics; a `Cause` structure to capture sequential, parallel, and interrupted failures |
+| **6 — Solid-Inspired Factory API** | `createSignal`, `createMemo`, `createEffect`, and `createRoot` wrappers that preserve raw-value ergonomics while surfacing Aljabr's state machine via a `.state()` accessor |
+| **7 — Ecosystem Bindings** | `@aljabr/react` hooks via `useSyncExternalStore`; `@aljabr/hookform-resolver` for schema-backed form validation; intentionally no bundled UI matching components |
+
+For the full design rationale and API sketches, see [docs/roadmap/v0.3.0.md](docs/roadmap/v0.3.0.md).
