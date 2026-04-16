@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { __, union, when, is, select } from "../src/union.ts";
+import { __, union, when, is, select, Union } from "../src/union.ts";
 import { match } from "../src/match.ts";
 
 // ==========================================
@@ -8,11 +8,19 @@ import { match } from "../src/match.ts";
 
 const Ev = union({
     KeyPress: (key: string, shift: boolean) => ({ key, shift }),
-    Click:    (x: number, y: number, meta: { button: string }) => ({ x, y, meta }),
-    Message:  (text: string | null, code: number) => ({ text, code }),
-    Nested:   (user: { name: string; age: number }) => ({ user }),
+    Click: (x: number, y: number, meta: { button: string }) => ({ x, y, meta }),
+    Message: (text: string | null, code: number) => ({ text, code }),
+    Nested: (user: { name: string; age: number }) => ({ user }),
 });
-type Ev = ReturnType<(typeof Ev)[keyof typeof Ev]>;
+type Ev = Union<typeof Ev>;
+
+const Co = union({
+    KeyPress: (key: string, shift: boolean) => ({ key, shift }),
+    Click: (x: number, y: number, meta: { button: string }) => ({ x, y, meta }),
+    Message: (text: string | null, code: number) => ({ text, code }),
+    Nested: (user: { name: string; age: number }) => ({ user }),
+});
+type Co = Union<typeof Co>;
 
 // ==========================================
 // is.* — type predicates
@@ -224,7 +232,10 @@ describe("is.union", () => {
         const e = Ev.Message("hello", 5) as Ev;
         const result = match(e, {
             Message: [
-                when({ text: is.union(is.string, is.nullish) }, () => "string or null"),
+                when(
+                    { text: is.union(is.string, is.nullish) },
+                    () => "string or null",
+                ),
                 when(__, () => "other"),
             ],
             [__]: () => "other",
@@ -289,7 +300,10 @@ describe("select()", () => {
     it("injects selected field into handler's second argument", () => {
         const e = Ev.KeyPress("Enter", false) as Ev;
         const result = match(e, {
-            KeyPress: when({ key: select("k") }, (_val, sel) => `key=${sel?.k}`),
+            KeyPress: when(
+                { key: select("k") },
+                (_val, sel) => `key=${sel?.k}`,
+            ),
             [__]: () => "other",
         });
         expect(result).toBe("key=Enter");
@@ -323,7 +337,10 @@ describe("select()", () => {
         const e = Ev.Message("hello", 5) as Ev;
         const result = match(e, {
             Message: [
-                when({ text: select("t", is.nullish) }, (_val, sel) => `null:${sel?.t}`),
+                when(
+                    { text: select("t", is.nullish) },
+                    (_val, sel) => `null:${sel?.t}`,
+                ),
                 when(__, () => "has text"),
             ],
             [__]: () => "other",
@@ -335,7 +352,10 @@ describe("select()", () => {
         const e = Ev.Message(null, 5) as Ev;
         const result = match(e, {
             Message: [
-                when({ text: select("t", is.nullish) }, (_val, sel) => `null:${sel?.t}`),
+                when(
+                    { text: select("t", is.nullish) },
+                    (_val, sel) => `null:${sel?.t}`,
+                ),
                 when(__, () => "has text"),
             ],
             [__]: () => "other",
@@ -392,7 +412,9 @@ describe("combined usage", () => {
     it("deep nesting does not recurse into an Aljabr variant payload", () => {
         // The variant value itself should never be confused with a sub-pattern
         const Inner = union({ X: (v: number) => ({ v }) });
-        const Outer = union({ Wrap: (inner: ReturnType<typeof Inner.X>) => ({ inner }) });
+        const Outer = union({
+            Wrap: (inner: ReturnType<typeof Inner.X>) => ({ inner }),
+        });
         type Outer = ReturnType<(typeof Outer)[keyof typeof Outer]>;
 
         const e = Outer.Wrap(Inner.X(42)) as Outer;
