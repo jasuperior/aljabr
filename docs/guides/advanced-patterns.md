@@ -302,7 +302,7 @@ when({ id: is.union(is.string, is.number) }, ({ id }) => String(id))
 
 ### Extracting values with `select`
 
-`select(name)` binds a field to a named slot in the handler's second argument. This lets you extract nested or guarded values without repeating the field path inside the handler body:
+`select(name)` binds a field to a named slot in the handler's second argument. This lets you extract nested or guarded values without repeating the field path inside the handler body. The extracted value is **typed precisely** — no casts needed:
 
 ```ts
 import { select } from "aljabr"
@@ -316,33 +316,70 @@ match(nav, {
   Route: [
     when(
       { path: "/user", params: { id: select("id") } },
-      (val, { id }) => loadUser(id as string),
+      (val, { id }) => loadUser(id),  // id: string — typed from params field
     ),
     when(__, () => notFound()),
   ],
 })
 ```
 
-`select` also accepts an optional second argument — a pattern that the field must satisfy for the arm to match:
+`select` also accepts an optional second argument — a pattern that the field must satisfy for the arm to match. The inner pattern also **narrows the extracted type**:
 
 ```ts
-// Only fires when `name` is a non-null string; extracts it into `sel.name`
+// Only fires when `name` is non-nullish; sel.name is string (null excluded)
 when(
   { user: { name: select("name", is.not(is.nullish)) } },
-  (val, sel) => `Hello, ${sel?.name}`,
+  (val, { name }) => `Hello, ${name}`,
+  //                          ^ name: string, not string | null
 )
 ```
 
-Multiple selections work naturally — each `select()` in the pattern contributes a key to the `selections` map:
+Multiple selections work naturally — each `select()` in the pattern contributes a typed key to the `selections` map:
 
 ```ts
 when(
   { key: select("k"), shift: select("s") },
-  (val, { k, s }) => s ? `Shift+${k}` : String(k),
+  (val, { k, s }) => s ? `Shift+${k}` : k,
+  //         ^ k: string, s: boolean — each typed from their variant field
 )
 ```
 
-> The `selections` argument is typed as `Record<string, unknown>` in the current release. Precise per-name type inference is coming in Phase 1.5.
+### Typed selections: how the inference works
+
+The `selections` type is computed from the pattern at the `match()` call site. For each `select("name")` in the pattern, the type of the corresponding field in the variant is used:
+
+```ts
+const Key = union({
+  Press: (key: string, shift: boolean) => ({ key, shift }),
+})
+
+match(e, {
+  Press: when(
+    { key: select("k"), shift: select("s") },
+    // TypeScript infers: selections: { k: string; s: boolean }
+    (val, sel) => {
+      sel.k  // string ✓
+      sel.s  // boolean ✓
+    },
+  ),
+})
+```
+
+When no `select()` markers appear in the pattern, `selections` is `{}` — safe to omit or ignore:
+
+```ts
+when({ key: "Enter" }, () => "submit")  // no second arg needed
+```
+
+Inner pattern constraints narrow the extracted type:
+
+| Inner pattern | Extracted type (when field is `T`) |
+|---|---|
+| _(none)_ | `T` |
+| `is.string` | `string` |
+| `is.number` | `number` |
+| `is.not(is.nullish)` | `Exclude<T, null \| undefined>` |
+| `is.union("a", "b")` | `"a" \| "b"` |
 
 ---
 

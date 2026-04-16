@@ -16,7 +16,7 @@
 - **`when()` arms** — structural patterns, guard functions, `pred()` wrappers, and catch-alls, composable in any order
 - **Deep structural matching** — `when()` patterns recurse into plain object sub-patterns; recursion stops at Aljabr variant boundaries
 - **`is` pattern namespace** — type wildcards (`is.string`, `is.number`, `is.nullish`, `is.array`, …) and combinators (`is.not`, `is.union`) for expressive field-level matching
-- **`select()` extraction** — bind matched fields to named slots injected as the handler's second argument; compose with an optional inner pattern constraint
+- **`select()` extraction** — bind matched fields to named slots injected as the handler's second argument; each slot is typed precisely from the variant's field type, narrowed by any inner pattern constraint (`is.not`, `is.number`, …)
 - **First-match-wins** — multiple `when()` arms per variant, evaluated left to right
 - **Helpful runtime errors** — non-exhaustive matches throw with messages that tell you exactly what to fix
 - **Generic variant types** — `Variant<Tag, Payload, Impl>` helper + `.typed()` builder preserve type parameters through factory definitions
@@ -327,7 +327,8 @@ The next major release expands aljabr across seven progressive phases, each buil
 
 | Phase | Focus |
 | ----- | ----- |
-| **1 — Deep Structural Matching** | `select` bindings for nested extraction, wildcards, combinators (`P.union`, `P.not`), and alignment with the TC39 pattern matching proposal |
+| **1 — Deep Structural Matching** ✓ | `select` bindings for nested extraction, wildcards, combinators (`is.not`, `is.union`), deep recursive sub-patterns |
+| **1.5 — Type Inference for `select` and Combinators** ✓ | Precise `selections` typing: each `select("name")` infers from the variant's field type; `is.not(is.nullish)` narrows to `Exclude<T, null \| undefined>`; `is.union("a","b")` narrows to `"a" \| "b"` |
 | **2 — Data Boundary (`aljabr/schema`)** | Decode untyped external data (API payloads, form inputs) into typed variants; bidirectional encode/decode roundtrips |
 | **3 — Resilient Async Lifecycles** | Declarative `Schedule` policies (exponential backoff, jitter) and native timeout/race primitives for `AsyncDerived` |
 | **4 — Resource Scoping & DI** | `Scope` finalizers for safe teardown of WebSockets, timers, and file handles; type-safe context injection via Tags and Layers |

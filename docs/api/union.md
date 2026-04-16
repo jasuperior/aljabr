@@ -173,10 +173,12 @@ Note: `is.object` does not match arrays — use `is.array` for those.
 ### `is.not(pattern)`
 
 ```ts
-is.not(pattern: unknown): Combinator
+is.not<P>(pattern: P): NotCombinator<P>
 ```
 
 Matches any value that does **not** match the given pattern. The inner pattern may be a literal, a `Pred`, another combinator, or a structural object.
+
+The return type is `NotCombinator<P>` — it carries the inner pattern type `P` so the match engine can compute `Exclude<FieldType, NarrowOf<P>>` when used inside `select()`.
 
 ```ts
 when({ status: is.not("error") },   handler)    // any status except "error"
@@ -187,10 +189,12 @@ when({ text:   is.not(is.nullish) }, handler)   // text is defined and non-null
 ### `is.union(...patterns)`
 
 ```ts
-is.union(...patterns: unknown[]): Combinator
+is.union<const Ps extends unknown[]>(...patterns: Ps): UnionCombinator<Ps>
 ```
 
 Matches if the value satisfies **any** of the given patterns (logical OR).
+
+The return type is `UnionCombinator<Ps>` — the tuple of inner pattern types is preserved, so `is.union("Tab", "Enter")` produces `UnionCombinator<["Tab", "Enter"]>` rather than erasing to `unknown[]`.
 
 ```ts
 when({ key:    is.union("Tab", "Enter") },       handler)   // Tab or Enter
@@ -201,62 +205,106 @@ when({ status: is.union("pending", "active") },  handler)   // either status
 ### Types
 
 ```ts
-type Combinator =
-  | { readonly kind: "not";   readonly pattern: unknown }
-  | { readonly kind: "union"; readonly patterns: readonly unknown[] }
-```
+// Negation combinator — carries the inner pattern type
+type NotCombinator<P = unknown> = {
+  readonly kind: "not"
+  readonly pattern: P
+}
 
-> **Phase 1.5 note:** In the current release, combinators carry `unknown` as the narrowed type in TypeScript. Type-level narrowing (`Exclude<T, U>` for `is.not`, `A | B` for `is.union`) is planned for Phase 1.5.
+// Union combinator — carries the tuple of inner pattern types
+type UnionCombinator<Ps extends readonly unknown[] = readonly unknown[]> = {
+  readonly kind: "union"
+  readonly patterns: Ps
+}
+
+// Convenience alias
+type Combinator = NotCombinator | UnionCombinator
+```
 
 ---
 
 ## `select()`
 
 ```ts
-function select(name: string, pattern?: unknown): SelectMarker
+function select<N extends string>(name: N): SelectMarker<N, void>
+function select<N extends string, P>(name: N, pattern: P): SelectMarker<N, P>
 ```
 
 Marks a field in a [`when()`](#when) pattern for extraction. When the arm matches, the field's value is collected into a `selections` map and injected as the second argument to the handler.
 
-An optional second argument constrains the field: the arm only matches if the field also satisfies that pattern.
+An optional second argument constrains the field: the arm only matches if the field also satisfies that pattern, and the extracted value's type is narrowed accordingly.
 
 ```ts
-// Extract without constraint — arm always fires for this variant
+// Extract without constraint — typed as the field's own type
 when({ key: select("k") }, (val, { k }) => `pressed: ${k}`)
+//                                   ^ k: string (inferred from the variant)
 
-// Extract with type assertion — arm only fires when text is non-null
+// Extract with narrowing — arm only fires when text is non-null; t is string
 when({ text: select("t", is.not(is.nullish)) }, (val, { t }) => t.toUpperCase())
+//                                                         ^ t: string (null excluded)
 
 // Extract from a nested path
 when({ user: { name: select("name") } }, (val, { name }) => `Hello, ${name}`)
+//                                                  ^ name: string
 
-// Multiple selections
+// Multiple selections — each typed independently
 when(
   { key: select("k"), shift: select("s") },
   (val, { k, s }) => s ? `Shift+${k}` : k,
+  //         ^ k: string, s: boolean
 )
 ```
 
 ### Handler signature with `select`
 
-When one or more `select()` markers appear in the pattern, the handler receives a second argument containing all extracted values:
+The `selections` second argument is typed precisely based on the pattern. Each `select("name")` in the pattern contributes a `{ name: FieldType }` entry to the selections type, optionally narrowed by an inner pattern constraint:
 
 ```ts
-(val: V, selections?: Record<string, unknown>) => R
+// No select markers → selections is {}
+when({ key: "Enter" }, (val, sel) => ...)
+//                              ^ sel: {}
+
+// Single select → selections is { k: string }
+when({ key: select("k") }, (val, sel) => sel.k.toUpperCase())
+//                                  ^ sel: { k: string }
+
+// Inner pattern narrows the type
+when({ text: select("t", is.not(is.nullish)) }, (val, sel) => sel.t.toUpperCase())
+//                                                       ^ sel: { t: string }
+
+// is.number inner → extracted as number
+when({ code: select("c", is.number) }, (val, sel) => sel.c * 2)
+//                                             ^ sel: { c: number }
 ```
 
-Handlers without any `select()` markers still type-check: the second argument is optional and TypeScript will not complain if it's omitted.
-
-> **Phase 1.5 note:** In the current release, `selections` is typed as `Record<string, unknown>`. Per-name type inference (e.g., knowing `{ name: string }` from the variant's field type) is planned for Phase 1.5.
+The type is computed from the pattern and variant at the `match()` call site — handlers that omit the second argument continue to type-check without changes.
 
 ### `SelectMarker` type
 
 ```ts
-type SelectMarker = {
-  readonly name: string
+type SelectMarker<Name extends string = string, InnerPat = void> = {
+  readonly name: Name
   readonly pattern?: unknown
+  // phantom: carries inner pattern type for type-level inference
+  readonly _inner?: InnerPat
 }
 ```
+
+`Name` is preserved as a string literal (e.g. `"k"`, not `string`), and `InnerPat` carries the inner pattern type for use in `SelectionsFor`. When no inner pattern is given, `InnerPat = void` and the field's own type from `V` is used.
+
+### `SelectionsFor<P, V>`
+
+```ts
+type SelectionsFor<P, V>
+```
+
+Computes the `selections` type for a `when()` arm. Given the pattern type `P` and the variant type `V`:
+
+- Traverses `P` recursively to find all `SelectMarker` values
+- For each, resolves the extracted type: `V[K]` when unconstrained, or the narrowed type from the inner pattern
+- Returns the intersection of all `{ name: Type }` records — `{}` when no markers are present
+
+Used internally by `WhenArm` and `when()`. Exported for advanced use cases such as writing helpers that accept typed `when()` arms.
 
 ---
 
@@ -264,23 +312,29 @@ type SelectMarker = {
 
 ```ts
 // Catch-all: always matches
-function when<V, R>(pattern: typeof __, handler: (val: V) => R): WhenArm<V, R>
+function when<V, R>(
+  pattern: typeof __,
+  handler: (val: V) => R
+): WhenArm<V, R, typeof __>
 
 // Guard-only: matches when guard(val) returns true
-function when<V, R>(guard: (val: V) => boolean, handler: (val: V) => R): WhenArm<V, R>
+function when<V, R>(
+  guard: (val: V) => boolean,
+  handler: (val: V) => R
+): WhenArm<V, R, {}>
 
 // Structural: matches when all pattern fields satisfy the pattern
-function when<V, R>(
-  pattern: object,
-  handler: (val: V, selections?: Record<string, unknown>) => R
-): WhenArm<V, R>
+function when<V, R, P extends object>(
+  pattern: P,
+  handler: (val: V, selections: SelectionsFor<P, V>) => R
+): WhenArm<V, R, P>
 
 // Structural + guard: both must pass
-function when<V, R>(
-  pattern: object,
+function when<V, R, P extends object>(
+  pattern: P,
   guard: (val: V) => boolean,
-  handler: (val: V, selections?: Record<string, unknown>) => R
-): WhenArm<V, R>
+  handler: (val: V, selections: SelectionsFor<P, V>) => R
+): WhenArm<V, R, P>
 ```
 
 Constructs a pattern match arm for use as a variant matcher inside [`match()`](match.md). Arms are used either as a single value or in an array (first-match-wins).
@@ -340,17 +394,19 @@ match(event, {
 })
 ```
 
-### `WhenArm<V, R>` type
+### `WhenArm<V, R, P>` type
 
 ```ts
-type WhenArm<V, R> = {
-  readonly pattern:
-    | { [K in keyof V]?: V[K] | Pred<V[K]> | SelectMarker | Combinator }
-    | typeof __
+type WhenArm<V, R, P = {}> = {
+  readonly pattern: P | typeof __
   readonly guard?: (val: V) => boolean
-  readonly handler: (val: V, selections?: Record<string, unknown>) => R
+  readonly handler: (val: V, selections: SelectionsFor<P, V>) => R
 }
 ```
+
+The third type parameter `P` carries the pattern type. It defaults to `{}` (no selections, handler receives `{}`). `match()` accepts `WhenArm<V, R, any>` so arms with any pattern type are assignable.
+
+The `selections` argument to the handler is always required at the type level (never optional). It is `{}` when the pattern has no `select()` markers, making it safe to omit in the handler body.
 
 ---
 

@@ -251,7 +251,9 @@ export type NotCombinator<P = unknown> = {
  *
  * @typeParam Ps - Tuple of the inner pattern types
  */
-export type UnionCombinator<Ps extends readonly unknown[] = readonly unknown[]> = {
+export type UnionCombinator<
+    Ps extends readonly unknown[] = readonly unknown[],
+> = {
     readonly [patternTag]: true;
     readonly kind: "union";
     readonly patterns: Ps;
@@ -302,16 +304,15 @@ export type ExtractUnionNarrow<Ps extends readonly unknown[]> =
  *
  * @internal
  */
-export type ResolveSelectType<InnerPat, FieldType> =
-    [InnerPat] extends [void]
-        ? FieldType
-        : InnerPat extends Pred<any, infer S>
-          ? S
-          : InnerPat extends NotCombinator<infer Inner>
-            ? Exclude<FieldType, ExtractNarrowType<Inner>>
-            : InnerPat extends UnionCombinator<infer Ps extends readonly unknown[]>
-              ? ExtractUnionNarrow<Ps>
-              : InnerPat;
+export type ResolveSelectType<InnerPat, FieldType> = [InnerPat] extends [void]
+    ? FieldType
+    : InnerPat extends Pred<any, infer S>
+      ? S
+      : InnerPat extends NotCombinator<infer Inner>
+        ? Exclude<FieldType, ExtractNarrowType<Inner>>
+        : InnerPat extends UnionCombinator<infer Ps extends readonly unknown[]>
+          ? ExtractUnionNarrow<Ps>
+          : InnerPat;
 
 /**
  * Recursively collects all `select()` markers from a pattern type `P`,
@@ -327,7 +328,10 @@ type CollectSelectionItems<P extends object, V> = {
         ? P[K] extends SelectMarker<infer Name, infer InnerPat>
             ? { [_ in Name]: ResolveSelectType<InnerPat, V[K]> }
             : P[K] extends object
-              ? CollectSelectionItems<Extract<P[K], object>, Extract<V[K], object>>
+              ? CollectSelectionItems<
+                    Extract<P[K], object>,
+                    Extract<V[K], object>
+                >
               : never
         : never;
 }[keyof P & string];
@@ -345,12 +349,11 @@ type CollectSelectionItems<P extends object, V> = {
  * @typeParam P - The pattern type (from the `when()` call)
  * @typeParam V - The variant type being matched
  */
-export type SelectionsFor<P, V> =
-    [P] extends [typeof __]
-        ? {}
-        : P extends object
-          ? UnionToIntersection<{} | CollectSelectionItems<P, V>>
-          : {};
+export type SelectionsFor<P, V> = [P] extends [typeof __]
+    ? {}
+    : P extends object
+      ? UnionToIntersection<{} | CollectSelectionItems<P, V>>
+      : {};
 
 /**
  * An extraction binding produced by {@link select}.
@@ -420,18 +423,48 @@ export const is: {
      */
     union<const Ps extends unknown[]>(...patterns: Ps): UnionCombinator<Ps>;
 } = {
-    string: { [predTag]: true, fn: (v: unknown) => typeof v === "string" } as Pred<unknown, string>,
-    number: { [predTag]: true, fn: (v: unknown) => typeof v === "number" } as Pred<unknown, number>,
-    boolean: { [predTag]: true, fn: (v: unknown) => typeof v === "boolean" } as Pred<unknown, boolean>,
-    nullish: { [predTag]: true, fn: (v: unknown) => v == null } as Pred<unknown, null | undefined>,
-    defined: { [predTag]: true, fn: (v: unknown) => v !== undefined } as Pred<unknown>,
-    array: { [predTag]: true, fn: (v: unknown) => Array.isArray(v) } as Pred<unknown, unknown[]>,
-    object: { [predTag]: true, fn: (v: unknown) => typeof v === "object" && v !== null && !Array.isArray(v) } as Pred<unknown, object>,
+    string: {
+        [predTag]: true,
+        fn: (v: unknown) => typeof v === "string",
+    } as Pred<unknown, string>,
+    number: {
+        [predTag]: true,
+        fn: (v: unknown) => typeof v === "number",
+    } as Pred<unknown, number>,
+    boolean: {
+        [predTag]: true,
+        fn: (v: unknown) => typeof v === "boolean",
+    } as Pred<unknown, boolean>,
+    nullish: { [predTag]: true, fn: (v: unknown) => v == null } as Pred<
+        unknown,
+        null | undefined
+    >,
+    defined: {
+        [predTag]: true,
+        fn: (v: unknown) => v !== undefined,
+    } as Pred<unknown>,
+    array: { [predTag]: true, fn: (v: unknown) => Array.isArray(v) } as Pred<
+        unknown,
+        unknown[]
+    >,
+    object: {
+        [predTag]: true,
+        fn: (v: unknown) =>
+            typeof v === "object" && v !== null && !Array.isArray(v),
+    } as Pred<unknown, object>,
     not(pattern: any) {
-        return { [patternTag]: true, kind: "not", pattern } as NotCombinator<any>;
+        return {
+            [patternTag]: true,
+            kind: "not",
+            pattern,
+        } as NotCombinator<any>;
     },
     union(...patterns: any[]) {
-        return { [patternTag]: true, kind: "union", patterns } as UnionCombinator<any>;
+        return {
+            [patternTag]: true,
+            kind: "union",
+            patterns,
+        } as UnionCombinator<any>;
     },
 };
 
@@ -459,8 +492,14 @@ export const is: {
  * when({ text: select("t", is.not(is.nullish)) }, (val, { t }) => t.toUpperCase())
  */
 export function select<N extends string>(name: N): SelectMarker<N, void>;
-export function select<N extends string, P>(name: N, pattern: P): SelectMarker<N, P>;
-export function select(name: string, pattern?: unknown): SelectMarker<any, any> {
+export function select<N extends string, P>(
+    name: N,
+    pattern: P,
+): SelectMarker<N, P>;
+export function select(
+    name: string,
+    pattern?: unknown,
+): SelectMarker<any, any> {
     return { [selectTag]: true, name, pattern };
 }
 
