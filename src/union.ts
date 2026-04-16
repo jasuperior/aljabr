@@ -35,6 +35,13 @@ export const predTag = Symbol("aljabr.pred");
 
 /** @internal */
 export const whenTag = Symbol("aljabr.when");
+
+/** @internal — marks a combinator pattern object (is.not, is.union) */
+export const patternTag = Symbol("aljabr.pattern");
+
+/** @internal — marks a select() extraction binding */
+export const selectTag = Symbol("aljabr.select");
+
 /** @internal */
 export const requirements: unique symbol = Symbol("aljabr.requirements");
 
@@ -176,7 +183,7 @@ export abstract class Trait<R extends object = {}> {
 }
 
 // ==========================================
-// 3. PRED & WHEN
+// 3. PRED
 // ==========================================
 
 /**
@@ -222,6 +229,118 @@ export function pred(fn: (val: any) => any): any {
     return { [predTag]: true, fn };
 }
 
+// ==========================================
+// 4. COMBINATORS & SELECT
+// ==========================================
+
+/**
+ * A combinator pattern produced by {@link is.not} or {@link is.union}.
+ * Used as a field value inside a {@link when} pattern object.
+ *
+ * In Phase 1 combinators carry `unknown` as the narrowed type.
+ * Type-level narrowing (`Exclude<T, U>`, `A | B`) is deferred to Phase 1.5.
+ */
+export type Combinator =
+    | { readonly [patternTag]: true; readonly kind: "not"; readonly pattern: unknown }
+    | { readonly [patternTag]: true; readonly kind: "union"; readonly patterns: readonly unknown[] };
+
+/**
+ * An extraction binding produced by {@link select}.
+ * When placed as a field value inside a {@link when} pattern, the matched field value
+ * is collected into the `selections` map passed as the second argument to the handler.
+ */
+export type SelectMarker = {
+    readonly [selectTag]: true;
+    readonly name: string;
+    readonly pattern?: unknown;
+};
+
+/**
+ * A namespace of pattern primitives for use inside {@link when} pattern objects.
+ *
+ * **Type wildcards** — match a value by its runtime type:
+ * ```ts
+ * when({ age: is.number }, ({ age }) => age * 2)
+ * when({ name: is.string }, ({ name }) => name.toUpperCase())
+ * ```
+ *
+ * **Combinators** — logical composition of patterns:
+ * ```ts
+ * when({ status: is.not("error") }, handler)
+ * when({ code: is.union(is.string, is.number) }, handler)
+ * ```
+ */
+export const is = {
+    /** Matches any `string` value. */
+    string: { [predTag]: true, fn: (v: unknown) => typeof v === "string" } as Pred<unknown, string>,
+    /** Matches any `number` value. */
+    number: { [predTag]: true, fn: (v: unknown) => typeof v === "number" } as Pred<unknown, number>,
+    /** Matches any `boolean` value. */
+    boolean: { [predTag]: true, fn: (v: unknown) => typeof v === "boolean" } as Pred<unknown, boolean>,
+    /** Matches `null` or `undefined`. */
+    nullish: { [predTag]: true, fn: (v: unknown) => v == null } as Pred<unknown, null | undefined>,
+    /** Matches any value that is not `undefined`. */
+    defined: { [predTag]: true, fn: (v: unknown) => v !== undefined } as Pred<unknown>,
+    /** Matches any array (`Array.isArray`). */
+    array: { [predTag]: true, fn: (v: unknown) => Array.isArray(v) } as Pred<unknown, unknown[]>,
+    /** Matches a non-null, non-array object. */
+    object: { [predTag]: true, fn: (v: unknown) => typeof v === "object" && v !== null && !Array.isArray(v) } as Pred<unknown, object>,
+
+    /**
+     * Matches any value that does **not** match the given pattern.
+     *
+     * The pattern may be a literal, a {@link Pred}, another combinator, or a structural object.
+     *
+     * @example
+     * when({ status: is.not("error") }, handler)
+     * when({ code: is.not(is.string) }, handler)
+     */
+    not(pattern: unknown): Combinator {
+        return { [patternTag]: true, kind: "not", pattern };
+    },
+
+    /**
+     * Matches if the value satisfies **any** of the given patterns (logical OR).
+     *
+     * @example
+     * when({ code: is.union(is.string, is.number) }, handler)
+     * when({ status: is.union("pending", "active") }, handler)
+     */
+    union(...patterns: unknown[]): Combinator {
+        return { [patternTag]: true, kind: "union", patterns };
+    },
+} as const;
+
+/**
+ * Mark a field in a {@link when} pattern for extraction into the handler's `selections` argument.
+ *
+ * The matched field value is injected as a named property of the `selections` object
+ * passed as the second argument to the handler.
+ *
+ * An optional second argument constrains the field: the arm only matches if the field
+ * also satisfies the given pattern.
+ *
+ * In Phase 1 the `selections` argument is typed as `Record<string, unknown>`.
+ * Precise per-name type inference is deferred to Phase 1.5.
+ *
+ * @param name - The key under which the extracted value appears in `selections`
+ * @param pattern - Optional pattern the field must satisfy for the arm to match
+ *
+ * @example
+ * // Extract without constraint
+ * when({ user: { name: select("name") } }, (val, { name }) => `Hello, ${name}`)
+ *
+ * // Extract with type assertion
+ * when({ age: select("age", is.number) }, (val, { age }) => age * 2)
+ */
+export function select(name: string, pattern?: unknown): SelectMarker {
+    return { [selectTag]: true, name, pattern };
+}
+
+// ==========================================
+// 5. WHEN
+// ==========================================
+
 /**
  * A typed arm object produced by {@link when}.
  * Used as a variant matcher in {@link match} — either as a single value or in an array.
@@ -231,9 +350,11 @@ export function pred(fn: (val: any) => any): any {
  */
 export type WhenArm<V, R> = {
     readonly [whenTag]: true;
-    readonly pattern: { [K in keyof V]?: V[K] | Pred<V[K], any> } | typeof __;
+    readonly pattern:
+        | { [K in keyof V]?: V[K] | Pred<V[K], any> | SelectMarker | Combinator }
+        | typeof __;
     readonly guard?: (val: V) => boolean;
-    readonly handler: (val: V) => R;
+    readonly handler: (val: V, selections?: Record<string, unknown>) => R;
 };
 
 /**
@@ -272,12 +393,12 @@ export function when<V = any, R = any>(
 ): WhenArm<V, R>;
 export function when<V = any, R = any>(
     pattern: object,
-    handler: (val: V) => R,
+    handler: (val: V, selections?: Record<string, unknown>) => R,
 ): WhenArm<V, R>;
 export function when<V = any, R = any>(
     pattern: object,
     guard: (val: V) => boolean,
-    handler: (val: V) => R,
+    handler: (val: V, selections?: Record<string, unknown>) => R,
 ): WhenArm<V, R>;
 export function when(
     patternOrGuard: any,
@@ -309,7 +430,7 @@ export function when(
 }
 
 // ==========================================
-// 4. THE `union` FACTORY
+// 6. THE `union` FACTORY
 // ==========================================
 
 /**
