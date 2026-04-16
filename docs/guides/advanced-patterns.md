@@ -227,6 +227,125 @@ const format = (f: Field): string =>
 
 ---
 
+## Deep structural matching, `is`, and `select`
+
+### Deep structural patterns
+
+`when()` patterns recurse into plain object sub-patterns. You can match nested fields directly without manual destructuring in the handler:
+
+```ts
+const Event = union({
+  UserAction: (user: { name: string; role: string }, action: string) => ({ user, action }),
+})
+type Event = Union<typeof Event>
+
+match(event, {
+  UserAction: [
+    when({ user: { role: "admin" } }, () => "admin action"),
+    when(__, () => "user action"),
+  ],
+})
+```
+
+Recursion stops at Aljabr variant boundaries — if a payload field holds another variant instance, `when()` will not recurse into it. Use a guard function or a separate `match()` call to inspect nested variants.
+
+### Type wildcards with `is`
+
+The `is` namespace provides pattern primitives that match by runtime type, for use as field values inside `when()` patterns:
+
+```ts
+import { is } from "aljabr"
+
+const Form = union({
+  Field: (value: string | number | null, required: boolean) => ({ value, required }),
+})
+type Form = Union<typeof Form>
+
+match(form, {
+  Field: [
+    when({ value: is.string,  required: true  }, ({ value }) => validate(value)),
+    when({ value: is.number              }, ({ value }) => value.toFixed(2)),
+    when({ value: is.nullish, required: true  }, () => "required field is empty"),
+    when(__,                                    () => "optional empty"),
+  ],
+})
+```
+
+Available wildcards: `is.string`, `is.number`, `is.boolean`, `is.nullish`, `is.defined`, `is.array`, `is.object`. See the [API reference](../api/union.md#is) for the full list.
+
+### Combinators: `is.not` and `is.union`
+
+`is.not(pattern)` negates any pattern. `is.union(...patterns)` is logical OR across patterns. Both compose with wildcards, literals, and each other:
+
+```ts
+const Message = union({
+  Alert: (code: string, level: string) => ({ code, level }),
+})
+type Message = Union<typeof Message>
+
+match(msg, {
+  Alert: [
+    when({ level: is.union("error", "fatal") },    () => showCritical()),
+    when({ level: is.not("debug") },                () => showNormal()),
+    when(__,                                         () => logDebug()),
+  ],
+})
+```
+
+```ts
+// is.not composes with is.*
+when({ value: is.not(is.nullish) }, ({ value }) => process(value))
+
+// is.union composes with is.*
+when({ id: is.union(is.string, is.number) }, ({ id }) => String(id))
+```
+
+### Extracting values with `select`
+
+`select(name)` binds a field to a named slot in the handler's second argument. This lets you extract nested or guarded values without repeating the field path inside the handler body:
+
+```ts
+import { select } from "aljabr"
+
+const Nav = union({
+  Route: (path: string, params: Record<string, string>) => ({ path, params }),
+})
+type Nav = Union<typeof Nav>
+
+match(nav, {
+  Route: [
+    when(
+      { path: "/user", params: { id: select("id") } },
+      (val, { id }) => loadUser(id as string),
+    ),
+    when(__, () => notFound()),
+  ],
+})
+```
+
+`select` also accepts an optional second argument — a pattern that the field must satisfy for the arm to match:
+
+```ts
+// Only fires when `name` is a non-null string; extracts it into `sel.name`
+when(
+  { user: { name: select("name", is.not(is.nullish)) } },
+  (val, sel) => `Hello, ${sel?.name}`,
+)
+```
+
+Multiple selections work naturally — each `select()` in the pattern contributes a key to the `selections` map:
+
+```ts
+when(
+  { key: select("k"), shift: select("s") },
+  (val, { k, s }) => s ? `Shift+${k}` : String(k),
+)
+```
+
+> The `selections` argument is typed as `Record<string, unknown>` in the current release. Precise per-name type inference is coming in Phase 1.5.
+
+---
+
 ## Modeling state machines
 
 aljabr pairs naturally with state machine patterns. Each state is a variant; transitions are functions that return new variants:

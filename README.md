@@ -14,6 +14,9 @@
 - **Trait constraints** — declare what payload fields an impl class requires; the type system enforces it per variant
 - **Exhaustive `match()`** — compile-time coverage checking with two modes: exact (all variants required) and fallback (`[__]` catch-all)
 - **`when()` arms** — structural patterns, guard functions, `pred()` wrappers, and catch-alls, composable in any order
+- **Deep structural matching** — `when()` patterns recurse into plain object sub-patterns; recursion stops at Aljabr variant boundaries
+- **`is` pattern namespace** — type wildcards (`is.string`, `is.number`, `is.nullish`, `is.array`, …) and combinators (`is.not`, `is.union`) for expressive field-level matching
+- **`select()` extraction** — bind matched fields to named slots injected as the handler's second argument; compose with an optional inner pattern constraint
 - **First-match-wins** — multiple `when()` arms per variant, evaluated left to right
 - **Helpful runtime errors** — non-exhaustive matches throw with messages that tell you exactly what to fix
 - **Generic variant types** — `Variant<Tag, Payload, Impl>` helper + `.typed()` builder preserve type parameters through factory definitions
@@ -150,10 +153,10 @@ e.describe(); // "[Created] id=abc-123"
 
 ### 4. Pattern arms with `when()`
 
-For variants that need sub-matching — conditional handling based on field values, predicates, or runtime guards:
+For variants that need sub-matching — conditional handling based on field values, predicates, runtime guards, or extracted sub-values:
 
 ```ts
-import { union, match, when, pred, __, Union } from "aljabr";
+import { union, match, when, pred, is, select, __, Union } from "aljabr";
 
 const Key = union({
     Press: (key: string, shift: boolean) => ({ key, shift }),
@@ -163,18 +166,16 @@ type Key = Union<typeof Key>;
 const handle = (k: Key): string =>
     match(k, {
         Press: [
-            when({ key: "Enter" }, () => "submit"),
-            when({ key: pred((k) => k.startsWith("F")) }, () => "function key"),
-            when(
-                (v) => v.shift,
-                () => "shifted",
-            ),
-            when(__, () => "character"),
+            when({ key: "Enter" },                         () => "submit"),
+            when({ key: is.union("Tab", "Escape") },       () => "navigation"),
+            when({ key: pred((k) => k.startsWith("F")) },  () => "function key"),
+            when({ key: select("k") }, (_, { k }) => `shifted: ${k}`, (v) => v.shift),
+            when(__,                                        () => "character"),
         ],
     });
 ```
 
-Arms are evaluated left to right; the first match wins. The `when(__, ...)` catch-all at the end ensures exhaustiveness within the variant's arm list.
+Pattern field values can be literals (strict equality), [`pred()`](docs/api/union.md#pred) wrappers, [`is.*`](docs/api/union.md#is) type wildcards and combinators, or [`select()`](docs/api/union.md#select) extraction bindings. Arms are evaluated left to right; the first match wins.
 
 ---
 
@@ -292,6 +293,8 @@ theme.set("dark"); // written to localStorage; restored on next load
 - [`union()`](docs/api/union.md) — define a sum type and get variant constructors
 - [`Trait<R>`](docs/api/union.md#traitr) — declare required payload properties on impl classes
 - [`pred()`](docs/api/union.md#pred) — wrap a predicate for use in `when()` patterns
+- [`is`](docs/api/union.md#is) — type wildcards (`is.string`, `is.number`, …) and combinators (`is.not`, `is.union`)
+- [`select()`](docs/api/union.md#select) — mark a pattern field for extraction into the handler's second argument
 - [`when()`](docs/api/union.md#when) — construct a pattern match arm
 - [`getTag()`](docs/api/union.md#gettag) — read the variant name from an instance
 - [`match()`](docs/api/match.md) — exhaustive pattern matching engine

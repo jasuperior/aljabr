@@ -1,9 +1,9 @@
-# API Reference: union, Trait, pred, when, getTag
+# API Reference: union, Trait, pred, is, select, when, getTag
 
 These exports live in `src/union.ts` and are re-exported from the package root.
 
 ```ts
-import { union, Trait, pred, when, getTag, __, tag, Union, FactoryPayload, Variant } from "aljabr"
+import { union, Trait, pred, is, select, when, getTag, __, tag, Union, FactoryPayload, Variant } from "aljabr"
 ```
 
 ---
@@ -139,6 +139,127 @@ type Pred<T, S extends T = T> = {
 
 ---
 
+## `is`
+
+A namespace of pattern primitives for use as field values inside [`when()`](#when) patterns. Two categories: type wildcards that check a value's runtime type, and logical combinators that compose patterns.
+
+```ts
+import { is } from "aljabr"
+```
+
+### Type wildcards
+
+Each wildcard is a [`Pred`](#pred) that matches values of the corresponding type:
+
+| Wildcard | Equivalent runtime check |
+|---|---|
+| `is.string` | `typeof v === "string"` |
+| `is.number` | `typeof v === "number"` |
+| `is.boolean` | `typeof v === "boolean"` |
+| `is.nullish` | `v == null` (null or undefined) |
+| `is.defined` | `v !== undefined` |
+| `is.array` | `Array.isArray(v)` |
+| `is.object` | `typeof v === "object" && v !== null && !Array.isArray(v)` |
+
+```ts
+when({ age: is.number },   ({ age }) => age * 2)
+when({ name: is.string },  ({ name }) => name.toUpperCase())
+when({ data: is.nullish }, () => "no data")
+when({ list: is.array },   ({ list }) => list.length)
+```
+
+Note: `is.object` does not match arrays — use `is.array` for those.
+
+### `is.not(pattern)`
+
+```ts
+is.not(pattern: unknown): Combinator
+```
+
+Matches any value that does **not** match the given pattern. The inner pattern may be a literal, a `Pred`, another combinator, or a structural object.
+
+```ts
+when({ status: is.not("error") },   handler)    // any status except "error"
+when({ code:   is.not(is.string) }, handler)    // code is not a string
+when({ text:   is.not(is.nullish) }, handler)   // text is defined and non-null
+```
+
+### `is.union(...patterns)`
+
+```ts
+is.union(...patterns: unknown[]): Combinator
+```
+
+Matches if the value satisfies **any** of the given patterns (logical OR).
+
+```ts
+when({ key:    is.union("Tab", "Enter") },       handler)   // Tab or Enter
+when({ code:   is.union(is.string, is.number) }, handler)   // string or number
+when({ status: is.union("pending", "active") },  handler)   // either status
+```
+
+### Types
+
+```ts
+type Combinator =
+  | { readonly kind: "not";   readonly pattern: unknown }
+  | { readonly kind: "union"; readonly patterns: readonly unknown[] }
+```
+
+> **Phase 1.5 note:** In the current release, combinators carry `unknown` as the narrowed type in TypeScript. Type-level narrowing (`Exclude<T, U>` for `is.not`, `A | B` for `is.union`) is planned for Phase 1.5.
+
+---
+
+## `select()`
+
+```ts
+function select(name: string, pattern?: unknown): SelectMarker
+```
+
+Marks a field in a [`when()`](#when) pattern for extraction. When the arm matches, the field's value is collected into a `selections` map and injected as the second argument to the handler.
+
+An optional second argument constrains the field: the arm only matches if the field also satisfies that pattern.
+
+```ts
+// Extract without constraint — arm always fires for this variant
+when({ key: select("k") }, (val, { k }) => `pressed: ${k}`)
+
+// Extract with type assertion — arm only fires when text is non-null
+when({ text: select("t", is.not(is.nullish)) }, (val, { t }) => t.toUpperCase())
+
+// Extract from a nested path
+when({ user: { name: select("name") } }, (val, { name }) => `Hello, ${name}`)
+
+// Multiple selections
+when(
+  { key: select("k"), shift: select("s") },
+  (val, { k, s }) => s ? `Shift+${k}` : k,
+)
+```
+
+### Handler signature with `select`
+
+When one or more `select()` markers appear in the pattern, the handler receives a second argument containing all extracted values:
+
+```ts
+(val: V, selections?: Record<string, unknown>) => R
+```
+
+Handlers without any `select()` markers still type-check: the second argument is optional and TypeScript will not complain if it's omitted.
+
+> **Phase 1.5 note:** In the current release, `selections` is typed as `Record<string, unknown>`. Per-name type inference (e.g., knowing `{ name: string }` from the variant's field type) is planned for Phase 1.5.
+
+### `SelectMarker` type
+
+```ts
+type SelectMarker = {
+  readonly name: string
+  readonly pattern?: unknown
+}
+```
+
+---
+
 ## `when()`
 
 ```ts
@@ -148,20 +269,33 @@ function when<V, R>(pattern: typeof __, handler: (val: V) => R): WhenArm<V, R>
 // Guard-only: matches when guard(val) returns true
 function when<V, R>(guard: (val: V) => boolean, handler: (val: V) => R): WhenArm<V, R>
 
-// Structural: matches when all pattern fields equal the variant's fields
-function when<V, R>(pattern: object, handler: (val: V) => R): WhenArm<V, R>
+// Structural: matches when all pattern fields satisfy the pattern
+function when<V, R>(
+  pattern: object,
+  handler: (val: V, selections?: Record<string, unknown>) => R
+): WhenArm<V, R>
 
 // Structural + guard: both must pass
-function when<V, R>(pattern: object, guard: (val: V) => boolean, handler: (val: V) => R): WhenArm<V, R>
+function when<V, R>(
+  pattern: object,
+  guard: (val: V) => boolean,
+  handler: (val: V, selections?: Record<string, unknown>) => R
+): WhenArm<V, R>
 ```
 
 Constructs a pattern match arm for use as a variant matcher inside [`match()`](match.md). Arms are used either as a single value or in an array (first-match-wins).
 
 ### Pattern matching rules
 
-Pattern keys are matched in order:
-- If the pattern value is a [`Pred`](#pred), `pred.fn(variantField)` is called
-- Otherwise, strict equality (`===`) is used
+Each field in the pattern is evaluated against the corresponding field on the variant value:
+
+- **[`Pred`](#pred)** — `pred.fn(fieldValue)` is called
+- **[`Combinator`](#is)** (`is.not`, `is.union`) — evaluated recursively
+- **[`SelectMarker`](#select)** — field is extracted into `selections`; the optional inner pattern is evaluated if present
+- **Plain object (not an Aljabr variant)** — matched recursively as a sub-pattern
+- **Anything else** — strict equality (`===`)
+
+Recursion into sub-patterns stops at Aljabr variant boundaries (values that carry a `[tag]` on their prototype).
 
 An empty pattern `{}` matches any value (all-keys-pass vacuously).
 
@@ -174,21 +308,34 @@ when(__, () => "fallback")
 // Guard-only
 when((v) => v.x > 0, () => "positive x")
 
-// Structural pattern
+// Structural pattern — literal equality
 when({ key: "Enter" }, () => "submit")
 
-// Pattern with pred
-when({ key: pred((k) => k.startsWith("F")) }, () => "function key")
+// Pattern with is.* wildcard
+when({ age: is.number }, ({ age }) => age * 2)
 
-// Structural + guard
+// Pattern with combinator
+when({ status: is.not("error") }, handler)
+
+// Deep structural match
+when({ user: { name: "Alice" } }, () => "found Alice")
+
+// Extract a field with select
+when({ key: select("k") }, (val, { k }) => `pressed: ${k}`)
+
+// Extract with type constraint
+when({ age: select("age", is.number) }, (val, { age }) => age)
+
+// Pattern + guard
 when({ active: true }, (v) => v.count > 10, () => "active and busy")
 
 // Array of arms in match
 match(event, {
   KeyPress: [
-    when({ key: "Enter" }, () => "submit"),
-    when({ key: "Escape" }, () => "cancel"),
-    when(__, () => "other"),
+    when({ key: "Enter" },                         () => "submit"),
+    when({ key: is.union("Tab", "Escape") },       () => "navigation"),
+    when({ key: select("k", is.not(is.nullish)) }, (_, { k }) => `char: ${k}`),
+    when(__,                                        () => "other"),
   ],
 })
 ```
@@ -197,9 +344,11 @@ match(event, {
 
 ```ts
 type WhenArm<V, R> = {
-  readonly pattern: { [K in keyof V]?: V[K] | Pred<V[K]> } | typeof __
+  readonly pattern:
+    | { [K in keyof V]?: V[K] | Pred<V[K]> | SelectMarker | Combinator }
+    | typeof __
   readonly guard?: (val: V) => boolean
-  readonly handler: (val: V) => R
+  readonly handler: (val: V, selections?: Record<string, unknown>) => R
 }
 ```
 
