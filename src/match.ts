@@ -10,15 +10,16 @@ import {
     selectTag,
     whenTag,
     type Pred,
-    type Combinator,
+    type NotCombinator,
+    type UnionCombinator,
     type SelectMarker,
     type WhenArm,
 } from "./union";
 
 type VariantMatcher<V, R> =
     | ((val: V) => R)
-    | WhenArm<V, R>
-    | Array<WhenArm<V, R>>;
+    | WhenArm<V, R, any>
+    | Array<WhenArm<V, R, any>>;
 
 type ExactMatchers<Enum extends { [tag]: string }, R> = {
     [Variant in Enum[typeof tag]]: VariantMatcher<
@@ -63,15 +64,14 @@ function evaluatePatternValue(
 
     // Combinator — is.not / is.union
     if (p !== null && typeof p === "object" && patternTag in p) {
-        const comb = p as Combinator;
-        switch (comb.kind) {
-            case "not":
-                return evaluatePatternValue(comb.pattern, v) === false ? {} : false;
-            case "union":
-                return comb.patterns.some((pat) => evaluatePatternValue(pat, v) !== false)
-                    ? {}
-                    : false;
+        if ((p as any).kind === "not") {
+            const comb = p as NotCombinator;
+            return evaluatePatternValue(comb.pattern, v) === false ? {} : false;
         }
+        const comb = p as UnionCombinator;
+        return comb.patterns.some((pat) => evaluatePatternValue(pat, v) !== false)
+            ? {}
+            : false;
     }
 
     // Pred — pred() or is.string / is.number / etc.
@@ -192,13 +192,13 @@ export function match<E extends { [tag]: string }, R>(
 
     // Single when() arm
     if (typeof matcher === "object" && whenTag in matcher) {
-        const { pattern, guard, handler } = matcher as WhenArm<any, R>;
+        const { pattern, guard, handler } = matcher as WhenArm<any, R, any>;
 
-        if (pattern === __) return handler(value);
+        if (pattern === __) return handler(value, {} as any);
 
         const result = matchesPattern(pattern as object, value);
         if (result !== false && (!guard || guard(value))) {
-            return handler(value, result);
+            return handler(value, result as any);
         }
 
         if (matchers[__]) return matchers[__](value);
@@ -211,17 +211,17 @@ export function match<E extends { [tag]: string }, R>(
     if (Array.isArray(matcher)) {
         let hasConditionalArm = false;
 
-        for (const arm of matcher as Array<WhenArm<any, R>>) {
+        for (const arm of matcher as Array<WhenArm<any, R, any>>) {
             const { pattern, guard, handler } = arm;
 
-            if (pattern === __) return handler(value);
+            if (pattern === __) return handler(value, {} as any);
 
             if (guard || hasConditionalPattern(pattern as object))
                 hasConditionalArm = true;
 
             const result = matchesPattern(pattern as object, value);
             if (result !== false && (!guard || guard(value))) {
-                return handler(value, result);
+                return handler(value, result as any);
             }
         }
 

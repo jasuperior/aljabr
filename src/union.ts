@@ -234,25 +234,140 @@ export function pred(fn: (val: any) => any): any {
 // ==========================================
 
 /**
- * A combinator pattern produced by {@link is.not} or {@link is.union}.
- * Used as a field value inside a {@link when} pattern object.
+ * A negation combinator produced by {@link is.not}.
+ * Matches any value that does **not** match the inner pattern `P`.
  *
- * In Phase 1 combinators carry `unknown` as the narrowed type.
- * Type-level narrowing (`Exclude<T, U>`, `A | B`) is deferred to Phase 1.5.
+ * @typeParam P - The inner pattern type being negated
  */
-export type Combinator =
-    | { readonly [patternTag]: true; readonly kind: "not"; readonly pattern: unknown }
-    | { readonly [patternTag]: true; readonly kind: "union"; readonly patterns: readonly unknown[] };
+export type NotCombinator<P = unknown> = {
+    readonly [patternTag]: true;
+    readonly kind: "not";
+    readonly pattern: P;
+};
+
+/**
+ * A union combinator produced by {@link is.union}.
+ * Matches if the value satisfies **any** of the inner patterns.
+ *
+ * @typeParam Ps - Tuple of the inner pattern types
+ */
+export type UnionCombinator<Ps extends readonly unknown[] = readonly unknown[]> = {
+    readonly [patternTag]: true;
+    readonly kind: "union";
+    readonly patterns: Ps;
+};
+
+/**
+ * Convenience alias for any combinator value.
+ * Use {@link NotCombinator} or {@link UnionCombinator} directly when you need
+ * the specific generic form.
+ */
+export type Combinator = NotCombinator | UnionCombinator;
+
+/**
+ * Extracts the narrowed type that a pattern value produces at the type level.
+ *
+ * - `Pred<T, S>` → `S`
+ * - `UnionCombinator<Ps>` → union of each element's narrowed type
+ * - `NotCombinator<P>` → `never` (Exclude is applied at the call site against the field type)
+ * - Anything else (literals, structural objects) → `P` itself
+ *
+ * @internal
+ */
+export type ExtractNarrowType<P> =
+    P extends Pred<any, infer S>
+        ? S
+        : P extends UnionCombinator<infer Ps extends readonly unknown[]>
+          ? ExtractUnionNarrow<Ps>
+          : P extends NotCombinator<any>
+            ? never
+            : P;
+
+/** @internal */
+export type ExtractUnionNarrow<Ps extends readonly unknown[]> =
+    Ps extends readonly [infer H, ...infer T]
+        ? ExtractNarrowType<H> | ExtractUnionNarrow<T>
+        : never;
+
+/**
+ * Resolves the concrete TypeScript type that a `select()` extraction will
+ * produce for a given field, given the inner pattern constraint (if any) and
+ * the field's type in the variant `V`.
+ *
+ * - No inner pattern (`void`) → `FieldType` verbatim
+ * - `Pred<T, S>` inner → `S`
+ * - `NotCombinator<P>` inner → `Exclude<FieldType, ExtractNarrowType<P>>`
+ * - `UnionCombinator<Ps>` inner → `ExtractUnionNarrow<Ps>`
+ * - Literal inner → the literal itself
+ *
+ * @internal
+ */
+export type ResolveSelectType<InnerPat, FieldType> =
+    [InnerPat] extends [void]
+        ? FieldType
+        : InnerPat extends Pred<any, infer S>
+          ? S
+          : InnerPat extends NotCombinator<infer Inner>
+            ? Exclude<FieldType, ExtractNarrowType<Inner>>
+            : InnerPat extends UnionCombinator<infer Ps extends readonly unknown[]>
+              ? ExtractUnionNarrow<Ps>
+              : InnerPat;
+
+/**
+ * Recursively collects all `select()` markers from a pattern type `P`,
+ * mapping each `select(name)` to its resolved field type from `V`.
+ *
+ * Returns a union of `{ name: Type }` objects — pass through
+ * {@link UnionToIntersection} to produce the final `selections` shape.
+ *
+ * @internal
+ */
+type CollectSelectionItems<P extends object, V> = {
+    [K in keyof P & string]: K extends keyof V
+        ? P[K] extends SelectMarker<infer Name, infer InnerPat>
+            ? { [_ in Name]: ResolveSelectType<InnerPat, V[K]> }
+            : P[K] extends object
+              ? CollectSelectionItems<Extract<P[K], object>, Extract<V[K], object>>
+              : never
+        : never;
+}[keyof P & string];
+
+/**
+ * Computes the typed `selections` map for a `when()` arm.
+ *
+ * Given the pattern type `P` and the variant type `V`:
+ * - Traverses `P` to find all {@link SelectMarker} values
+ * - Maps each to its resolved type against the corresponding field in `V`
+ * - Returns an intersection of all `{ name: Type }` records
+ *
+ * If no `select()` markers are present, returns `{}`.
+ *
+ * @typeParam P - The pattern type (from the `when()` call)
+ * @typeParam V - The variant type being matched
+ */
+export type SelectionsFor<P, V> =
+    [P] extends [typeof __]
+        ? {}
+        : P extends object
+          ? UnionToIntersection<{} | CollectSelectionItems<P, V>>
+          : {};
 
 /**
  * An extraction binding produced by {@link select}.
- * When placed as a field value inside a {@link when} pattern, the matched field value
- * is collected into the `selections` map passed as the second argument to the handler.
+ * When placed as a field value inside a {@link when} pattern, the matched
+ * field value is collected into the `selections` map passed as the second
+ * argument to the handler.
+ *
+ * @typeParam Name - The literal key name under which the value is injected
+ * @typeParam InnerPat - The inner pattern type used to constrain and narrow
+ *   the extracted value (`void` means no constraint — use the field's type)
  */
-export type SelectMarker = {
+export type SelectMarker<Name extends string = string, InnerPat = void> = {
     readonly [selectTag]: true;
-    readonly name: string;
+    readonly name: Name;
     readonly pattern?: unknown;
+    /** @internal Phantom: carries inner pattern type for type-level inference */
+    readonly _inner?: InnerPat;
 };
 
 /**
@@ -270,35 +385,32 @@ export type SelectMarker = {
  * when({ code: is.union(is.string, is.number) }, handler)
  * ```
  */
-export const is = {
+export const is: {
     /** Matches any `string` value. */
-    string: { [predTag]: true, fn: (v: unknown) => typeof v === "string" } as Pred<unknown, string>,
+    readonly string: Pred<unknown, string>;
     /** Matches any `number` value. */
-    number: { [predTag]: true, fn: (v: unknown) => typeof v === "number" } as Pred<unknown, number>,
+    readonly number: Pred<unknown, number>;
     /** Matches any `boolean` value. */
-    boolean: { [predTag]: true, fn: (v: unknown) => typeof v === "boolean" } as Pred<unknown, boolean>,
+    readonly boolean: Pred<unknown, boolean>;
     /** Matches `null` or `undefined`. */
-    nullish: { [predTag]: true, fn: (v: unknown) => v == null } as Pred<unknown, null | undefined>,
+    readonly nullish: Pred<unknown, null | undefined>;
     /** Matches any value that is not `undefined`. */
-    defined: { [predTag]: true, fn: (v: unknown) => v !== undefined } as Pred<unknown>,
+    readonly defined: Pred<unknown>;
     /** Matches any array (`Array.isArray`). */
-    array: { [predTag]: true, fn: (v: unknown) => Array.isArray(v) } as Pred<unknown, unknown[]>,
+    readonly array: Pred<unknown, unknown[]>;
     /** Matches a non-null, non-array object. */
-    object: { [predTag]: true, fn: (v: unknown) => typeof v === "object" && v !== null && !Array.isArray(v) } as Pred<unknown, object>,
-
+    readonly object: Pred<unknown, object>;
     /**
      * Matches any value that does **not** match the given pattern.
      *
-     * The pattern may be a literal, a {@link Pred}, another combinator, or a structural object.
+     * The pattern may be a literal, a {@link Pred}, another combinator, or a
+     * structural object.
      *
      * @example
      * when({ status: is.not("error") }, handler)
      * when({ code: is.not(is.string) }, handler)
      */
-    not(pattern: unknown): Combinator {
-        return { [patternTag]: true, kind: "not", pattern };
-    },
-
+    not<P>(pattern: P): NotCombinator<P>;
     /**
      * Matches if the value satisfies **any** of the given patterns (logical OR).
      *
@@ -306,34 +418,49 @@ export const is = {
      * when({ code: is.union(is.string, is.number) }, handler)
      * when({ status: is.union("pending", "active") }, handler)
      */
-    union(...patterns: unknown[]): Combinator {
-        return { [patternTag]: true, kind: "union", patterns };
+    union<const Ps extends unknown[]>(...patterns: Ps): UnionCombinator<Ps>;
+} = {
+    string: { [predTag]: true, fn: (v: unknown) => typeof v === "string" } as Pred<unknown, string>,
+    number: { [predTag]: true, fn: (v: unknown) => typeof v === "number" } as Pred<unknown, number>,
+    boolean: { [predTag]: true, fn: (v: unknown) => typeof v === "boolean" } as Pred<unknown, boolean>,
+    nullish: { [predTag]: true, fn: (v: unknown) => v == null } as Pred<unknown, null | undefined>,
+    defined: { [predTag]: true, fn: (v: unknown) => v !== undefined } as Pred<unknown>,
+    array: { [predTag]: true, fn: (v: unknown) => Array.isArray(v) } as Pred<unknown, unknown[]>,
+    object: { [predTag]: true, fn: (v: unknown) => typeof v === "object" && v !== null && !Array.isArray(v) } as Pred<unknown, object>,
+    not(pattern: any) {
+        return { [patternTag]: true, kind: "not", pattern } as NotCombinator<any>;
     },
-} as const;
+    union(...patterns: any[]) {
+        return { [patternTag]: true, kind: "union", patterns } as UnionCombinator<any>;
+    },
+};
 
 /**
- * Mark a field in a {@link when} pattern for extraction into the handler's `selections` argument.
+ * Mark a field in a {@link when} pattern for extraction into the handler's
+ * `selections` argument.
  *
- * The matched field value is injected as a named property of the `selections` object
- * passed as the second argument to the handler.
- *
- * An optional second argument constrains the field: the arm only matches if the field
- * also satisfies the given pattern.
- *
- * In Phase 1 the `selections` argument is typed as `Record<string, unknown>`.
- * Precise per-name type inference is deferred to Phase 1.5.
+ * The matched field value is injected as a named property of the `selections`
+ * object passed as the second argument to the handler. Its type is inferred
+ * from the corresponding field type in the variant, optionally narrowed by an
+ * inner pattern constraint.
  *
  * @param name - The key under which the extracted value appears in `selections`
- * @param pattern - Optional pattern the field must satisfy for the arm to match
+ * @param pattern - Optional pattern the field must satisfy for the arm to match;
+ *   also narrows the extracted value's type
  *
  * @example
- * // Extract without constraint
+ * // Extract without constraint — typed as the field's own type
  * when({ user: { name: select("name") } }, (val, { name }) => `Hello, ${name}`)
  *
- * // Extract with type assertion
+ * // Extract with type narrowing
  * when({ age: select("age", is.number) }, (val, { age }) => age * 2)
+ *
+ * // Extract and exclude nullish — sel.t is Exclude<string | null, null | undefined>
+ * when({ text: select("t", is.not(is.nullish)) }, (val, { t }) => t.toUpperCase())
  */
-export function select(name: string, pattern?: unknown): SelectMarker {
+export function select<N extends string>(name: N): SelectMarker<N, void>;
+export function select<N extends string, P>(name: N, pattern: P): SelectMarker<N, P>;
+export function select(name: string, pattern?: unknown): SelectMarker<any, any> {
     return { [selectTag]: true, name, pattern };
 }
 
@@ -347,14 +474,13 @@ export function select(name: string, pattern?: unknown): SelectMarker {
  *
  * @typeParam V - The variant type this arm operates on
  * @typeParam R - The result type produced by the handler
+ * @typeParam P - The pattern type; used to compute the precise `selections` type
  */
-export type WhenArm<V, R> = {
+export type WhenArm<V, R, P = {}> = {
     readonly [whenTag]: true;
-    readonly pattern:
-        | { [K in keyof V]?: V[K] | Pred<V[K], any> | SelectMarker | Combinator }
-        | typeof __;
+    readonly pattern: P | typeof __;
     readonly guard?: (val: V) => boolean;
-    readonly handler: (val: V, selections?: Record<string, unknown>) => R;
+    readonly handler: (val: V, selections: SelectionsFor<P, V>) => R;
 };
 
 /**
@@ -366,40 +492,49 @@ export type WhenArm<V, R> = {
  * - `when(pattern, handler)` — matches when all pattern fields equal the variant's fields
  * - `when(pattern, guard, handler)` — structural pattern and guard must both pass
  *
- * Pattern field values may be literals (strict equality) or {@link Pred} wrappers
- * (predicate evaluation). An empty pattern `{}` matches any value.
+ * Pattern field values may be:
+ * - Literals — strict equality
+ * - {@link pred} wrappers — predicate evaluation
+ * - {@link is}`.*` wildcards — type checks (`is.string`, `is.number`, …)
+ * - {@link is.not} / {@link is.union} combinators — logical composition
+ * - {@link select} markers — extract the field into the handler's `selections` argument
+ * - Plain objects — recursive structural sub-patterns
  *
  * Arms in an array are evaluated left to right; the first match wins.
  * Always end an arm array with `when(__, ...)` when pattern or guard arms might not
  * cover every possible value.
  *
+ * The `selections` second argument is typed precisely: each `select("name")` in the
+ * pattern produces a corresponding `{ name: FieldType }` entry, narrowed by any
+ * inner pattern constraint.
+ *
  * @example
  * match(event, {
  *   KeyPress: [
- *     when({ key: "Enter" },                         () => "submit"),
- *     when({ key: pred((k) => k.startsWith("F")) },  () => "function key"),
- *     when((v) => v.key.length > 1,                  () => "special"),
- *     when(__,                                        () => "character"),
+ *     when({ key: "Enter" },                              () => "submit"),
+ *     when({ key: is.union("Tab", "Escape") },            () => "navigation"),
+ *     when({ key: select("k") }, (_, { k }) => `char: ${k}`),
+ *     when(__,                                            () => "other"),
  *   ],
  * })
  */
 export function when<V = any, R = any>(
     pattern: typeof __,
     handler: (val: V) => R,
-): WhenArm<V, R>;
+): WhenArm<V, R, typeof __>;
 export function when<V = any, R = any>(
     guard: (val: V) => boolean,
     handler: (val: V) => R,
-): WhenArm<V, R>;
-export function when<V = any, R = any>(
-    pattern: object,
-    handler: (val: V, selections?: Record<string, unknown>) => R,
-): WhenArm<V, R>;
-export function when<V = any, R = any>(
-    pattern: object,
+): WhenArm<V, R, {}>;
+export function when<V = any, R = any, P extends object = {}>(
+    pattern: P,
+    handler: (val: V, selections: SelectionsFor<P, V>) => R,
+): WhenArm<V, R, P>;
+export function when<V = any, R = any, P extends object = {}>(
+    pattern: P,
     guard: (val: V) => boolean,
-    handler: (val: V, selections?: Record<string, unknown>) => R,
-): WhenArm<V, R>;
+    handler: (val: V, selections: SelectionsFor<P, V>) => R,
+): WhenArm<V, R, P>;
 export function when(
     patternOrGuard: any,
     guardOrHandler: any,
