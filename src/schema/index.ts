@@ -1,4 +1,4 @@
-import { union, getTag, type Union } from "../union.ts";
+import { union, getTag, tag, type Union } from "../union.ts";
 import { match } from "../match.ts";
 import { Validation } from "../prelude/validation.ts";
 
@@ -114,6 +114,19 @@ export const Schema = {
             options?.discriminant ?? "type",
             options?.map,
         ) as Schema<Union<F>>,
+
+    transform<O, P>(
+        base: Schema<O>,
+        decodeFn: (value: O) => P,
+        encodeFn: (value: P) => unknown,
+    ): Codec<unknown, P> {
+        return {
+            decode(input: unknown) {
+                return (_decode(base as AnySchema, input, []) as Validation<O, DecodeError>).map(decodeFn)
+            },
+            encode: encodeFn as (value: P) => unknown,
+        }
+    },
 }
 
 // ===== Decode helpers =====
@@ -276,4 +289,120 @@ function _decode(
 
 export function decode<T>(schema: Schema<T>, input: unknown): Validation<T, DecodeError> {
     return _decode(schema as AnySchema, input, []) as Validation<T, DecodeError>
+}
+
+// ===== Decoder / Codec interfaces =====
+
+export interface Decoder<I, O> {
+    decode(input: I): Validation<O, DecodeError>
+}
+
+export interface Codec<I, O> extends Decoder<I, O> {
+    encode(output: O): I
+}
+
+// ===== Encode helpers =====
+
+function deepEqual(a: unknown, b: unknown): boolean {
+    if (a === b) return true
+    if (a == null || b == null || typeof a !== "object" || typeof b !== "object") return false
+    if (Array.isArray(a) !== Array.isArray(b)) return false
+    if (Array.isArray(a)) {
+        const aa = a as unknown[], ab = b as unknown[]
+        return aa.length === ab.length && aa.every((v, i) => deepEqual(v, ab[i]))
+    }
+    const ao = a as Record<string, unknown>, bo = b as Record<string, unknown>
+    const aKeys = Object.keys(ao), bKeys = Object.keys(bo)
+    return aKeys.length === bKeys.length && aKeys.every(k => k in bo && deepEqual(ao[k], bo[k]))
+}
+
+function _encode(schema: AnySchema, value: unknown): unknown {
+    return match(schema, {
+        StringSchema:  () => value,
+        NumberSchema:  () => value,
+        BooleanSchema: () => value,
+        LiteralSchema: () => value,
+
+        OptionalSchema: ({ inner }) =>
+            value === undefined ? undefined : _encode(inner as AnySchema, value),
+
+        NullableSchema: ({ inner }) =>
+            value === null ? null : _encode(inner as AnySchema, value),
+
+        NullishSchema: ({ inner }) =>
+            value == null ? value : _encode(inner as AnySchema, value),
+
+        ArraySchema: ({ element }) =>
+            (value as unknown[]).map(v => _encode(element as AnySchema, v)),
+
+        ObjectSchema: ({ shape }) => {
+            const shapeMap = shape as Record<string, AnySchema>
+            const obj = value as Record<string, unknown>
+            const output: Record<string, unknown> = {}
+            for (const key of Object.keys(shapeMap)) {
+                if (key in obj) output[key] = _encode(shapeMap[key], obj[key])
+            }
+            return output
+        },
+
+        UnionSchema: ({ options }) => {
+            for (const opt of options as AnySchema[]) {
+                if (getTag(_decode(opt, value, [])) === "Valid") return _encode(opt, value)
+            }
+            return value
+        },
+
+        VariantSchema: ({ shapeMap, discriminant, map }) => {
+            const disc = discriminant as string
+            const variantShapeMap = shapeMap as Record<string, AnySchema>
+            const variantName = getTag(value as { [tag]: string })
+
+            const inverseMap: Record<string, string> = {}
+            if (map) {
+                for (const [ext, int] of Object.entries(map as Record<string, string>)) {
+                    inverseMap[int] = ext
+                }
+            }
+            const discValue = inverseMap[variantName] ?? variantName
+
+            const payload: Record<string, unknown> = {}
+            for (const key of Object.keys(value as object)) {
+                payload[key] = (value as Record<string, unknown>)[key]
+            }
+
+            const encodedPayload = _encode(variantShapeMap[variantName], payload) as Record<string, unknown>
+            return { [disc]: discValue, ...encodedPayload }
+        },
+    })
+}
+
+export function encode<T>(schema: Schema<T>, value: T): unknown {
+    return _encode(schema as AnySchema, value)
+}
+
+// ===== Adapter helpers =====
+
+export function defineDecoder<I, O>(decoder: Decoder<I, O>): Decoder<I, O> {
+    return decoder
+}
+
+export function defineCodec<I, O>(codec: Codec<I, O>): Codec<I, O> {
+    return codec
+}
+
+// ===== roundtrip test utility =====
+
+export function roundtrip<T>(
+    schemaOrCodec: Schema<T> | Codec<unknown, T>,
+    input: unknown,
+): boolean {
+    if (typeof (schemaOrCodec as Codec<unknown, T>).decode === "function") {
+        const c = schemaOrCodec as Codec<unknown, T>
+        const decoded = c.decode(input)
+        if (getTag(decoded) !== "Valid") return false
+        return deepEqual(c.encode(decoded.value as T), input)
+    }
+    const decoded = _decode(schemaOrCodec as AnySchema, input, [])
+    if (getTag(decoded) !== "Valid") return false
+    return deepEqual(_encode(schemaOrCodec as AnySchema, decoded.value as T), input)
 }
