@@ -285,9 +285,9 @@ type Message = Union<typeof Message>
 
 match(msg, {
   Alert: [
-    when({ level: is.union("error", "fatal") },    () => showCritical()),
-    when({ level: is.not("debug") },                () => showNormal()),
-    when(__,                                         () => logDebug()),
+    when({ level: is.union("error", "fatal") }, () => showCritical()),
+    when({ level: is.not("debug") },             () => showNormal()),
+    when(__,                                      () => logDebug()),
   ],
 })
 ```
@@ -299,6 +299,19 @@ when({ value: is.not(is.nullish) }, ({ value }) => process(value))
 // is.union composes with is.*
 when({ id: is.union(is.string, is.number) }, ({ id }) => String(id))
 ```
+
+`is.not` is also a namespace — each wildcard has a BDD-style pre-computed counterpart:
+
+```ts
+// These are equivalent pairs:
+when({ code: is.not(is.string) },  handler)
+when({ code: is.not.string },      handler)   // shorthand
+
+when({ flag: is.not(is.boolean) }, handler)
+when({ flag: is.not.boolean },     handler)   // shorthand
+```
+
+The pre-computed values (`is.not.string`, `is.not.number`, `is.not.array`, etc.) are plain values — not callable — consistent with how `is.string` works.
 
 ### Extracting values with `select`
 
@@ -380,6 +393,93 @@ Inner pattern constraints narrow the extracted type:
 | `is.number` | `number` |
 | `is.not(is.nullish)` | `Exclude<T, null \| undefined>` |
 | `is.union("a", "b")` | `"a" \| "b"` |
+
+---
+
+## Cross-union matching with `is.variant` and `variantOf`
+
+Aljabr's tag-first dispatch is fast, but the tag alone can't distinguish two unions that share a variant name. If both `Result` and `Option` define an `"Ok"` variant, `getTag` alone is insufficient — you need union identity, not just the tag string.
+
+Every factory created by `union()` carries a unique symbol internally. Every variant prototype it produces is stamped with the same symbol. This lets you ask "is this value from **that** specific union?" regardless of what its tag string is.
+
+### `is.variant(factory)` in `when()` patterns
+
+Use `is.variant(factory)` as a field value in a `when()` pattern to test whether a field holds any variant from a specific union:
+
+```ts
+import { union, match, when, is, __, Union } from "aljabr"
+
+const Result = union({ Ok: (v: number) => ({ v }), Err: (e: string) => ({ e }) })
+const Option = union({ Some: (v: number) => ({ v }), None: { v: null } })
+
+const Container = union({
+  Wrap: (payload: unknown) => ({ payload }),
+})
+
+const describe = (c: ReturnType<typeof Container.Wrap>): string =>
+  match(c, {
+    Wrap: [
+      when({ payload: is.variant(Result) }, () => "contains a Result"),
+      when({ payload: is.variant(Option) }, () => "contains an Option"),
+      when({ payload: is.string },           () => "contains a string"),
+      when(__,                               () => "contains something else"),
+    ],
+  })
+
+describe(Container.Wrap(Result.Ok(42)))   // "contains a Result"
+describe(Container.Wrap(Option.None()))   // "contains an Option"
+describe(Container.Wrap("hello"))         // "contains a string"
+```
+
+Without `is.variant`, matching against `Result.Ok` would dispatch on the tag `"Ok"` — which might also match an `Option.Ok` if that variant existed.
+
+### `is.union(Factory1, Factory2)` for OR membership
+
+Pass union factories directly to `is.union` to match a field that can be any variant of any of those unions:
+
+```ts
+const Wrapper = union({ Wrap: (val: unknown) => ({ val }) })
+
+match(wrapper, {
+  Wrap: [
+    when({ val: is.union(Result, Option) }, () => "Result or Option variant"),
+    when(__, () => "something else"),
+  ],
+})
+```
+
+Factories and other patterns mix freely in the same `is.union(...)` call:
+
+```ts
+when({ val: is.union(Result, is.string) }, handler) // Result variant or a plain string
+```
+
+### `is.not(Factory)` and `is.not.variant(factory)` for negation
+
+Both forms work symmetrically:
+
+```ts
+when({ data: is.not(Result) },         handler)  // data is NOT a Result variant
+when({ data: is.not.variant(Result) }, handler)  // identical — namespace form
+```
+
+### `variantOf` for runtime checks outside patterns
+
+When you need a membership check outside of a `when()` pattern — in a guard function, a filter, or any imperative code — use the standalone `variantOf`:
+
+```ts
+import { variantOf } from "aljabr"
+
+// Direct form
+variantOf(Result, someValue) // boolean
+
+// Curried form — useful for array filtering
+const results = values.filter(variantOf(Result))
+
+// Compose with pred() for use in when() arms
+when({ data: pred(variantOf(Result)) }, handler)
+// (equivalent to is.variant — use whichever reads more clearly)
+```
 
 ---
 

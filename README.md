@@ -15,8 +15,10 @@
 - **Exhaustive `match()`** — compile-time coverage checking with two modes: exact (all variants required) and fallback (`[__]` catch-all)
 - **`when()` arms** — structural patterns, guard functions, `pred()` wrappers, and catch-alls, composable in any order
 - **Deep structural matching** — `when()` patterns recurse into plain object sub-patterns; recursion stops at Aljabr variant boundaries
-- **`is` pattern namespace** — type wildcards (`is.string`, `is.number`, `is.nullish`, `is.array`, …) and combinators (`is.not`, `is.union`) for expressive field-level matching
+- **`is` pattern namespace** — type wildcards (`is.string`, `is.number`, `is.nullish`, `is.array`, …), union membership (`is.variant`), and combinators (`is.not`, `is.union`) for expressive field-level matching; union factories pass directly to `is.union(Result, Option)` to match variants of either union
+- **`is.not.*` namespace** — BDD-style negation: `is.not.string`, `is.not.number`, `is.not.array`, etc. as pre-computed values; `is.not.union(...)` and `is.not.variant(factory)` as parameterized mirrors
 - **`select()` extraction** — bind matched fields to named slots injected as the handler's second argument; each slot is typed precisely from the variant's field type, narrowed by any inner pattern constraint (`is.not`, `is.number`, …)
+- **Union identity & membership** — every factory carries a unique symbol; `variantOf(factory, value?)` checks membership at runtime (curried form composes with `pred()`); `is.variant(factory)` uses it as a `when()` field pattern
 - **First-match-wins** — multiple `when()` arms per variant, evaluated left to right
 - **Helpful runtime errors** — non-exhaustive matches throw with messages that tell you exactly what to fix
 - **Generic variant types** — `Variant<Tag, Payload, Impl>` helper + `.typed()` builder preserve type parameters through factory definitions
@@ -329,6 +331,7 @@ The next major release expands aljabr across seven progressive phases, each buil
 | ----- | ----- |
 | **1 — Deep Structural Matching** ✓ | `select` bindings for nested extraction, wildcards, combinators (`is.not`, `is.union`), deep recursive sub-patterns |
 | **1.5 — Type Inference for `select` and Combinators** ✓ | Precise `selections` typing: each `select("name")` infers from the variant's field type; `is.not(is.nullish)` narrows to `Exclude<T, null \| undefined>`; `is.union("a","b")` narrows to `"a" \| "b"` |
+| **1.6 — Union Identity & `is.not.*` Namespace** ✓ | Per-factory identity symbol brands every variant prototype; `variantOf`, `is.variant`, `is.union(Factory)` and `is.not(Factory)` for cross-union membership matching; full `is.not.*` namespace for BDD-style pattern authoring |
 | **2 — Data Boundary (`aljabr/schema`)** | Decode untyped external data (API payloads, form inputs) into typed variants; bidirectional encode/decode roundtrips |
 | **3 — Resilient Async Lifecycles** | Declarative `Schedule` policies (exponential backoff, jitter) and native timeout/race primitives for `AsyncDerived` |
 | **4 — Resource Scoping & DI** | `Scope` finalizers for safe teardown of WebSockets, timers, and file handles; type-safe context injection via Tags and Layers |

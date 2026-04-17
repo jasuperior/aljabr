@@ -3,7 +3,7 @@
 These exports live in `src/union.ts` and are re-exported from the package root.
 
 ```ts
-import { union, Trait, pred, is, select, when, getTag, __, tag, Union, FactoryPayload, Variant } from "aljabr"
+import { union, Trait, pred, is, select, when, getTag, variantOf, __, tag, Union, FactoryPayload, Variant } from "aljabr"
 ```
 
 ---
@@ -170,20 +170,59 @@ when({ list: is.array },   ({ list }) => list.length)
 
 Note: `is.object` does not match arrays — use `is.array` for those.
 
-### `is.not(pattern)`
+### `is.not`
+
+`is.not` is both callable and a namespace. The callable form negates any pattern; the namespace form provides pre-computed BDD-style shorthands.
+
+#### Callable: `is.not(pattern)`
 
 ```ts
 is.not<P>(pattern: P): NotCombinator<P>
 ```
 
-Matches any value that does **not** match the given pattern. The inner pattern may be a literal, a `Pred`, another combinator, or a structural object.
+Matches any value that does **not** match the given pattern. The inner pattern may be a literal, a `Pred`, a union factory, another combinator, or a structural object.
 
 The return type is `NotCombinator<P>` — it carries the inner pattern type `P` so the match engine can compute `Exclude<FieldType, NarrowOf<P>>` when used inside `select()`.
 
 ```ts
-when({ status: is.not("error") },   handler)    // any status except "error"
-when({ code:   is.not(is.string) }, handler)    // code is not a string
+when({ status: is.not("error") },    handler)   // any status except "error"
+when({ code:   is.not(is.string) },  handler)   // code is not a string
 when({ text:   is.not(is.nullish) }, handler)   // text is defined and non-null
+when({ data:   is.not(Result) },     handler)   // data is not a Result variant
+```
+
+#### Namespace: pre-computed wildcard values
+
+Each `is.*` wildcard has a pre-computed counterpart under `is.not.*` — a plain `NotCombinator` value, not callable:
+
+| Value | Equivalent |
+|---|---|
+| `is.not.string` | `is.not(is.string)` |
+| `is.not.number` | `is.not(is.number)` |
+| `is.not.boolean` | `is.not(is.boolean)` |
+| `is.not.nullish` | `is.not(is.nullish)` |
+| `is.not.defined` | `is.not(is.defined)` |
+| `is.not.array` | `is.not(is.array)` |
+| `is.not.object` | `is.not(is.object)` |
+
+```ts
+when({ code: is.not.string },  handler)   // code is not a string
+when({ flag: is.not.boolean }, handler)   // flag is not a boolean
+when({ list: is.not.array },   handler)   // list is not an array
+```
+
+#### Namespace: parameterized mirrors
+
+```ts
+is.not.union<const Ps extends unknown[]>(...patterns: Ps): NotCombinator<UnionCombinator<Ps>>
+is.not.variant(factory: unknown): NotCombinator<Pred<unknown>>
+```
+
+Equivalent to wrapping `is.union(...)` or `is.variant(...)` in `is.not(...)`:
+
+```ts
+when({ level: is.not.union("debug", "trace") }, handler)  // not debug or trace
+when({ data:  is.not.variant(Result) },         handler)  // data is not a Result variant
 ```
 
 ### `is.union(...patterns)`
@@ -192,7 +231,7 @@ when({ text:   is.not(is.nullish) }, handler)   // text is defined and non-null
 is.union<const Ps extends unknown[]>(...patterns: Ps): UnionCombinator<Ps>
 ```
 
-Matches if the value satisfies **any** of the given patterns (logical OR).
+Matches if the value satisfies **any** of the given patterns (logical OR). Patterns may be literals, `Pred` values, other combinators, or **union factories**.
 
 The return type is `UnionCombinator<Ps>` — the tuple of inner pattern types is preserved, so `is.union("Tab", "Enter")` produces `UnionCombinator<["Tab", "Enter"]>` rather than erasing to `unknown[]`.
 
@@ -200,7 +239,30 @@ The return type is `UnionCombinator<Ps>` — the tuple of inner pattern types is
 when({ key:    is.union("Tab", "Enter") },       handler)   // Tab or Enter
 when({ code:   is.union(is.string, is.number) }, handler)   // string or number
 when({ status: is.union("pending", "active") },  handler)   // either status
+when({ data:   is.union(Result, Option) },        handler)  // any Result or Option variant
+when({ val:    is.union(Result, is.string) },     handler)  // Result variant or a string
 ```
+
+When a union factory is passed as a pattern argument, the match engine checks `is.variant` membership rather than structural matching.
+
+### `is.variant(factory)`
+
+```ts
+is.variant(factory: unknown): Pred<unknown>
+```
+
+Returns a `Pred` that matches any variant produced by the given union factory. Equivalent to `pred(variantOf(factory))`.
+
+Use directly as a field value in a `when()` pattern, or compose with other combinators:
+
+```ts
+when({ data: is.variant(Result) }, handler)              // data is any Result variant
+when({ val:  is.not(is.variant(Option)) }, handler)      // val is not an Option variant
+when({ val:  is.union(is.variant(Result), is.string) },  // Result variant or string
+     handler)
+```
+
+See also [`variantOf`](#variantof) for the standalone runtime helper.
 
 ### Types
 
@@ -305,6 +367,44 @@ Computes the `selections` type for a `when()` arm. Given the pattern type `P` an
 - Returns the intersection of all `{ name: Type }` records — `{}` when no markers are present
 
 Used internally by `WhenArm` and `when()`. Exported for advanced use cases such as writing helpers that accept typed `when()` arms.
+
+---
+
+## `variantOf()`
+
+```ts
+function variantOf<F extends object>(factory: F): (value: unknown) => boolean
+function variantOf<F extends object>(factory: F, value: unknown): boolean
+```
+
+Checks whether a value is a variant produced by the given union factory. Every factory created by `union()` carries a unique internal symbol; every variant prototype it produces is stamped with the same symbol. `variantOf` compares them.
+
+Two calling forms:
+
+- **Direct**: `variantOf(factory, value)` — immediate boolean check
+- **Curried**: `variantOf(factory)` — returns a reusable predicate function
+
+```ts
+const Result = union({ Ok: (v: number) => ({ v }), Err: (e: string) => ({ e }) })
+const Option = union({ Some: (v: number) => ({ v }), None: { v: null } })
+
+// Direct form
+variantOf(Result, Result.Ok(1))   // true
+variantOf(Result, Option.Some(1)) // false — different factory
+variantOf(Result, "hello")        // false — not a variant at all
+
+// Curried form
+const isResult = variantOf(Result)
+isResult(Result.Err("oops")) // true
+isResult(Option.None())      // false
+
+// Composes with pred() for use in when() patterns
+when({ data: pred(variantOf(Result)) }, handler)
+```
+
+This is especially useful when you need a runtime membership check outside of a `match()` — for guards, filters, or conditional rendering logic.
+
+For use inside `when()` patterns, prefer [`is.variant(factory)`](#isvariantfactory) which wraps this in a `Pred` automatically.
 
 ---
 
