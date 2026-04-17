@@ -695,5 +695,7 @@ This is especially useful for writing helper functions that operate on a single 
 ## See also
 
 - [Getting Started](./getting-started.md)
+- [Working with External Data](./schema.md) — `aljabr/schema`: decode, encode, transform, adapters
 - [API Reference: union](../api/union.md)
 - [API Reference: match](../api/match.md)
+- [API Reference: aljabr/schema](../api/schema.md)
