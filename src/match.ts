@@ -8,6 +8,8 @@ import {
     predTag,
     patternTag,
     selectTag,
+    unionFactoryTag,
+    parentUnionId,
     whenTag,
     type Pred,
     type NotCombinator,
@@ -51,6 +53,13 @@ function evaluatePatternValue(
     p: unknown,
     v: unknown,
 ): false | Record<string, unknown> {
+    // Union factory — is.union(Result, Option), is.not(Result), pred(variantOf(Result)), etc.
+    if (p !== null && typeof p === "object" && unionFactoryTag in p) {
+        return (v as any)?.[parentUnionId] === (p as any)[unionFactoryTag]
+            ? {}
+            : false;
+    }
+
     // select() binding — optionally constrained by an inner pattern
     if (p !== null && typeof p === "object" && selectTag in p) {
         const sel = p as SelectMarker;

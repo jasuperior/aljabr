@@ -42,6 +42,12 @@ export const patternTag = Symbol("aljabr.pattern");
 /** @internal — marks a select() extraction binding */
 export const selectTag = Symbol("aljabr.select");
 
+/** @internal — stored on a union factory to carry its unique identity */
+export const unionFactoryTag = Symbol("aljabr.unionFactory");
+
+/** @internal — stored on variant prototypes to link back to their parent union */
+export const parentUnionId = Symbol("aljabr.parentUnion");
+
 /** @internal */
 export const requirements: unique symbol = Symbol("aljabr.requirements");
 
@@ -374,6 +380,68 @@ export type SelectMarker<Name extends string = string, InnerPat = void> = {
 };
 
 /**
+ * Check whether a value is a variant produced by the given union factory.
+ *
+ * Can be called with two arguments (immediate check) or one (curried predicate).
+ *
+ * @example
+ * variantOf(Result, Result.Ok(1))   // true
+ * variantOf(Result, Option.Some(1)) // false
+ *
+ * const isResult = variantOf(Result)
+ * isResult(Result.Err("oops"))      // true
+ * pred(variantOf(Result))           // Pred for use in when() patterns
+ */
+export function variantOf<F extends object>(
+    factory: F,
+): (value: unknown) => boolean;
+export function variantOf<F extends object>(
+    factory: F,
+    value: unknown,
+): boolean;
+export function variantOf(factory: any, ...rest: [unknown?]): any {
+    const id = (factory as any)[unionFactoryTag];
+    const check = (v: unknown) => (v as any)?.[parentUnionId] === id;
+    return rest.length === 0 ? check : check(rest[0]);
+}
+
+// ── is namespace internals ──────────────────────────────────────────────────
+
+const _isString: Pred<unknown, string> = {
+    [predTag]: true,
+    fn: (v: unknown) => typeof v === "string",
+};
+const _isNumber: Pred<unknown, number> = {
+    [predTag]: true,
+    fn: (v: unknown) => typeof v === "number",
+};
+const _isBoolean: Pred<unknown, boolean> = {
+    [predTag]: true,
+    fn: (v: unknown) => typeof v === "boolean",
+};
+const _isNullish: Pred<unknown, null | undefined> = {
+    [predTag]: true,
+    fn: (v: unknown) => v == null,
+};
+const _isDefined: Pred<unknown> = {
+    [predTag]: true,
+    fn: (v: unknown) => v !== undefined,
+};
+const _isArray: Pred<unknown, unknown[]> = {
+    [predTag]: true,
+    fn: (v: unknown) => Array.isArray(v),
+};
+const _isObject: Pred<unknown, object> = {
+    [predTag]: true,
+    fn: (v: unknown) =>
+        typeof v === "object" && v !== null && !Array.isArray(v),
+};
+
+function _makeNot<P>(pattern: P): NotCombinator<P> {
+    return { [patternTag]: true, kind: "not", pattern } as NotCombinator<P>;
+}
+
+/**
  * A namespace of pattern primitives for use inside {@link when} pattern objects.
  *
  * **Type wildcards** — match a value by its runtime type:
@@ -382,9 +450,16 @@ export type SelectMarker<Name extends string = string, InnerPat = void> = {
  * when({ name: is.string }, ({ name }) => name.toUpperCase())
  * ```
  *
+ * **Union membership** — match a variant of a specific union:
+ * ```ts
+ * when({ data: is.variant(Result) }, handler)
+ * when({ val: is.union(Result, Option) }, handler)
+ * ```
+ *
  * **Combinators** — logical composition of patterns:
  * ```ts
  * when({ status: is.not("error") }, handler)
+ * when({ status: is.not.string }, handler)
  * when({ code: is.union(is.string, is.number) }, handler)
  * ```
  */
@@ -405,66 +480,84 @@ export const is: {
     readonly object: Pred<unknown, object>;
     /**
      * Matches any value that does **not** match the given pattern.
-     *
-     * The pattern may be a literal, a {@link Pred}, another combinator, or a
-     * structural object.
+     * Also available as `is.not.string`, `is.not.number`, etc. for BDD-style authoring.
      *
      * @example
      * when({ status: is.not("error") }, handler)
      * when({ code: is.not(is.string) }, handler)
+     * when({ code: is.not.string }, handler)
+     * when({ val: is.not.variant(Result) }, handler)
      */
-    not<P>(pattern: P): NotCombinator<P>;
+    not: {
+        <P>(pattern: P): NotCombinator<P>;
+        readonly string: NotCombinator<Pred<unknown, string>>;
+        readonly number: NotCombinator<Pred<unknown, number>>;
+        readonly boolean: NotCombinator<Pred<unknown, boolean>>;
+        readonly nullish: NotCombinator<Pred<unknown, null | undefined>>;
+        readonly defined: NotCombinator<Pred<unknown>>;
+        readonly array: NotCombinator<Pred<unknown, unknown[]>>;
+        readonly object: NotCombinator<Pred<unknown, object>>;
+        union<const Ps extends unknown[]>(
+            ...patterns: Ps
+        ): NotCombinator<UnionCombinator<Ps>>;
+        variant(factory: unknown): NotCombinator<Pred<unknown>>;
+    };
     /**
      * Matches if the value satisfies **any** of the given patterns (logical OR).
+     * Accepts union factories directly: `is.union(Result, Option)` matches
+     * any variant of either union.
      *
      * @example
      * when({ code: is.union(is.string, is.number) }, handler)
      * when({ status: is.union("pending", "active") }, handler)
+     * when({ data: is.union(Result, Option) }, handler)
      */
     union<const Ps extends unknown[]>(...patterns: Ps): UnionCombinator<Ps>;
+    /**
+     * Matches any variant produced by the given union factory.
+     *
+     * @example
+     * when({ data: is.variant(Result) }, handler)
+     */
+    variant(factory: unknown): Pred<unknown>;
 } = {
-    string: {
-        [predTag]: true,
-        fn: (v: unknown) => typeof v === "string",
-    } as Pred<unknown, string>,
-    number: {
-        [predTag]: true,
-        fn: (v: unknown) => typeof v === "number",
-    } as Pred<unknown, number>,
-    boolean: {
-        [predTag]: true,
-        fn: (v: unknown) => typeof v === "boolean",
-    } as Pred<unknown, boolean>,
-    nullish: { [predTag]: true, fn: (v: unknown) => v == null } as Pred<
-        unknown,
-        null | undefined
-    >,
-    defined: {
-        [predTag]: true,
-        fn: (v: unknown) => v !== undefined,
-    } as Pred<unknown>,
-    array: { [predTag]: true, fn: (v: unknown) => Array.isArray(v) } as Pred<
-        unknown,
-        unknown[]
-    >,
-    object: {
-        [predTag]: true,
-        fn: (v: unknown) =>
-            typeof v === "object" && v !== null && !Array.isArray(v),
-    } as Pred<unknown, object>,
-    not(pattern: any) {
-        return {
-            [patternTag]: true,
-            kind: "not",
-            pattern,
-        } as NotCombinator<any>;
-    },
+    string: _isString,
+    number: _isNumber,
+    boolean: _isBoolean,
+    nullish: _isNullish,
+    defined: _isDefined,
+    array: _isArray,
+    object: _isObject,
+    not: Object.assign(_makeNot, {
+        string: _makeNot(_isString),
+        number: _makeNot(_isNumber),
+        boolean: _makeNot(_isBoolean),
+        nullish: _makeNot(_isNullish),
+        defined: _makeNot(_isDefined),
+        array: _makeNot(_isArray),
+        object: _makeNot(_isObject),
+        union<const Ps extends unknown[]>(
+            ...patterns: Ps
+        ): NotCombinator<UnionCombinator<Ps>> {
+            return _makeNot({
+                [patternTag]: true,
+                kind: "union",
+                patterns,
+            } as UnionCombinator<Ps>);
+        },
+        variant(factory: unknown): NotCombinator<Pred<unknown>> {
+            return _makeNot(pred(variantOf(factory as any)));
+        },
+    }),
     union(...patterns: any[]) {
         return {
             [patternTag]: true,
             kind: "union",
             patterns,
         } as UnionCombinator<any>;
+    },
+    variant(factory: unknown): Pred<unknown> {
+        return pred(variantOf(factory as any));
     },
 };
 
@@ -696,6 +789,7 @@ export function union(factoriesOrImpls: any): any {
 }
 
 function buildUnion(factories: Record<string, any>, impl: any[]): any {
+    const id = Symbol();
     const result: any = {};
 
     for (const key in factories) {
@@ -707,6 +801,12 @@ function buildUnion(factories: Record<string, any>, impl: any[]): any {
             const proto = Object.create(null);
             Object.defineProperty(proto, tag, {
                 value: key,
+                enumerable: false,
+                writable: false,
+                configurable: false,
+            });
+            Object.defineProperty(proto, parentUnionId, {
+                value: id,
                 enumerable: false,
                 writable: false,
                 configurable: false,
@@ -723,6 +823,13 @@ function buildUnion(factories: Record<string, any>, impl: any[]): any {
             return createVariant(proto, payload);
         };
     }
+
+    Object.defineProperty(result, unionFactoryTag, {
+        value: id,
+        enumerable: false,
+        writable: false,
+        configurable: false,
+    });
 
     return result;
 }
