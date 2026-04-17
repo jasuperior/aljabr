@@ -55,10 +55,10 @@ export abstract class Combinable<T, E> extends Trait<{ value: T }> {
 
 export type Unvalidated<T, E> = Variant<
     "Unvalidated",
-    { value: null },
+    { value: null; errors?: never },
     Combinable<T, E>
 >;
-export type Valid<T, E> = Variant<"Valid", { value: T }, Combinable<T, E>>;
+export type Valid<T, E> = Variant<"Valid", { value: T; errors?: never }, Combinable<T, E>>;
 export type Invalid<T, E> = Variant<
     "Invalid",
     { errors: E[]; value: null },
