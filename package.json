@@ -36,6 +36,11 @@
             "import": "./dist/prelude.js",
             "require": "./dist/prelude.cjs",
             "types": "./dist/prelude/index.d.ts"
+        },
+        "./schema": {
+            "import": "./dist/schema.js",
+            "require": "./dist/schema.cjs",
+            "types": "./dist/schema/index.d.ts"
         }
     },
     "files": [

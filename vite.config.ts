@@ -9,6 +9,7 @@ export default defineConfig({
             entry: {
                 index: resolve(__dirname, "src/main.ts"),
                 prelude: resolve(__dirname, "src/prelude/index.ts"),
+                schema: resolve(__dirname, "src/schema/index.ts"),
             },
             formats: ["es", "cjs"],
         },
