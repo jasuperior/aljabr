@@ -7,6 +7,11 @@ import {
     createOwner,
     scheduleNotification,
 } from "./context.ts";
+import {
+    type AsyncOptions,
+    ScheduleError,
+    computeDelay,
+} from "./schedule.ts";
 
 // ---------------------------------------------------------------------------
 // DerivedState<T> — lifecycle union for computed values
@@ -277,14 +282,14 @@ abstract class AsyncDerivedLifecycle<T, E> extends Trait<{ value: unknown }> {
     }
 }
 
-type AsyncUncomputed = Variant<"Uncomputed", { value: null }, AsyncDerivedLifecycle<never, never>>;
-type AsyncLoading    = Variant<"Loading",    { value: null }, AsyncDerivedLifecycle<never, never>>;
-type AsyncReady<T>   = Variant<"Ready",      { value: T   }, AsyncDerivedLifecycle<T, never>>;
+type AsyncUncomputed   = Variant<"Uncomputed", { value: null },                                                               AsyncDerivedLifecycle<never, never>>;
+type AsyncLoading      = Variant<"Loading",    { value: null },                                                               AsyncDerivedLifecycle<never, never>>;
+type AsyncReady<T>     = Variant<"Ready",      { value: T },                                                                  AsyncDerivedLifecycle<T, never>>;
 /** Dependencies changed while a value exists — the stale value is preserved
  *  and a new computation is in flight. */
-type AsyncReloading<T> = Variant<"Reloading", { value: T }, AsyncDerivedLifecycle<T, never>>;
-type AsyncFailed<E>  = Variant<"Failed",     { value: null; error: E }, AsyncDerivedLifecycle<never, E>>;
-type AsyncDisposed   = Variant<"Disposed",   { value: null }, AsyncDerivedLifecycle<never, never>>;
+type AsyncReloading<T> = Variant<"Reloading",  { value: T },                                                                  AsyncDerivedLifecycle<T, never>>;
+type AsyncFailed<E>    = Variant<"Failed",      { value: null; error: E; attempts: number; nextRetryAt: number | null },      AsyncDerivedLifecycle<never, E>>;
+type AsyncDisposed     = Variant<"Disposed",   { value: null },                                                               AsyncDerivedLifecycle<never, never>>;
 
 export type AsyncDerivedState<T, E = unknown> =
     | AsyncUncomputed
@@ -299,7 +304,8 @@ const AsyncDerivedState = union([AsyncDerivedLifecycle]).typed({
     Loading:    () => ({ value: null }) as AsyncLoading,
     Ready:      <T>(value: T) => ({ value }) as AsyncReady<T>,
     Reloading:  <T>(value: T) => ({ value }) as AsyncReloading<T>,
-    Failed:     <E>(error: E) => ({ value: null, error }) as AsyncFailed<E>,
+    Failed:     <E>(error: E, attempts: number, nextRetryAt: number | null) =>
+        ({ value: null, error, attempts, nextRetryAt }) as AsyncFailed<E>,
     Disposed:   () => ({ value: null }) as AsyncDisposed,
 });
 
@@ -315,27 +321,40 @@ const AsyncDerivedState = union([AsyncDerivedLifecycle]).typed({
  * machine includes `Loading` (first run, no prior value) and `Reloading`
  * (re-run after a dep change, stale value preserved for display).
  *
- * @example
+ * When `AsyncOptions` are provided, failed computations are automatically
+ * retried according to the schedule. The thunk receives an `AbortSignal`
+ * that is aborted before each new attempt, enabling clean cancellation of
+ * in-flight network requests.
+ *
+ * @example Basic usage
  * const userId = Signal.create(1);
- * const profile = AsyncDerived.create(async () => {
- *   const id = userId.get()!;
- *   const res = await fetch(`/api/users/${id}`);
+ * const profile = AsyncDerived.create(async (signal) => {
+ *   const res = await fetch(`/api/users/${userId.get()!}`, { signal });
  *   return res.json();
  * });
  *
- * await profile.get(); // triggers fetch, returns Ready value
- * userId.set(2);
- * profile.state; // Reloading — stale value from user 1 still available
- * await profile.get(); // re-fetches for user 2, returns Ready value
+ * @example With retry
+ * const data = AsyncDerived.create(
+ *   async (signal) => fetchData(signal),
+ *   { schedule: Schedule.exponential({ initialDelay: 100, maxDelay: 30_000 }), maxRetries: 5 },
+ * );
  */
 export class AsyncDerived<T, E = unknown> {
-    #fn: () => Promise<T>;
+    #fn: (signal: AbortSignal) => Promise<T>;
+    #options: AsyncOptions<E>;
     #state: AsyncDerivedState<T, E> = AsyncDerivedState.Uncomputed();
     #computation: Computation;
+    #attempts = 0;
+    #currentController: AbortController | null = null;
+    #retryTimer: ReturnType<typeof setTimeout> | null = null;
     readonly #subscribers = new Map<Computation, () => void>();
 
-    private constructor(fn: () => Promise<T>) {
+    private constructor(
+        fn: (signal: AbortSignal) => Promise<T>,
+        options: AsyncOptions<E> = {},
+    ) {
         this.#fn = fn;
+        this.#options = options;
 
         this.#computation = createOwner();
         this.#computation.dirty = () => {
@@ -348,16 +367,19 @@ export class AsyncDerived<T, E = unknown> {
                 Disposed:   () => null,
             });
             if (transition !== null) {
+                // Cancel any pending retry timer — dep change supersedes it.
+                this.#cancelRetryTimer();
                 this.#state = AsyncDerivedState.Reloading(transition as T);
-                for (const comp of [...this.#subscribers.keys()]) {
-                    scheduleNotification(comp);
-                }
+                this.#notifySubscribers();
             }
         };
     }
 
-    static create<T, E = unknown>(fn: () => Promise<T>): AsyncDerived<T, E> {
-        return new AsyncDerived(fn);
+    static create<T, E = unknown>(
+        fn: (signal: AbortSignal) => Promise<T>,
+        options?: AsyncOptions<E>,
+    ): AsyncDerived<T, E> {
+        return new AsyncDerived(fn, options);
     }
 
     /** The current lifecycle state. Pattern-match this with `match`. */
@@ -411,11 +433,11 @@ export class AsyncDerived<T, E = unknown> {
 
     /** Dispose this derived value and clear all subscriptions. */
     dispose(): void {
+        this.#cancelRetryTimer();
+        this.#currentController?.abort();
         this.#computation.dispose();
         this.#state = AsyncDerivedState.Disposed();
-        for (const comp of [...this.#subscribers.keys()]) {
-            scheduleNotification(comp);
-        }
+        this.#notifySubscribers();
         this.#subscribers.clear();
     }
 
@@ -429,7 +451,25 @@ export class AsyncDerived<T, E = unknown> {
         comp.sources.add(this);
     }
 
+    #notifySubscribers(): void {
+        for (const comp of [...this.#subscribers.keys()]) {
+            scheduleNotification(comp);
+        }
+    }
+
+    #cancelRetryTimer(): void {
+        if (this.#retryTimer !== null) {
+            clearTimeout(this.#retryTimer);
+            this.#retryTimer = null;
+        }
+    }
+
     async #evaluate(): Promise<void> {
+        // Abort any previous in-flight request before starting a new one.
+        this.#currentController?.abort();
+        this.#currentController = new AbortController();
+        const { signal } = this.#currentController;
+
         const hadValue = this.#state.hasValue();
         this.#state = hadValue
             ? AsyncDerivedState.Reloading(this.#state.getValue() as T)
@@ -441,10 +481,76 @@ export class AsyncDerived<T, E = unknown> {
         this.#computation.sources.clear();
 
         try {
-            const value = await trackIn(this.#computation, this.#fn);
+            const promise = trackIn(this.#computation, () => this.#fn(signal));
+            const value = this.#options.timeout !== undefined
+                ? await this.#withTimeout(promise, this.#options.timeout)
+                : await promise;
+
+            this.#attempts = 0;
             this.#state = AsyncDerivedState.Ready(value);
         } catch (e) {
-            this.#state = AsyncDerivedState.Failed(e as E);
+            await this.#handleFailure(e as E);
         }
+    }
+
+    async #withTimeout(promise: Promise<T>, timeoutMs: number): Promise<T> {
+        return new Promise<T>((resolve, reject) => {
+            const start = Date.now();
+            const timer = setTimeout(() => {
+                this.#currentController?.abort();
+                reject(ScheduleError.TimedOut(Date.now() - start, timeoutMs));
+            }, timeoutMs);
+
+            promise.then(
+                (value) => { clearTimeout(timer); resolve(value); },
+                (error) => { clearTimeout(timer); reject(error); },
+            );
+        });
+    }
+
+    async #handleFailure(error: E): Promise<void> {
+        this.#attempts++;
+        const attempts = this.#attempts;
+        const { schedule, maxRetries, shouldRetry, onRetry } = this.#options;
+
+        // Check all terminal conditions before scheduling a retry.
+        const retriable =
+            schedule !== undefined &&
+            (shouldRetry === undefined || shouldRetry(error));
+
+        if (!retriable) {
+            this.#state = AsyncDerivedState.Failed(error, attempts, null);
+            this.#notifySubscribers();
+            return;
+        }
+
+        if (maxRetries !== undefined && attempts > maxRetries) {
+            this.#state = AsyncDerivedState.Failed(
+                ScheduleError.MaxRetriesExceeded(attempts, error) as unknown as E,
+                attempts,
+                null,
+            );
+            this.#notifySubscribers();
+            return;
+        }
+
+        const delay = computeDelay(schedule, attempts, error);
+        if (delay === null) {
+            // Custom policy signalled unconditional stop.
+            this.#state = AsyncDerivedState.Failed(error, attempts, null);
+            this.#notifySubscribers();
+            return;
+        }
+
+        const nextRetryAt = Date.now() + delay;
+        onRetry?.(attempts, error, delay);
+
+        this.#state = AsyncDerivedState.Failed(error, attempts, nextRetryAt);
+        this.#notifySubscribers();
+
+        this.#retryTimer = setTimeout(() => {
+            this.#retryTimer = null;
+            void this.#evaluate();
+        }, delay);
     }
 }
