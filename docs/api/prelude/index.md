@@ -43,8 +43,18 @@ Tools for running async computations inside the reactive graph.
 
 | Export | Description |
 |---|---|
-| [`Effect<T, E>`](./effect.md) | A composable async computation union: `Idle`, `Running`, `Done`, `Stale`. Supports `.map()`, `.flatMap()`, `.recover()`. |
-| [`watchEffect`](./effect.md#watcheffect) | Run an async thunk reactively. Tracks signal reads automatically; calls a callback on dependency changes. |
+| [`Effect<T, E>`](./effect.md) | A composable async computation union: `Idle`, `Running`, `Done`, `Stale`, `Failed`. Supports `.map()`, `.flatMap()`, `.recover()`. |
+| [`watchEffect`](./effect.md#watcheffect) | Run an async thunk reactively. Tracks signal reads automatically; calls a callback on dependency changes or failure. |
+
+### Scheduling
+
+Declarative retry-delay policies for `AsyncDerived` and `watchEffect`.
+
+| Export | Description |
+|---|---|
+| [`Schedule`](./schedule.md) | Tagged union of retry policies: `Fixed`, `Linear`, `Exponential`, `Custom`. Pass to `AsyncOptions.schedule`. |
+| [`ScheduleError`](./schedule.md#scheduleerror) | Errors emitted by the scheduler itself: `TimedOut` and `MaxRetriesExceeded`. Fully matchable. |
+| [`AsyncOptions<E>`](./schedule.md#asyncoptionse) | Shared options bag for retry, timeout, and observability. Accepted by `AsyncDerived.create` and `watchEffect`. |
 
 ### Data structures
 
@@ -158,9 +168,9 @@ import { watchEffect } from "aljabr/prelude"
 const userId = Signal.create(1)
 
 const handle = watchEffect(
-    async () => {
+    async (signal) => {
         const id = userId.get()!
-        return fetch(`/api/users/${id}`).then(r => r.json())
+        return fetch(`/api/users/${id}`, { signal }).then(r => r.json())
     },
     (result) => updateUI(result),
     { eager: true },

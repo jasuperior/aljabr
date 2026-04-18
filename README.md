@@ -272,10 +272,15 @@ state.get("user.name"); // "Dave"
 
 ```ts
 // watchEffect — run an async thunk, re-run it when dependencies change
+// The thunk receives an AbortSignal aborted before each new attempt
 const handle = watchEffect(
-    async () => api.search(query.get()!),
+    async (signal) => api.search(query.get()!, { signal }),
     (result) => updateResults(result),
-    { eager: true },
+    {
+        eager:    true,
+        schedule: Schedule.Exponential({ initialDelay: 100, maxDelay: 30_000 }),
+        maxRetries: 5,
+    },
 );
 handle.stop();
 
@@ -311,7 +316,8 @@ theme.set("dark"); // written to localStorage; restored on next load
 - [`Signal<T, S>`](docs/api/prelude/signal.md) — reactive mutable container; accepts a custom state union `S` + `SignalProtocol<S, T>` for domain-specific lifecycles
 - [`Ref<T>`](docs/api/prelude/ref.md) — reactive container for structured objects and arrays; per-path subscriptions, live signal bindings, array mutation methods
 - [`Derived<T>` / `AsyncDerived<T, E>`](docs/api/prelude/derived.md) — lazy computed reactive values
-- [`Effect<T, E>` / `watchEffect`](docs/api/prelude/effect.md) — reactive async effects
+- [`Effect<T, E>` / `watchEffect`](docs/api/prelude/effect.md) — reactive async effects with `Failed` lifecycle state
+- [`Schedule` / `ScheduleError` / `AsyncOptions`](docs/api/prelude/schedule.md) — declarative retry policies, timeouts, and observability hooks
 - [`Tree<T>`](docs/api/prelude/tree.md) — recursive binary tree
 - [Persistence](docs/api/prelude/persist.md) — `persistedSignal`, `syncToStore`
 - [Reactive context](docs/api/prelude/context.md) — `batch`, `runInContext`, `createOwner`
@@ -320,6 +326,7 @@ theme.set("dark"); // written to localStorage; restored on next load
 
 - [Getting Started](docs/guides/getting-started.md) — walkthrough from first union to real-world patterns
 - [Advanced Patterns](docs/guides/advanced-patterns.md) — impl classes, Trait constraints, complex `when()` compositions
+- [Resilient Async](docs/guides/resilient-async.md) — retry, exponential backoff, timeouts, and `AbortSignal` cancellation
 
 ---
 
@@ -332,8 +339,8 @@ The next major release expands aljabr across seven progressive phases, each buil
 | **1 — Deep Structural Matching** ✓ | `select` bindings for nested extraction, wildcards, combinators (`is.not`, `is.union`), deep recursive sub-patterns |
 | **1.5 — Type Inference for `select` and Combinators** ✓ | Precise `selections` typing: each `select("name")` infers from the variant's field type; `is.not(is.nullish)` narrows to `Exclude<T, null \| undefined>`; `is.union("a","b")` narrows to `"a" \| "b"` |
 | **1.6 — Union Identity & `is.not.*` Namespace** ✓ | Per-factory identity symbol brands every variant prototype; `variantOf`, `is.variant`, `is.union(Factory)` and `is.not(Factory)` for cross-union membership matching; full `is.not.*` namespace for BDD-style pattern authoring |
-| **2 — Data Boundary (`aljabr/schema`)** | Decode untyped external data (API payloads, form inputs) into typed variants; bidirectional encode/decode roundtrips |
-| **3 — Resilient Async Lifecycles** | Declarative `Schedule` policies (exponential backoff, jitter) and native timeout/race primitives for `AsyncDerived` |
+| **2 — Data Boundary (`aljabr/schema`)** ✓ | Decode untyped external data (API payloads, form inputs) into typed variants; bidirectional encode/decode roundtrips |
+| **3 — Resilient Async Lifecycles** ✓ | Declarative `Schedule` policies (exponential backoff, jitter) and native timeout/race primitives for `AsyncDerived` and `watchEffect` |
 | **4 — Resource Scoping & DI** | `Scope` finalizers for safe teardown of WebSockets, timers, and file handles; type-safe context injection via Tags and Layers |
 | **5 — Error & Defect Tracking** | Formal separation of expected domain errors from unexpected runtime panics; a `Cause` structure to capture sequential, parallel, and interrupted failures |
 | **6 — Solid-Inspired Factory API** | `createSignal`, `createMemo`, `createEffect`, and `createRoot` wrappers that preserve raw-value ergonomics while surfacing Aljabr's state machine via a `.state()` accessor |

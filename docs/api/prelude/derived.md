@@ -1,7 +1,12 @@
 # API Reference: Derived / AsyncDerived
 
 ```ts
-import { Derived, AsyncDerived, type DerivedState, type AsyncDerivedState } from "aljabr/prelude"
+import {
+    Derived,
+    AsyncDerived,
+    type DerivedState,
+    type AsyncDerivedState,
+} from "aljabr/prelude"
 ```
 
 ---
@@ -140,19 +145,42 @@ type DerivedState<T> =
 
 Like `Derived`, but the computation is `async`. State includes `Loading` (first run, no prior value) and `Reloading` (re-run after a dep change, stale value preserved).
 
-### `AsyncDerived.create(fn)`
+### `AsyncDerived.create(fn, options?)`
 
 ```ts
-AsyncDerived.create<T, E = unknown>(fn: () => Promise<T>): AsyncDerived<T, E>
+AsyncDerived.create<T, E = unknown>(
+    fn: (signal: AbortSignal) => Promise<T>,
+    options?: AsyncOptions<E>,
+): AsyncDerived<T, E>
 ```
 
+The thunk receives an `AbortSignal` that is aborted before each new attempt — on dependency change or retry — so in-flight requests are always cancelled cleanly.
+
+Pass `options` to enable automatic retry, timeouts, and observability hooks. See [`AsyncOptions`](./schedule.md#asyncoptionse) for the full option set.
+
 ```ts
+import { Signal, AsyncDerived, Schedule } from "aljabr/prelude"
+
 const userId  = Signal.create(1)
-const profile = AsyncDerived.create(async () => {
+const profile = AsyncDerived.create(async (signal) => {
     const id = userId.get()!
-    const res = await fetch(`/api/users/${id}`)
+    const res = await fetch(`/api/users/${id}`, { signal })
     return res.json() as Promise<UserProfile>
 })
+```
+
+With retry:
+
+```ts
+const data = AsyncDerived.create(
+    async (signal) => fetchData(signal),
+    {
+        schedule:   Schedule.Exponential({ initialDelay: 100, maxDelay: 30_000 }),
+        maxRetries: 5,
+        onRetry:    (attempt, error, delay) =>
+            console.warn(`attempt ${attempt} failed, retrying in ${delay} ms`, error),
+    },
+)
 ```
 
 ### `.get()`
@@ -203,10 +231,12 @@ derived.state: AsyncDerivedState<T, E>
 | `Loading` | First evaluation in progress; no prior value |
 | `Ready<T>` | Computation completed successfully; value is fresh |
 | `Reloading<T>` | A dependency changed; stale value preserved; new computation in flight |
-| `Failed<E>` | The async computation threw; `error` holds the caught value |
+| `Failed<E>` | The computation failed; exposes retry context when a schedule is configured |
 | `Disposed` | The derived has been disposed |
 
 `Reloading` is the key stale-while-revalidating state: the prior `value` is still accessible while the new fetch runs.
+
+`Failed` carries `{ error, attempts, nextRetryAt }`. When `nextRetryAt` is a non-null timestamp, the scheduler has queued the next attempt automatically. When it is `null`, the derived has given up.
 
 ```ts
 match(profile.state, {
@@ -214,7 +244,10 @@ match(profile.state, {
     Loading:    () => <Spinner />,
     Ready:      ({ value }) => <Profile user={value} />,
     Reloading:  ({ value }) => <Profile user={value} stale />,
-    Failed:     ({ error }) => <Error message={String(error)} />,
+    Failed:     ({ error, nextRetryAt }) =>
+        nextRetryAt
+            ? <RetryBanner at={nextRetryAt} />
+            : <Error message={String(error)} />,
     Disposed:   () => null,
 })
 ```
@@ -227,7 +260,7 @@ type AsyncDerivedState<T, E = unknown> =
     | Variant<"Loading",    { value: null }>
     | Variant<"Ready",      { value: T }>
     | Variant<"Reloading",  { value: T }>
-    | Variant<"Failed",     { value: null; error: E }>
+    | Variant<"Failed",     { value: null; error: E; attempts: number; nextRetryAt: number | null }>
     | Variant<"Disposed",   { value: null }>
 ```
 
@@ -253,10 +286,10 @@ subtitle.get()        // "2 items"
 
 ```ts
 const query   = Signal.create("")
-const results = AsyncDerived.create(async () => {
+const results = AsyncDerived.create(async (signal) => {
     const q = query.get()!
     if (!q) return []
-    return searchApi(q)
+    return searchApi(q, signal)
 })
 
 await results.get() // []
@@ -271,5 +304,7 @@ await results.get() // [...search results for "hello"]
 
 - [`Signal`](./signal.md) — the mutable source values deriveds subscribe to
 - [`watchEffect`](./effect.md#watcheffect) — run async side effects reactively
+- [`Schedule`](./schedule.md) — retry-delay policies for `AsyncOptions`
 - [`batch`](./context.md#batch) — coalesce multiple signal writes
 - [`runInContext`](./context.md#runincontext) — preserve reactive ownership across async boundaries
+- [Resilient async guide](../../guides/resilient-async.md) — retry, backoff, and timeout patterns
