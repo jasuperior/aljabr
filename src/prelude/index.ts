@@ -3,6 +3,7 @@ export * from "./option.ts";
 export * from "./signal.ts";
 export * from "./derived.ts";
 export * from "./effect.ts";
+export * from "./schedule.ts";
 export * from "./context.ts";
 export * from "./persist.ts";
 export * from "./tree.ts";
