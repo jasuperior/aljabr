@@ -1,5 +1,6 @@
 import { union, Trait, type Variant, getTag } from "../union.ts";
 import { createOwner } from "./context.ts";
+import { type Defect, Fault } from "./fault.ts";
 
 // ---------------------------------------------------------------------------
 // ScopeState — lifecycle union for a Scope
@@ -47,6 +48,17 @@ export function Resource<T>(
 // Scope — structured resource lifetime
 // ---------------------------------------------------------------------------
 
+export type { Defect };
+
+export interface ScopeOptions {
+    /**
+     * Called when a child scope disposes via the cascade (fire-and-forget) path
+     * and one of its finalizers throws. Without this hook, cascade defects fall
+     * back to `console.warn`.
+     */
+    catchDefect?: (defect: Defect) => void;
+}
+
 export interface ScopeHandle {
     /** Non-reactive lifecycle snapshot. Match against `Active` or `Disposed`. */
     readonly state: ScopeState;
@@ -61,9 +73,17 @@ export interface ScopeHandle {
      * registers `resource.release()` as a `defer` finalizer.
      */
     acquire<T>(resource: ResourceHandle<T>): Promise<T>;
-    /** Run all finalizers in LIFO order, then dispose the scope. */
-    dispose(): Promise<void>;
-    /** TC39 Explicit Resource Management — alias for `dispose()`. */
+    /**
+     * Run all finalizers in LIFO order, then dispose the scope.
+     * Returns a flat list of any `Defect`s produced by finalizers that threw.
+     * An empty array means clean disposal.
+     */
+    dispose(): Promise<Defect[]>;
+    /**
+     * TC39 Explicit Resource Management — calls `dispose()` and warns on any
+     * returned defects before resolving. The `await using` path never silently
+     * swallows panics.
+     */
     [Symbol.asyncDispose](): Promise<void>;
 }
 
@@ -137,39 +157,44 @@ export function acquire<T>(resource: ResourceHandle<T>): Promise<T> {
  *
  * Auto-parents to `getCurrentComputation()` when called inside a reactive
  * context — the scope disposes automatically when the owning computation
- * disposes. Pass a root scope when managing lifetime manually.
+ * disposes. Pass `options.catchDefect` to handle finalizer panics that occur
+ * via the cascade (fire-and-forget) disposal path.
  *
  * Finalizers registered via `scope.defer()` run in LIFO order on disposal.
- * A rejected finalizer logs a warning and the chain continues.
- * Phase 5 will harden this boundary with defect tracking.
+ * `dispose()` returns a flat `Defect[]` — any finalizer panics are collected
+ * rather than swallowed.
  *
  * @example Explicit lifecycle
  * const scope = Scope();
  * const db = await scope.acquire(DbResource);
  * await doWork(db);
- * await scope.dispose();
+ * const defects = await scope.dispose();
  *
  * @example TC39 explicit resource management
  * await using scope = Scope();
  * const db = await scope.acquire(DbResource);
- * // scope[Symbol.asyncDispose]() called automatically on block exit
+ * // scope[Symbol.asyncDispose]() called automatically on block exit — warns on defects
+ *
+ * @example Cascade defect capture
+ * const scope = Scope({ catchDefect: (d) => logger.error(d.thrown) });
  */
-export function Scope(): ScopeHandle {
+export function Scope(options: ScopeOptions = {}): ScopeHandle {
     const finalizers: Array<() => Promise<void> | void> = [];
     let scopeState: ScopeState = ScopeState.Active();
 
     const computation = createOwner();
 
-    const runFinalizers = async (): Promise<void> => {
+    const runFinalizers = async (): Promise<Defect[]> => {
+        const defects: Defect[] = [];
         for (let i = finalizers.length - 1; i >= 0; i--) {
             try {
                 await finalizers[i]!();
             } catch (e) {
-                // Phase 5 will harden this with defect tracking.
-                console.warn("[aljabr] Scope finalizer threw:", e);
+                defects.push(Fault.Defect(e));
             }
         }
         finalizers.length = 0;
+        return defects;
     };
 
     const handle: ScopeHandle = {
@@ -185,23 +210,35 @@ export function Scope(): ScopeHandle {
             return value;
         },
 
-        async dispose() {
-            if (getTag(scopeState) === "Disposed") return;
+        async dispose(): Promise<Defect[]> {
+            if (getTag(scopeState) === "Disposed") return [];
             scopeState = ScopeState.Disposed();
-            await runFinalizers();
+            const defects = await runFinalizers();
             computation.dispose();
+            return defects;
         },
 
-        [Symbol.asyncDispose]() {
-            return this.dispose();
+        async [Symbol.asyncDispose](): Promise<void> {
+            const defects = await this.dispose();
+            for (const defect of defects) {
+                console.warn("[aljabr] Scope finalizer threw:", defect.thrown);
+            }
         },
     };
 
-    // Hook into parent cascade. When the owning computation disposes (e.g. a
-    // parent watchEffect stops), fire-and-forget scope.dispose(). The async
-    // finalizers will eventually run. Phase 5 will surface any errors here.
+    // Cascade disposal — fires when the owning computation disposes (e.g. a
+    // parent watchEffect stops). Fire-and-forget; defects are routed to
+    // catchDefect if provided, otherwise console.warn.
     computation.cleanups.add(() => {
-        void handle.dispose();
+        void handle.dispose().then((defects) => {
+            for (const defect of defects) {
+                if (options.catchDefect) {
+                    options.catchDefect(defect);
+                } else {
+                    console.warn("[aljabr] Scope finalizer threw:", defect.thrown);
+                }
+            }
+        });
     });
 
     return handle;

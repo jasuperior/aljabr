@@ -1,4 +1,4 @@
-import { union, Trait, type Variant } from "../union.ts";
+import { union, Trait, type Variant, instanceOf } from "../union.ts";
 import { getTag } from "../union.ts";
 import { match } from "../match.ts";
 import {
@@ -13,25 +13,47 @@ import {
     computeDelay,
 } from "./schedule.ts";
 import { type ScopeHandle, Scope, runInScope } from "./scope.ts";
+import { type Fault, Fault as FaultUnion } from "./fault.ts";
+
+// ---------------------------------------------------------------------------
+// Default shouldRetry — only Fail faults are retried; Defect and Interrupted
+// are always terminal.
+// ---------------------------------------------------------------------------
+
+function defaultShouldRetry<E>(fault: Fault<E>): boolean {
+    return getTag(fault) === "Fail";
+}
+
+// ---------------------------------------------------------------------------
+// Classify a caught value into a Fault<E>
+// ---------------------------------------------------------------------------
+
+function classifyError<E>(e: unknown, signal: AbortSignal): Fault<E> {
+    if (instanceOf(FaultUnion.Fail, e)) return e as Fault<E>;
+    if (signal.aborted) return FaultUnion.Interrupted(signal.reason);
+    return FaultUnion.Defect(e);
+}
 
 export abstract class Computable<T, E> extends Trait {
     async run(): Promise<Done<T, E> | Failed<T, E>> {
         const self = this as unknown as Effect<T, E>;
         return match(self, {
             Idle: async ({ thunk }) => {
+                const ctrl = new AbortController();
                 try {
                     return Effect.Done(await thunk()) as Done<T, E>;
                 } catch (e) {
-                    return Effect.Failed(e as E, 1, null) as Failed<T, E>;
+                    return Effect.Failed(classifyError<E>(e, ctrl.signal), 1, null) as Failed<T, E>;
                 }
             },
             Running: ({ pending }) => pending,
             Done:    (it) => Promise.resolve(it as Done<T, E>),
             Stale: async ({ thunk }) => {
+                const ctrl = new AbortController();
                 try {
                     return Effect.Done(await thunk()) as Done<T, E>;
                 } catch (e) {
-                    return Effect.Failed(e as E, 1, null) as Failed<T, E>;
+                    return Effect.Failed(classifyError<E>(e, ctrl.signal), 1, null) as Failed<T, E>;
                 }
             },
             Failed: (it) => Promise.resolve(it as Failed<T, E>),
@@ -42,7 +64,7 @@ export abstract class Computable<T, E> extends Trait {
         const self = this as unknown as Effect<T, E>;
         return Effect.Idle(async () => {
             const result = await self.run();
-            if (getTag(result) === "Failed") throw (result as Failed<T, E>).error;
+            if (getTag(result) === "Failed") throw (result as Failed<T, E>).fault;
             return fn((result as Done<T, E>).value);
         }) as Idle<U, E>;
     }
@@ -51,22 +73,22 @@ export abstract class Computable<T, E> extends Trait {
         const self = this as unknown as Effect<T, E>;
         return Effect.Idle(async () => {
             const result = await self.run();
-            if (getTag(result) === "Failed") throw (result as Failed<T, E>).error;
+            if (getTag(result) === "Failed") throw (result as Failed<T, E>).fault;
             const next = fn((result as Done<T, E>).value);
             const nextResult = await next.run();
-            if (getTag(nextResult) === "Failed") throw (nextResult as Failed<U, E>).error;
+            if (getTag(nextResult) === "Failed") throw (nextResult as Failed<U, E>).fault;
             return (nextResult as Done<U, E>).value;
         }) as Idle<U, E>;
     }
 
-    recover<F>(fn: (error: E) => Effect<T, F>): Idle<T, F> {
+    recover<F>(fn: (fault: Fault<E>) => Effect<T, F>): Idle<T, F> {
         const self = this as unknown as Effect<T, E>;
         return Effect.Idle(async () => {
             const result = await self.run();
             if (getTag(result) !== "Failed") return (result as Done<T, E>).value;
-            const recovery = fn((result as Failed<T, E>).error);
+            const recovery = fn((result as Failed<T, E>).fault);
             const recoveryResult = await recovery.run();
-            if (getTag(recoveryResult) === "Failed") throw (recoveryResult as Failed<T, F>).error;
+            if (getTag(recoveryResult) === "Failed") throw (recoveryResult as Failed<T, F>).fault;
             return (recoveryResult as Done<T, F>).value;
         }) as Idle<T, F>;
     }
@@ -99,10 +121,10 @@ export type Stale<T, E = never> = Variant<
     { value: T | null; thunk: () => Promise<T> },
     Computable<T, E>
 >;
-/** Settled with an error — carries retry context when automatic retry is configured. */
+/** Settled with a fault — carries retry context when automatic retry is configured. */
 export type Failed<T, E = never> = Variant<
     "Failed",
-    { error: E; attempts: number; nextRetryAt: number | null },
+    { fault: Fault<E>; attempts: number; nextRetryAt: number | null },
     Computable<T, E>
 >;
 
@@ -122,8 +144,8 @@ export const Effect = union([Computable]).typed({
         ({ value }) as Done<T, E>,
     Stale:   <T, E = never>(value: T | null, thunk: () => Promise<T>) =>
         ({ value, thunk }) as Stale<T, E>,
-    Failed:  <T, E = never>(error: E, attempts: number, nextRetryAt: number | null) =>
-        ({ error, attempts, nextRetryAt }) as Failed<T, E>,
+    Failed:  <T, E = never>(fault: Fault<E>, attempts: number, nextRetryAt: number | null) =>
+        ({ fault, attempts, nextRetryAt }) as Failed<T, E>,
 });
 
 // ---------------------------------------------------------------------------
@@ -134,9 +156,9 @@ type WatchHandle = { stop(): void };
 
 type WatchOptions<E = never> = AsyncOptions<E> & {
     /**
-     * When `true`, the effect re-runs automatically whenever a dependency
-     * changes, without the caller needing to invoke `.run()` on the `Stale`
-     * value. The `onChange` callback still fires on every settled result.
+     * When `true`, re-runs the thunk automatically on every dep change;
+     * `onChange` receives `Done` or `Failed`. When `false` (default),
+     * `onChange` receives `Stale` and the caller decides when to re-run.
      *
      * @default false
      */
@@ -152,12 +174,9 @@ type WatchOptions<E = never> = AsyncOptions<E> & {
  * The thunk receives an `AbortSignal` that is aborted before each new
  * attempt, enabling clean cancellation of in-flight requests.
  *
- * When `schedule` is provided in options, failed computations are
- * automatically retried according to the policy. `onChange` is called with
- * a `Failed` variant (carrying `nextRetryAt`) before each retry fires.
- *
- * Returns a handle with `stop()` to cancel tracking and dispose the
- * underlying computation.
+ * Failures are classified as `Fault.Fail` (user threw `Fault.Fail(e)`),
+ * `Fault.Interrupted` (AbortSignal fired), or `Fault.Defect` (unexpected panic).
+ * Only `Fault.Fail` is retried by default — override via `shouldRetry`.
  *
  * @example Lazy (default)
  * const src = Signal.create("hello");
@@ -166,7 +185,11 @@ type WatchOptions<E = never> = AsyncOptions<E> & {
  *   (result) => match(result, {
  *     Done:   ({ value }) => console.log(value),
  *     Stale:  (s) => s.run(),
- *     Failed: ({ error }) => console.error(error),
+ *     Failed: ({ fault }) => match(fault, {
+ *       Fail:        ({ error }) => console.error(error),
+ *       Defect:      ({ thrown }) => console.error("panic:", thrown),
+ *       Interrupted: () => {},
+ *     }),
  *   }),
  * );
  *
@@ -175,10 +198,10 @@ type WatchOptions<E = never> = AsyncOptions<E> & {
  *   async (signal) => fetch("/api/data", { signal }).then(r => r.json()),
  *   (result) => match(result, {
  *     Done:   ({ value }) => setState(value),
- *     Failed: ({ nextRetryAt }) => showRetryBanner(nextRetryAt),
+ *     Failed: ({ fault, nextRetryAt }) => showBanner(fault, nextRetryAt),
  *     Stale:  () => {},
  *   }),
- *   { eager: true, schedule: Schedule.exponential({ initialDelay: 100, maxDelay: 30_000 }) },
+ *   { eager: true, schedule: Schedule.Exponential({ initialDelay: 100, maxDelay: 30_000 }) },
  * );
  */
 export function watchEffect<T, E = never>(
@@ -214,22 +237,21 @@ export function watchEffect<T, E = never>(
             );
         });
 
-    const handleFailure = (error: E): void => {
-        const { schedule, maxRetries, shouldRetry, onRetry } = asyncOptions;
+    const handleFailure = (fault: Fault<E>): void => {
+        const { schedule, maxRetries, shouldRetry, afterRetry } = asyncOptions;
+        const retryCheck = shouldRetry ?? defaultShouldRetry;
 
-        const retriable =
-            schedule !== undefined &&
-            (shouldRetry === undefined || shouldRetry(error));
+        const retriable = schedule !== undefined && retryCheck(fault);
 
         if (!retriable) {
-            lastResult = Effect.Failed<T, E>(error, attempts, null);
+            lastResult = Effect.Failed<T, E>(fault, attempts, null);
             onChange(lastResult);
             return;
         }
 
         if (maxRetries !== undefined && attempts > maxRetries) {
             lastResult = Effect.Failed<T, E>(
-                ScheduleError.MaxRetriesExceeded(attempts, error) as unknown as E,
+                FaultUnion.Fail(ScheduleError.MaxRetriesExceeded(attempts, fault) as unknown as E),
                 attempts,
                 null,
             );
@@ -237,17 +259,17 @@ export function watchEffect<T, E = never>(
             return;
         }
 
-        const delay = computeDelay(schedule, attempts, error);
+        const delay = computeDelay(schedule, attempts, fault);
         if (delay === null) {
-            lastResult = Effect.Failed<T, E>(error, attempts, null);
+            lastResult = Effect.Failed<T, E>(fault, attempts, null);
             onChange(lastResult);
             return;
         }
 
         const nextRetryAt = Date.now() + delay;
-        onRetry?.(attempts, error, delay);
+        afterRetry?.(attempts, fault, delay);
 
-        lastResult = Effect.Failed<T, E>(error, attempts, nextRetryAt);
+        lastResult = Effect.Failed<T, E>(fault, attempts, nextRetryAt);
         onChange(lastResult);
 
         retryTimer = setTimeout(() => { retryTimer = null; void rerun(); }, delay);
@@ -283,7 +305,7 @@ export function watchEffect<T, E = never>(
             lastResult = Effect.Done<T, E>(value);
             onChange(lastResult);
         } catch (e) {
-            handleFailure(e as E);
+            handleFailure(classifyError<E>(e, signal));
         }
     };
 
@@ -294,11 +316,9 @@ export function watchEffect<T, E = never>(
         if (eager) {
             void rerun();
         } else {
-            // Preserve the last known good value for stale-while-revalidating.
             const lastValue = getTag(lastResult) === "Done"
                 ? (lastResult as Done<T, E>).value
                 : null;
-            // Wrap with a fresh AbortController for manual re-run via .run().
             const staleThunk = () => {
                 const ctrl = new AbortController();
                 return runThunk(ctrl.signal);
@@ -307,10 +327,6 @@ export function watchEffect<T, E = never>(
         }
     };
 
-    // Run immediately with dependency tracking.
-    // The initial execution is suppressed — onChange only fires on changes.
-    // If the initial run fails and a schedule is configured, the first retry
-    // is silently queued so the automatic retry loop starts without noise.
     (async () => {
         currentController = new AbortController();
         const { signal } = currentController;
@@ -328,13 +344,13 @@ export function watchEffect<T, E = never>(
 
             lastResult = Effect.Done<T, E>(value);
         } catch (e) {
-            // Silent initial failure: set state but do not call onChange.
-            lastResult = Effect.Failed<T, E>(e as E, 0, null);
+            const fault = classifyError<E>(e, signal);
+            lastResult = Effect.Failed<T, E>(fault, 0, null);
 
-            // Silently queue the first retry if the schedule permits.
             const { schedule, shouldRetry } = asyncOptions;
-            if (schedule !== undefined && (shouldRetry === undefined || shouldRetry(e as E))) {
-                const delay = computeDelay(schedule, 1, e);
+            const retryCheck = shouldRetry ?? defaultShouldRetry;
+            if (schedule !== undefined && retryCheck(fault)) {
+                const delay = computeDelay(schedule, 1, fault);
                 if (delay !== null) {
                     retryTimer = setTimeout(() => { retryTimer = null; void rerun(); }, delay);
                 }

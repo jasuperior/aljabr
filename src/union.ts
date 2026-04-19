@@ -48,6 +48,9 @@ export const unionFactoryTag = Symbol("aljabr.unionFactory");
 /** @internal — stored on variant prototypes to link back to their parent union */
 export const parentUnionId = Symbol("aljabr.parentUnion");
 
+/** @internal — stored on individual variant factory functions to record the tag they produce */
+export const variantFactoryTag = Symbol("aljabr.variantFactory");
+
 /** @internal */
 export const requirements: unique symbol = Symbol("aljabr.requirements");
 
@@ -402,6 +405,34 @@ export function variantOf<F extends object>(
 export function variantOf(factory: any, ...rest: [unknown?]): any {
     const id = (factory as any)[unionFactoryTag];
     const check = (v: unknown) => (v as any)?.[parentUnionId] === id;
+    return rest.length === 0 ? check : check(rest[0]);
+}
+
+/**
+ * Check whether a value is an instance of a specific variant factory.
+ * Checks both union membership and the exact variant tag.
+ *
+ * Can be called with two arguments (immediate check) or one (curried predicate).
+ * Type-level narrowing is deferred to Phase 1.6b — runtime-only for now.
+ *
+ * @example
+ * instanceOf(Fault.Fail)(e)        // true if e is a Fault.Fail variant
+ * instanceOf(Fault.Fail, e)        // uncurried form
+ * instanceOf(Result.Accept, val)   // true if val is Result.Accept
+ */
+export function instanceOf<F extends (...args: any[]) => any>(
+    variantFactory: F,
+): (value: unknown) => boolean;
+export function instanceOf<F extends (...args: any[]) => any>(
+    variantFactory: F,
+    value: unknown,
+): boolean;
+export function instanceOf(variantFactory: any, ...rest: [unknown?]): any {
+    const unionId = (variantFactory as any)[parentUnionId];
+    const tagName = (variantFactory as any)[variantFactoryTag];
+    const check = (v: unknown) =>
+        (v as any)?.[parentUnionId] === unionId &&
+        (v as any)?.[tag] === tagName;
     return rest.length === 0 ? check : check(rest[0]);
 }
 
@@ -794,7 +825,7 @@ function buildUnion(factories: Record<string, any>, impl: any[]): any {
 
     for (const key in factories) {
         const item = factories[key];
-        result[key] = (...args: any[]) => {
+        const factory = (...args: any[]) => {
             const payload =
                 typeof item === "function" ? item(...args) : { ...item };
 
@@ -822,6 +853,23 @@ function buildUnion(factories: Record<string, any>, impl: any[]): any {
 
             return createVariant(proto, payload);
         };
+
+        // Stamp the factory function with union identity + variant tag so
+        // instanceOf(Factory)(value) can check both membership and tag.
+        Object.defineProperty(factory, parentUnionId, {
+            value: id,
+            enumerable: false,
+            writable: false,
+            configurable: false,
+        });
+        Object.defineProperty(factory, variantFactoryTag, {
+            value: key,
+            enumerable: false,
+            writable: false,
+            configurable: false,
+        });
+
+        result[key] = factory;
     }
 
     Object.defineProperty(result, unionFactoryTag, {

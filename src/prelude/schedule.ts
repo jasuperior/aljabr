@@ -1,5 +1,6 @@
 import { union, Trait, type Variant } from "../union.ts";
 import { match } from "../match.ts";
+import { type Fault } from "./fault.ts";
 
 // ---------------------------------------------------------------------------
 // Schedule — retry-delay policy union
@@ -52,15 +53,18 @@ export const ScheduleError = union([ScheduleErrorBase]).typed({
 
 export type AsyncOptions<E = unknown> = {
     /** Retry-delay policy. Required to enable automatic retries. */
-    schedule?:    Schedule;
+    schedule?:     Schedule;
     /** Maximum number of retry attempts. Undefined means retry indefinitely. */
-    maxRetries?:  number;
-    /** Return false to stop retrying immediately. Defaults to always true. */
-    shouldRetry?: (error: E) => boolean;
+    maxRetries?:   number;
+    /**
+     * Return false to stop retrying for a given fault. Defaults to retrying
+     * only `Fault.Fail` — `Defect` and `Interrupted` are always terminal by default.
+     */
+    shouldRetry?:  (fault: Fault<E>) => boolean;
     /** Abort the computation after this many milliseconds, emitting ScheduleError.TimedOut. */
-    timeout?:     number;
-    /** Called just before each retry attempt fires. */
-    onRetry?:     (attempt: number, error: E, nextDelay: number) => void;
+    timeout?:      number;
+    /** Called after a failure and before the next retry attempt fires. */
+    afterRetry?:   (attempt: number, fault: Fault<E>, nextDelay: number) => void;
 };
 
 // ---------------------------------------------------------------------------
