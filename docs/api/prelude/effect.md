@@ -9,6 +9,7 @@ import {
     type Done,
     type Stale,
     type Failed,
+    type ScopeHandle,
 } from "aljabr/prelude"
 ```
 
@@ -134,7 +135,7 @@ const result = await data.run()
 
 ```ts
 function watchEffect<T, E = never>(
-    thunk: (signal: AbortSignal) => Promise<T>,
+    thunk: (signal: AbortSignal, scope: ScopeHandle) => Promise<T>,
     onChange: (result: Done<T, E> | Stale<T, E> | Failed<T, E>) => void,
     options?: WatchOptions<E>,
 ): { stop(): void }
@@ -160,11 +161,27 @@ watchEffect(
 )
 ```
 
+### `Scope` threading
+
+The thunk receives a fresh `Scope` as its second argument on every execution. Use it to register cleanup logic that runs when the effect re-runs or stops. The previous run's scope disposes before each new run begins.
+
+```ts
+watchEffect(
+    async (signal, scope) => {
+        const db = await scope.acquire(DbResource)  // released when scope disposes
+        return db.query("SELECT * FROM items", { signal })
+    },
+    onChange,
+)
+```
+
+See [`Scope & Resource`](./scope.md) for the full resource management API.
+
 ### Parameters
 
 | Parameter | Type | Description |
 |---|---|---|
-| `thunk` | `(signal: AbortSignal) => Promise<T>` | The async computation to run and track |
+| `thunk` | `(signal: AbortSignal, scope: ScopeHandle) => Promise<T>` | The async computation to run and track |
 | `onChange` | `(result: Done \| Stale \| Failed) => void` | Called when a dependency changes or the thunk settles after a retry |
 | `options.eager` | `boolean` | Default `false`. When `true`, re-runs the thunk automatically on every dep change; `onChange` receives `Done` or `Failed`. When `false`, `onChange` receives `Stale` and the caller decides when to re-run. |
 | `options.schedule` | `Schedule` | Retry-delay policy. Enables automatic retry on failure. |
@@ -317,6 +334,7 @@ userId.set(2)  // stale user 1 data still shown while user 2 loads
 
 - [`Signal`](./signal.md) — the reactive sources that `watchEffect` tracks
 - [`AsyncDerived`](./derived.md#asyncderivedt-e) — pull-based async computed values with the same retry API
+- [`Scope & Resource`](./scope.md) — structured resource management; each `watchEffect` run gets a fresh scope
 - [`Schedule`](./schedule.md) — retry-delay policies (`Fixed`, `Linear`, `Exponential`, `Custom`)
 - [`batch`](./context.md#batch) — coalesce multiple signal writes before the effect re-runs
 - [Resilient async guide](../../guides/resilient-async.md) — walkthrough of retry, backoff, and timeout patterns

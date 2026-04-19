@@ -90,7 +90,8 @@ Validation.Unvalidated<number, string>().map(n => n * 2)
 ### `.combine<U>(other)`
 
 ```ts
-.combine<U>(other: Validation<U, E>): Validation<[T, U], E>
+.combine<U>(other: Validation<U, E>): Validation<CombineValues<T, U>, E>
+// where CombineValues<A, B> = A extends readonly unknown[] ? [...A, B] : [A, B]
 ```
 
 Combine two validations. Errors from both are accumulated. `Unvalidated` on either side propagates:
@@ -104,6 +105,16 @@ Combine two validations. Errors from both are accumulated. `Unvalidated` on eith
 | `Valid(_)` | `Invalid(errs)` | `Invalid(errs)` |
 | `Invalid(errs)` | `Valid(_)` | `Invalid(errs)` |
 | `Invalid(ae)` | `Invalid(be)` | `Invalid([...ae, ...be])` |
+
+**Chaining flattens the tuple.** When `this` is already a `Valid` holding a tuple (as produced by a prior `.combine()`), the new value is appended rather than nested:
+
+```ts
+Valid(a).combine(Valid(b))           // Valid([a, b])
+Valid([a, b]).combine(Valid(c))      // Valid([a, b, c]) — flat, not [[a, b], c]
+Valid([a, b, c]).combine(Valid(d))   // Valid([a, b, c, d])
+```
+
+This means multi-field chains produce **flat tuples**, not trees of nested pairs:
 
 ```ts
 const age  = Validation.Valid<number, string>(25)
@@ -203,7 +214,7 @@ const result = validateAge(25)
     .combine(validateUsername("al"))
 
 match(result, {
-    Valid:   ({ value: [[age, email], username] }) =>
+    Valid:   ({ value: [age, email, username] }) =>  // flat tuple — not [[age, email], username]
         createUser({ age, email, username }),
     Invalid: ({ errors }) =>
         errors.forEach(e => showError(e)),
@@ -222,9 +233,47 @@ function validateForm(input: {
     return validateUsername(input.name)
         .combine(validateAge(input.age))
         .combine(validateEmail(input.email))
-        .map(([[name, age], email]) => ({ name, age, email }))
+        .map(([name, age, email]) => ({ name, age, email }))  // flat tuple
 }
 ```
+
+### `Validation.all(validations)`
+
+```ts
+Validation.all<Vs extends readonly Validation<unknown, unknown>[]>(
+    validations: readonly [...Vs],
+): Validation<AllValues<Vs>, AllError<Vs>>
+```
+
+Validate a fixed-length tuple of independent values in one call. Returns a `Valid` tuple of all values when every input is `Valid`, accumulates all errors from any `Invalid` inputs, and short-circuits to `Unvalidated` if any input is `Unvalidated`.
+
+This is the idiomatic alternative to chaining `.combine()` when all fields are already computed as an array:
+
+```ts
+const results = Validation.all([
+    validateAge(25),
+    validateEmail("alice@example.com"),
+    validateUsername("alice"),
+])
+
+match(results, {
+    Valid:   ({ value: [age, email, username] }) => createUser({ age, email, username }),
+    Invalid: ({ errors }) => errors.forEach(showError),
+    Unvalidated: () => {},
+})
+```
+
+The result type is a typed tuple matching the input array:
+
+```ts
+// Validation.all([Valid<number>, Valid<string>, Valid<boolean>])
+// → Validation<[number, string, boolean], E>
+```
+
+Behavior:
+- If **any** input is `Unvalidated` → result is `Unvalidated` (field not yet touched)
+- If **any** input is `Invalid` → result is `Invalid` with all errors accumulated
+- If **all** inputs are `Valid` → result is `Valid` with a flat tuple of all values
 
 ### Converting to Result for error propagation
 

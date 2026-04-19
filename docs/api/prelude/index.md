@@ -44,7 +44,18 @@ Tools for running async computations inside the reactive graph.
 | Export | Description |
 |---|---|
 | [`Effect<T, E>`](./effect.md) | A composable async computation union: `Idle`, `Running`, `Done`, `Stale`, `Failed`. Supports `.map()`, `.flatMap()`, `.recover()`. |
-| [`watchEffect`](./effect.md#watcheffect) | Run an async thunk reactively. Tracks signal reads automatically; calls a callback on dependency changes or failure. |
+| [`watchEffect`](./effect.md#watcheffect) | Run an async thunk reactively. Tracks signal reads automatically; calls a callback on dependency changes or failure. Each run receives a fresh `Scope`. |
+
+### Resource management
+
+Primitives for structured resource lifetime — guaranteed teardown on success, failure, or interruption.
+
+| Export | Description |
+|---|---|
+| [`Scope`](./scope.md) | Create a scoped resource context. Finalizers registered via `.defer()` run in LIFO order on disposal. Auto-parents to the current reactive owner. |
+| [`Resource`](./scope.md#resourcet) | Pair an async `acquire` function with a `release` function. Inert until consumed via `scope.acquire()`. |
+| [`defer`](./scope.md#implicit-hooks) | Implicit hook — register a finalizer on the current scope inside a `watchEffect` or `AsyncDerived` thunk. |
+| [`acquire`](./scope.md#implicit-hooks) | Implicit hook — acquire a resource via the current scope inside a `watchEffect` or `AsyncDerived` thunk. |
 
 ### Scheduling
 
@@ -119,7 +130,7 @@ const result = validateName(input.name)
 
 match(result, {
     Unvalidated: () => showPlaceholder(),
-    Valid:        ({ value: [[name, age], email] }) => createUser({ name, age, email }),
+    Valid:        ({ value: [name, age, email] }) => createUser({ name, age, email }),
     Invalid:      ({ errors }) => errors.forEach(showError),
 })
 ```
@@ -168,7 +179,7 @@ import { watchEffect } from "aljabr/prelude"
 const userId = Signal.create(1)
 
 const handle = watchEffect(
-    async (signal) => {
+    async (signal, scope) => {
         const id = userId.get()!
         return fetch(`/api/users/${id}`, { signal }).then(r => r.json())
     },
@@ -195,7 +206,7 @@ theme.set("dark") // written to localStorage; restored on next load
 
 **Everything is a union.** `Result`, `Option`, `Validation`, `Signal` lifecycle states, `Derived` lifecycle states, `AsyncDerived` lifecycle states, and `Effect` are all tagged unions. You consume them with `match()`, get exhaustiveness checking at compile time, and add variants without ceremony.
 
-**Reactive ownership is explicit.** Signals and deriveds created inside a reactive computation are automatically owned by it. When the owner is disposed, all owned resources clean up recursively. Use `createOwner` and `runInContext` when you need fine-grained control.
+**Reactive ownership is explicit.** Signals and deriveds created inside a reactive computation are automatically owned by it. When the owner is disposed, all owned resources clean up recursively. Use `createOwner` and `runInContext` when you need fine-grained control. Use `Scope` and `Resource` for structured teardown of external resources (connections, subscriptions, handles) tied to the same lifetime.
 
 **Pull-based derivation.** `Derived` and `AsyncDerived` are lazy: they re-evaluate only when read after a dependency changes. This avoids unnecessary computation and lets you keep stale values visible (`Stale`, `Reloading`) while fresh data loads.
 

@@ -601,68 +601,76 @@ unwrapOr(Option.Some(3), 0)  // 3
 unwrapOr(Option.None(),  0)  // 0
 ```
 
-### Building a generic `Result<T, E>`
+### Building a generic `RemoteData<T, E>`
 
-A fuller example that combines `Variant<>`, `.typed()`, and an impl mixin for Promise-like chaining. The key insight: define named variant aliases once, then reuse them as both cast targets in the factory and members of the `Result<T, E>` union type.
+`RemoteData<T, E>` is a well-known pattern for modeling the four states of an async data fetch. Unlike the built-in `AsyncDerived`, it's a pure value type — no reactivity, no evaluation machinery — making it ideal for explicit state containers in complex UIs.
+
+This example shows `Variant<>`, `.typed()`, and an impl mixin all working together on a type that genuinely isn't in the library:
 
 ```ts
-import { union, match, Trait, Variant } from "aljabr";
+import { union, match, Trait, Variant, Union } from "aljabr";
 
-// Impl class — shared behavior across all variants.
-// then() returns Result<R1, R2>, enabling typed .then() chains.
-abstract class Thenable<T> extends Trait<{ value: unknown }> {
-    then<R1 = T, R2 = never>(
-        onAccepted?: ((value: T) => R1 | PromiseLike<R1>) | null,
-        onRejected?: ((reason: any) => R2 | PromiseLike<R2>) | null,
-    ): Result<R1, R2> {
-        return match(this as unknown as Result, {
-            Accept: ({ value }) => {
-                const accepted = onAccepted ? onAccepted(value as T) : value;
-                return "then" in (accepted as any)
-                    ? Result.Expect(accepted as any)
-                    : Result.Accept(accepted);
-            },
-            Expect: ({ pending }) => Result.Expect(pending.then(onAccepted as any, onRejected as any)),
-            Reject: ({ error })   => onRejected ? Result.Accept(onRejected(error)) : Result.Reject(error),
-        }) as any as Result<R1, R2>;
+// Impl class — shared behavior for mapping over success values.
+abstract class Mappable<T, E> extends Trait {
+    map<U>(fn: (value: T) => U): RemoteData<U, E> {
+        return match(this as unknown as RemoteData<T, E>, {
+            NotAsked: () => RemoteData.NotAsked(),
+            Loading:  () => RemoteData.Loading(),
+            Success:  ({ data }) => RemoteData.Success(fn(data)),
+            Failure:  ({ error }) => RemoteData.Failure(error),
+        }) as RemoteData<U, E>;
+    }
+
+    getOrElse(fallback: T): T {
+        return match(this as unknown as RemoteData<T, E>, {
+            NotAsked: () => fallback,
+            Loading:  () => fallback,
+            Success:  ({ data }) => data,
+            Failure:  () => fallback,
+        });
     }
 }
 
-// Named variant aliases — defined once, used in both the union type and the factory casts.
-export type Accepted<T> = Variant<"Accept", { value: T },                             Thenable<T>>;
-export type Expected<T> = Variant<"Expect", { pending: PromiseLike<T>; value: null }, Thenable<T>>;
-export type Rejected<E> = Variant<"Reject", { error: E; value: null },                Thenable<never>>;
+// Named variant aliases — typed parameters preserved via cast targets.
+export type NotAsked<T, E> = Variant<"NotAsked", Record<never, never>,   Mappable<T, E>>;
+export type Loading<T, E>  = Variant<"Loading",  Record<never, never>,   Mappable<T, E>>;
+export type Success<T, E>  = Variant<"Success",  { data: T },            Mappable<T, E>>;
+export type Failure<T, E>  = Variant<"Failure",  { error: E },           Mappable<T, E>>;
 
-export type Result<T = unknown, E = never> = Accepted<T> | Expected<T> | Rejected<E>;
+export type RemoteData<T, E> = NotAsked<T, E> | Loading<T, E> | Success<T, E> | Failure<T, E>;
 
-export const Result = union([Thenable]).typed({
-    Accept: <T>(value: T)                => ({ value }               as Accepted<T>),
-    Expect: <T>(pending: PromiseLike<T>) => ({ pending, value: null } as Expected<T>),
-    Reject: <E>(error: E)                => ({ error,  value: null }  as Rejected<E>),
+export const RemoteData = union([Mappable]).typed({
+    NotAsked: <T, E>()           => ({} as NotAsked<T, E>),
+    Loading:  <T, E>()           => ({} as Loading<T, E>),
+    Success:  <T, E>(data: T)    => ({ data }  as Success<T, E>),
+    Failure:  <T, E>(error: E)   => ({ error } as Failure<T, E>),
 });
 ```
 
 **What you get:**
 
 ```ts
-Result.Accept(3).value                     // number ✓
-Result.Reject(new Error()).error            // Error  ✓
-Result.Expect(Promise.resolve(42)).pending // PromiseLike<number> ✓
+const rd = RemoteData.Success<User, string>({ name: "Alice", id: 1 })
+rd.data  // User ✓
 
-// Typed chains
-Result.Accept(3).then(n => n * 2)
-// → Result<number, never> ✓
+RemoteData.Failure<User, string>("Not found").error  // string ✓
 
-// Awaitable
-const value = await Result.Accept("hello");
-// → "hello" (string) ✓
+// map() preserves type safety
+RemoteData.Success<number, string>(42)
+    .map(n => n * 2)
+    // → RemoteData.Success<number, string> { data: 84 } ✓
 
-// Match with full narrowing
-match(Result.Accept(3), {
-    Accept: ({ value }) => `got ${value}`,  // value: number
-    Expect: ({ pending }) => `waiting...`,
-    Reject: ({ error }) => `error: ${error}`,
-});
+// getOrElse() provides a safe fallback
+RemoteData.Failure<string, Error>(new Error()).getOrElse("default")
+// → "default" ✓
+
+// Exhaustive match with full narrowing
+match(rd, {
+    NotAsked: () => renderEmpty(),
+    Loading:  () => renderSpinner(),
+    Success:  ({ data }) => renderUser(data),   // data: User
+    Failure:  ({ error }) => renderError(error), // error: string
+})
 ```
 
 ### How it compares to the plain `union()` form

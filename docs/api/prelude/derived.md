@@ -149,12 +149,15 @@ Like `Derived`, but the computation is `async`. State includes `Loading` (first 
 
 ```ts
 AsyncDerived.create<T, E = unknown>(
-    fn: (signal: AbortSignal) => Promise<T>,
+    fn: (signal: AbortSignal, scope: ScopeHandle) => Promise<T>,
     options?: AsyncOptions<E>,
 ): AsyncDerived<T, E>
 ```
 
-The thunk receives an `AbortSignal` that is aborted before each new attempt — on dependency change or retry — so in-flight requests are always cancelled cleanly.
+The thunk receives two arguments on every evaluation:
+
+- **`signal: AbortSignal`** — aborted before each new attempt (dep change or retry) to cancel stale in-flight requests.
+- **`scope: ScopeHandle`** — a fresh `Scope` for each evaluation. Register cleanup logic via `scope.defer()` or acquire resources via `scope.acquire()`. The previous evaluation's scope disposes before the next begins.
 
 Pass `options` to enable automatic retry, timeouts, and observability hooks. See [`AsyncOptions`](./schedule.md#asyncoptionse) for the full option set.
 
@@ -166,6 +169,15 @@ const profile = AsyncDerived.create(async (signal) => {
     const id = userId.get()!
     const res = await fetch(`/api/users/${id}`, { signal })
     return res.json() as Promise<UserProfile>
+})
+```
+
+With resource cleanup:
+
+```ts
+const data = AsyncDerived.create(async (signal, scope) => {
+    const db = await scope.acquire(DbResource)  // released when this evaluation ends
+    return db.query(`SELECT * FROM users WHERE id = ${userId.get()!}`)
 })
 ```
 
