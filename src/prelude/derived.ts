@@ -12,6 +12,8 @@ import {
     ScheduleError,
     computeDelay,
 } from "./schedule.ts";
+import { getTag } from "../union.ts";
+import { type ScopeHandle, Scope, runInScope } from "./scope.ts";
 
 // ---------------------------------------------------------------------------
 // DerivedState<T> — lifecycle union for computed values
@@ -340,17 +342,18 @@ const AsyncDerivedState = union([AsyncDerivedLifecycle]).typed({
  * );
  */
 export class AsyncDerived<T, E = unknown> {
-    #fn: (signal: AbortSignal) => Promise<T>;
+    #fn: (signal: AbortSignal, scope: ScopeHandle) => Promise<T>;
     #options: AsyncOptions<E>;
     #state: AsyncDerivedState<T, E> = AsyncDerivedState.Uncomputed();
     #computation: Computation;
     #attempts = 0;
     #currentController: AbortController | null = null;
+    #currentScope: ScopeHandle | null = null;
     #retryTimer: ReturnType<typeof setTimeout> | null = null;
     readonly #subscribers = new Map<Computation, () => void>();
 
     private constructor(
-        fn: (signal: AbortSignal) => Promise<T>,
+        fn: (signal: AbortSignal, scope: ScopeHandle) => Promise<T>,
         options: AsyncOptions<E> = {},
     ) {
         this.#fn = fn;
@@ -376,7 +379,7 @@ export class AsyncDerived<T, E = unknown> {
     }
 
     static create<T, E = unknown>(
-        fn: (signal: AbortSignal) => Promise<T>,
+        fn: (signal: AbortSignal, scope: ScopeHandle) => Promise<T>,
         options?: AsyncOptions<E>,
     ): AsyncDerived<T, E> {
         return new AsyncDerived(fn, options);
@@ -435,6 +438,7 @@ export class AsyncDerived<T, E = unknown> {
     dispose(): void {
         this.#cancelRetryTimer();
         this.#currentController?.abort();
+        void this.#currentScope?.dispose();
         this.#computation.dispose();
         this.#state = AsyncDerivedState.Disposed();
         this.#notifySubscribers();
@@ -481,7 +485,12 @@ export class AsyncDerived<T, E = unknown> {
         this.#computation.sources.clear();
 
         try {
-            const promise = trackIn(this.#computation, () => this.#fn(signal));
+            if (this.#currentScope !== null && getTag(this.#currentScope.state) !== "Disposed") {
+                void this.#currentScope.dispose();
+            }
+            this.#currentScope = Scope();
+            const scope = this.#currentScope;
+            const promise = runInScope(scope, () => trackIn(this.#computation, () => this.#fn(signal, scope)));
             const value = this.#options.timeout !== undefined
                 ? await this.#withTimeout(promise, this.#options.timeout)
                 : await promise;

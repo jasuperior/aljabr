@@ -5,6 +5,7 @@ export * from "./derived.ts";
 export * from "./effect.ts";
 export * from "./schedule.ts";
 export * from "./context.ts";
+export * from "./scope.ts";
 export * from "./persist.ts";
 export * from "./tree.ts";
 export * from "./validation.ts";

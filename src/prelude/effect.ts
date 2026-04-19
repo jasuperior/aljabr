@@ -12,6 +12,7 @@ import {
     ScheduleError,
     computeDelay,
 } from "./schedule.ts";
+import { type ScopeHandle, Scope, runInScope } from "./scope.ts";
 
 export abstract class Computable<T, E> extends Trait {
     async run(): Promise<Done<T, E> | Failed<T, E>> {
@@ -181,7 +182,7 @@ type WatchOptions<E = never> = AsyncOptions<E> & {
  * );
  */
 export function watchEffect<T, E = never>(
-    thunk: (signal: AbortSignal) => Promise<T>,
+    thunk: (signal: AbortSignal, scope: ScopeHandle) => Promise<T>,
     onChange: (result: Done<T, E> | Stale<T, E> | Failed<T, E>) => void,
     options: WatchOptions<E> = {},
 ): WatchHandle {
@@ -192,6 +193,9 @@ export function watchEffect<T, E = never>(
     let currentController: AbortController | null = null;
     let retryTimer: ReturnType<typeof setTimeout> | null = null;
     let attempts = 0;
+    let currentScope: ScopeHandle | null = null;
+
+    computation.cleanups.add(() => { void currentScope?.dispose(); });
 
     const cancelRetryTimer = () => {
         if (retryTimer !== null) { clearTimeout(retryTimer); retryTimer = null; }
@@ -249,6 +253,15 @@ export function watchEffect<T, E = never>(
         retryTimer = setTimeout(() => { retryTimer = null; void rerun(); }, delay);
     };
 
+    const runThunk = (signal: AbortSignal): Promise<T> => {
+        if (currentScope !== null && getTag(currentScope.state) !== "Disposed") {
+            void currentScope.dispose();
+        }
+        currentScope = Scope();
+        const scope = currentScope;
+        return runInScope(scope, () => trackIn(computation, () => thunk(signal, scope)));
+    };
+
     const rerun = async () => {
         attempts++;
         currentController?.abort();
@@ -261,7 +274,7 @@ export function watchEffect<T, E = never>(
         computation.sources.clear();
 
         try {
-            const promise = trackIn(computation, () => thunk(signal));
+            const promise = runThunk(signal);
             const value = asyncOptions.timeout !== undefined
                 ? await withTimeout(promise, asyncOptions.timeout)
                 : await promise;
@@ -288,7 +301,7 @@ export function watchEffect<T, E = never>(
             // Wrap with a fresh AbortController for manual re-run via .run().
             const staleThunk = () => {
                 const ctrl = new AbortController();
-                return thunk(ctrl.signal);
+                return runThunk(ctrl.signal);
             };
             onChange(Effect.Stale<T, E>(lastValue, staleThunk));
         }
@@ -308,7 +321,7 @@ export function watchEffect<T, E = never>(
         computation.sources.clear();
 
         try {
-            const promise = trackIn(computation, () => thunk(signal));
+            const promise = runThunk(signal);
             const value = asyncOptions.timeout !== undefined
                 ? await withTimeout(promise, asyncOptions.timeout)
                 : await promise;
