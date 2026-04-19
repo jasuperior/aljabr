@@ -4,8 +4,8 @@ import {
     type Idle,
     type Done,
     type Failed,
-    type Effect as EffectType,
 } from "../../src/prelude/effect";
+import { Fault, type Defect } from "../../src/prelude/fault";
 import { getTag } from "../../src/union";
 
 describe("Effect factory", () => {
@@ -25,11 +25,11 @@ describe("Effect factory", () => {
         expect(getTag(e)).toBe("Done");
         expect(e.value).toBe(7);
     });
-    it("Failed carries error, attempts, and nextRetryAt", () => {
+    it("Failed carries fault, attempts, and nextRetryAt", () => {
         const err = new Error("oops");
-        const e = Effect.Failed<number, Error>(err, 1, null);
+        const e = Effect.Failed<number, Error>(Fault.Defect(err), 1, null);
         expect(getTag(e)).toBe("Failed");
-        expect(e.error).toBe(err);
+        expect((e.fault as Defect).thrown).toBe(err);
         expect(e.attempts).toBe(1);
         expect(e.nextRetryAt).toBeNull();
     });
@@ -62,7 +62,8 @@ describe("Effect.run — failure", () => {
         const e = Effect.Idle<number, Error>(async () => { throw err; });
         const result = await e.run();
         expect(getTag(result)).toBe("Failed");
-        expect((result as Failed<number, Error>).error).toBe(err);
+        expect(getTag((result as Failed<number, Error>).fault)).toBe("Defect");
+        expect(((result as Failed<number, Error>).fault as Defect).thrown).toBe(err);
         expect((result as Failed<number, Error>).attempts).toBe(1);
         expect((result as Failed<number, Error>).nextRetryAt).toBeNull();
     });
@@ -70,7 +71,7 @@ describe("Effect.run — failure", () => {
         const e = Effect.Idle<number, string>(async () => Promise.reject("network error"));
         const result = await e.run();
         expect(getTag(result)).toBe("Failed");
-        expect((result as Failed<number, string>).error).toBe("network error");
+        expect(((result as Failed<number, string>).fault as Defect).thrown).toBe("network error");
     });
 });
 
@@ -87,7 +88,7 @@ describe("Effect.run — already Running/Done/Failed", () => {
         expect(result).toBe(original);
     });
     it("Failed.run() returns itself", async () => {
-        const original = Effect.Failed("err", 1, null);
+        const original = Effect.Failed(Fault.Defect("err"), 1, null);
         const result = await original.run();
         expect(result).toBe(original);
     });
@@ -131,20 +132,23 @@ describe("Effect.flatMap", () => {
     it("propagates failure from the first effect", async () => {
         const err = new Error("first failed");
         const second = vi.fn();
-        const result = await Effect.Idle<number, Error>(async () => { throw err; })
+        const result = await Effect.Idle<number, Error>(async () => { throw Fault.Fail(err); })
             .flatMap(() => Effect.Idle(second))
             .run();
         expect(second).not.toHaveBeenCalled();
         expect(getTag(result)).toBe("Failed");
-        expect((result as Failed<number, Error>).error).toBe(err);
+        // Fault.Fail passes through classifyError unchanged
+        expect(getTag((result as Failed<number, Error>).fault)).toBe("Fail");
+        expect(((result as Failed<number, Error>).fault as ReturnType<typeof Fault.Fail<Error>>).error).toBe(err);
     });
     it("propagates failure from the second effect", async () => {
         const err = new Error("second failed");
-        const result = await Effect.Idle(async () => 1)
-            .flatMap(() => Effect.Idle<number, Error>(async () => { throw err; }))
+        const result = await Effect.Idle<number, Error>(async () => 1)
+            .flatMap(() => Effect.Idle<number, Error>(async () => { throw Fault.Fail(err); }))
             .run();
         expect(getTag(result)).toBe("Failed");
-        expect((result as Failed<number, Error>).error).toBe(err);
+        expect(getTag((result as Failed<number, Error>).fault)).toBe("Fail");
+        expect(((result as Failed<number, Error>).fault as ReturnType<typeof Fault.Fail<Error>>).error).toBe(err);
     });
 });
 
@@ -156,9 +160,13 @@ describe("Effect.recover", () => {
         expect((result as Done<number>).value).toBe(42);
     });
     it("recovery fn called on failure, succeeds", async () => {
-        const err = new Error("fail");
-        const result = await Effect.Idle<number, Error>(async () => { throw err; })
-            .recover((e) => Effect.Idle(async () => e.message.length))
+        const result = await Effect.Idle<number, string>(async () => { throw Fault.Fail("fail"); })
+            .recover((fault) => {
+                const msg = getTag(fault) === "Fail"
+                    ? String((fault as ReturnType<typeof Fault.Fail<string>>).error)
+                    : "";
+                return Effect.Idle(async () => msg.length);
+            })
             .run();
         expect((result as Done<number>).value).toBe(4); // "fail".length
     });
