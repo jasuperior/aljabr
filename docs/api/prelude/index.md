@@ -45,6 +45,7 @@ Tools for running async computations inside the reactive graph.
 |---|---|
 | [`Effect<T, E>`](./effect.md) | A composable async computation union: `Idle`, `Running`, `Done`, `Stale`, `Failed`. Supports `.map()`, `.flatMap()`, `.recover()`. |
 | [`watchEffect`](./effect.md#watcheffect) | Run an async thunk reactively. Tracks signal reads automatically; calls a callback on dependency changes or failure. Each run receives a fresh `Scope`. |
+| [`Fault<E>`](./fault.md) | Three-variant error union carried by `Effect.Failed` and `AsyncDerivedState.Failed`: `Fail<E>` (domain error), `Defect` (unexpected panic), `Interrupted` (aborted run). |
 
 ### Resource management
 

@@ -2,23 +2,27 @@
 
 Network requests fail. APIs go down. Rate limits hit. This guide walks through aljabr's retry, backoff, timeout, and cancellation primitives — starting from a bare `AsyncDerived`, then progressively hardening it against real-world failure.
 
+Failures are represented as [`Fault<E>`](../api/prelude/fault.md) — a three-variant union that distinguishes expected domain errors (`Fault.Fail<E>`), unexpected panics (`Fault.Defect`), and aborted computations (`Fault.Interrupted`). Understanding `Fault` is the key to reading the `Failed` state in any of the examples below.
+
 ---
 
 ## Starting point: a bare async derived
 
 ```ts
-import { Signal, AsyncDerived } from "aljabr/prelude"
+import { Signal, AsyncDerived, Fault } from "aljabr/prelude"
 
 const userId = Signal.create(1)
 
-const profile = AsyncDerived.create(async (signal) => {
+const profile = AsyncDerived.create<UserProfile, ApiError>(async (signal) => {
     const res = await fetch(`/api/users/${userId.get()!}`, { signal })
-    if (!res.ok) throw new Error(`${res.status} ${res.statusText}`)
-    return res.json() as Promise<UserProfile>
+    if (!res.ok) throw Fault.Fail(new ApiError(res.status, res.statusText))
+    return res.json()
 })
 ```
 
-This works. But if the request fails, `profile.state` immediately transitions to `Failed` with `nextRetryAt: null` — the derived has given up. The user sees an error with no recovery path.
+Throwing `Fault.Fail(e)` marks `e` as an expected domain error. Any other throw (an uncaught `TypeError`, a null dereference) becomes `Fault.Defect`. Explicit `Fault.Fail` is required to distinguish "the API said 503" from "there is a bug in the code."
+
+If the request fails, `profile.state` immediately transitions to `Failed` with `nextRetryAt: null` — the derived has given up. The user sees an error with no recovery path.
 
 ---
 
@@ -27,13 +31,13 @@ This works. But if the request fails, `profile.state` immediately transitions to
 Pass a `schedule` to enable automatic retry after failure. Exponential backoff is the right default for most network calls.
 
 ```ts
-import { Signal, AsyncDerived, Schedule } from "aljabr/prelude"
+import { Signal, AsyncDerived, Schedule, Fault } from "aljabr/prelude"
 
-const profile = AsyncDerived.create(
+const profile = AsyncDerived.create<UserProfile, ApiError>(
     async (signal) => {
         const res = await fetch(`/api/users/${userId.get()!}`, { signal })
-        if (!res.ok) throw new Error(`${res.status} ${res.statusText}`)
-        return res.json() as Promise<UserProfile>
+        if (!res.ok) throw Fault.Fail(new ApiError(res.status, res.statusText))
+        return res.json()
     },
     {
         schedule: Schedule.Exponential({ initialDelay: 200, maxDelay: 30_000 }),
@@ -43,7 +47,9 @@ const profile = AsyncDerived.create(
 
 The scheduler now waits 200 ms, then 400 ms, then 800 ms, doubling up to 30 seconds. The derived stays in `Failed` between attempts, with `nextRetryAt` set to the next scheduled timestamp.
 
-You can show this to users:
+Only `Fault.Fail` faults are retried by default. `Fault.Defect` (programming errors) and `Fault.Interrupted` (aborted runs) are terminal unless you override `shouldRetry`.
+
+You can show retry state to users:
 
 ```ts
 import { match } from "aljabr"
@@ -52,10 +58,10 @@ match(profile.state, {
     Loading:    () => showSpinner(),
     Ready:      ({ value }) => renderProfile(value),
     Reloading:  ({ value }) => renderProfile(value, { stale: true }),
-    Failed:     ({ error, nextRetryAt }) =>
+    Failed:     ({ fault, nextRetryAt }) =>
         nextRetryAt
             ? showCountdown(nextRetryAt)
-            : showPermanentError(error),
+            : showPermanentError(fault),
     Uncomputed: () => null,
     Disposed:   () => null,
 })
@@ -65,7 +71,7 @@ match(profile.state, {
 
 ## Step 2: Cap retries with `maxRetries`
 
-Without a cap, the scheduler retries indefinitely. Add `maxRetries` to give up after N attempts.
+Without a cap, the scheduler retries indefinitely (for `Fault.Fail` faults). Add `maxRetries` to give up after N attempts.
 
 ```ts
 const profile = AsyncDerived.create(
@@ -77,24 +83,30 @@ const profile = AsyncDerived.create(
 )
 ```
 
-After the 5th failed attempt, the scheduler emits `ScheduleError.MaxRetriesExceeded` as the error. The derived settles into `Failed` with `nextRetryAt: null`.
+After the 5th failed attempt, the scheduler emits `ScheduleError.MaxRetriesExceeded` wrapped in a `Fault.Fail` as the fault. The derived settles into `Failed` with `nextRetryAt: null`.
 
 ```ts
-import { ScheduleError } from "aljabr/prelude"
-import { variantOf } from "aljabr"
+import { match, getTag } from "aljabr"
+import { ScheduleError, Fault } from "aljabr/prelude"
 
 match(profile.state, {
-    Failed: ({ error }) => {
-        if (variantOf(ScheduleError, error)) {
-            match(error as ScheduleError, {
-                MaxRetriesExceeded: ({ attempts }) =>
-                    showError(`Failed after ${attempts} attempts. Please try again.`),
-                TimedOut: ({ elapsed }) =>
-                    showError(`Request timed out after ${elapsed} ms.`),
-            })
-        } else {
-            showError(String(error))
-        }
+    Failed: ({ fault }) => {
+        match(fault, {
+            Fail: ({ error }) => {
+                if (variantOf(ScheduleError, error)) {
+                    match(error as ScheduleError, {
+                        MaxRetriesExceeded: ({ attempts }) =>
+                            showError(`Failed after ${attempts} attempts. Please try again.`),
+                        TimedOut: ({ elapsed }) =>
+                            showError(`Request timed out after ${elapsed} ms.`),
+                    })
+                } else {
+                    showError(String(error))
+                }
+            },
+            Defect:      ({ thrown }) => showError(`Unexpected error: ${thrown}`),
+            Interrupted: () => { /* aborted — typically safe to ignore */ },
+        })
     },
     // ...
 })
@@ -104,7 +116,7 @@ match(profile.state, {
 
 ## Step 3: Add a timeout
 
-Some requests hang indefinitely rather than failing cleanly. `timeout` aborts the in-flight request and emits `ScheduleError.TimedOut` after the given number of milliseconds.
+Some requests hang indefinitely rather than failing cleanly. `timeout` aborts the in-flight request after the given number of milliseconds. An aborted run surfaces as `Fault.Interrupted`.
 
 ```ts
 const profile = AsyncDerived.create(
@@ -117,11 +129,10 @@ const profile = AsyncDerived.create(
 )
 ```
 
-A timeout counts as one attempt toward `maxRetries`. If you want a timeout to be immediately terminal — never retried — combine it with `shouldRetry`:
+A timeout produces `Fault.Interrupted` and, by default, is **not retried** (the default `shouldRetry` only retries `Fault.Fail`). To make timeouts retryable while keeping other interruptions terminal:
 
 ```ts
-import { ScheduleError } from "aljabr/prelude"
-import { variantOf } from "aljabr"
+import { getTag } from "aljabr"
 
 const profile = AsyncDerived.create(
     async (signal) => { /* ... */ },
@@ -129,7 +140,8 @@ const profile = AsyncDerived.create(
         schedule:    Schedule.Exponential({ initialDelay: 200, maxDelay: 30_000 }),
         maxRetries:  5,
         timeout:     8_000,
-        shouldRetry: (e) => !variantOf(ScheduleError, e),
+        shouldRetry: (fault) =>
+            getTag(fault) === "Fail" || getTag(fault) === "Interrupted",
     },
 )
 ```
@@ -140,35 +152,42 @@ const profile = AsyncDerived.create(
 
 Not all errors are worth retrying. A `404 Not Found` is permanent; retrying it wastes bandwidth. A `503 Service Unavailable` is transient; retrying makes sense.
 
+`shouldRetry` receives the full `Fault<E>`. Since only `Fault.Fail<E>` carries a domain error, check the tag first:
+
 ```ts
+import { getTag } from "aljabr"
+
 class ApiError extends Error {
     constructor(public status: number, message: string) {
         super(message)
     }
 }
 
-const profile = AsyncDerived.create(
+const profile = AsyncDerived.create<UserProfile, ApiError>(
     async (signal) => {
         const res = await fetch(`/api/users/${userId.get()!}`, { signal })
-        if (!res.ok) throw new ApiError(res.status, res.statusText)
-        return res.json() as Promise<UserProfile>
+        if (!res.ok) throw Fault.Fail(new ApiError(res.status, res.statusText))
+        return res.json()
     },
     {
         schedule:    Schedule.Exponential({ initialDelay: 200, maxDelay: 30_000 }),
         maxRetries:  5,
-        shouldRetry: (e) =>
-            e instanceof ApiError
-                ? e.status >= 500   // retry server errors, not client errors
-                : true,             // retry anything else (network failures, etc.)
+        shouldRetry: (fault) => {
+            if (getTag(fault) !== "Fail") return false  // never retry panics or aborts
+            const error = (fault as Fail<ApiError>).error
+            return error instanceof ApiError
+                ? error.status >= 500   // retry server errors, not client errors
+                : true                  // retry other domain errors (network failures, etc.)
+        },
     },
 )
 ```
 
-When `shouldRetry` returns `false`, the scheduler stops immediately and the derived settles into `Failed` with `nextRetryAt: null`. The original domain error — not a `ScheduleError` — is surfaced.
+When `shouldRetry` returns `false`, the scheduler stops immediately and the derived settles into `Failed` with `nextRetryAt: null`. The original fault is preserved as-is.
 
 ---
 
-## Step 5: Observability with `onRetry`
+## Step 5: Observability with `afterRetry`
 
 Log retries, update a UI indicator, or send telemetry before each attempt fires:
 
@@ -176,12 +195,12 @@ Log retries, update a UI indicator, or send telemetry before each attempt fires:
 const profile = AsyncDerived.create(
     async (signal) => { /* ... */ },
     {
-        schedule:   Schedule.Exponential({ initialDelay: 200, maxDelay: 30_000 }),
-        maxRetries: 5,
-        onRetry:    (attempt, error, nextDelay) => {
+        schedule:    Schedule.Exponential({ initialDelay: 200, maxDelay: 30_000 }),
+        maxRetries:  5,
+        afterRetry:  (attempt, fault, nextDelay) => {
             console.warn(
                 `[profile] attempt ${attempt} failed — retrying in ${nextDelay} ms`,
-                error,
+                fault,
             )
             analytics.track("profile.retry", { attempt, delay: nextDelay })
         },
@@ -189,16 +208,17 @@ const profile = AsyncDerived.create(
 )
 ```
 
-`onRetry` fires just before the delay timer starts — not when the timer fires. `nextDelay` is the actual computed delay (including any jitter).
+`afterRetry` fires just before the delay timer starts — not when the timer fires. `nextDelay` is the actual computed delay (including any jitter).
 
 ---
 
 ## Step 6: `AbortSignal` and cancellation
 
-The thunk always receives an `AbortSignal`. The signal is aborted automatically in two situations:
+The thunk always receives an `AbortSignal`. The signal is aborted automatically in three situations:
 
 1. **A dependency changes** — the old in-flight request is cancelled before the new one starts.
 2. **A retry is about to fire** — the previous attempt's signal is aborted before the next attempt begins.
+3. **A timeout fires** — the controller is aborted and the run surfaces as `Fault.Interrupted`.
 
 Pass the signal to every cancellable I/O call:
 
@@ -214,13 +234,7 @@ const profile = AsyncDerived.create(async (signal) => {
 })
 ```
 
-If the signal fires while `fetch` is awaiting, it throws an `AbortError`. The scheduler treats this as a transient failure and respects the `shouldRetry` predicate. To suppress abort errors from appearing as `Failed`, filter them in `shouldRetry`:
-
-```ts
-{
-    shouldRetry: (e) => !(e instanceof DOMException && e.name === "AbortError"),
-}
-```
+When the signal fires, `fetch` throws a `DOMException` with `name === "AbortError"`. Because this is not a `Fault.Fail` instance, `classifyError` promotes it to `Fault.Interrupted`. By default this is terminal. If you need to distinguish user-initiated cancellation from timeout-driven abort, inspect `signal.reason` inside `Fault.Interrupted.reason`.
 
 ---
 
@@ -229,7 +243,7 @@ If the signal fires while `fetch` is awaiting, it throws an `AbortError`. The sc
 Everything above applies equally to `watchEffect`. The main difference: `watchEffect` calls a callback when results settle rather than exposing a pull-based `.get()`.
 
 ```ts
-import { watchEffect, Schedule } from "aljabr/prelude"
+import { watchEffect, Schedule, Fault } from "aljabr/prelude"
 
 const query = Signal.create("")
 
@@ -246,13 +260,13 @@ const handle = watchEffect(
                 // In lazy mode: caller decides when to re-run
                 stale.run().then(r => match(r, {
                     Done:   ({ value }) => renderResults(value),
-                    Failed: ({ error }) => renderError(error),
+                    Failed: ({ fault }) => renderError(fault),
                 }))
             },
-            Failed: ({ error, nextRetryAt }) =>
+            Failed: ({ fault, nextRetryAt }) =>
                 nextRetryAt
                     ? showRetryBanner(nextRetryAt)
-                    : renderError(error),
+                    : renderError(fault),
         })
     },
     {
@@ -278,7 +292,7 @@ Use `eager: true` if you want the effect to re-run automatically on every depend
 |---|---|
 | Polling a known-stable endpoint | `Schedule.Fixed(5_000)` |
 | Transient network blips | `Schedule.Exponential({ initialDelay: 200, maxDelay: 10_000, jitter: true })` |
-| Rate-limited API with a `Retry-After` header | `Schedule.Custom((_, e) => e instanceof RateLimitError ? e.retryAfterMs : null)` |
+| Rate-limited API with a `Retry-After` header | `Schedule.Custom((_, fault) => getTag(fault) === "Fail" && fault.error instanceof RateLimitError ? fault.error.retryAfterMs : null)` |
 | Deterministic test environments | `Schedule.Fixed(0)` |
 
 Jitter is strongly recommended for any production schedule that may be exercised by many clients simultaneously. Without it, all clients retry at the same moment after a service recovers, producing a retry storm.
@@ -287,6 +301,7 @@ Jitter is strongly recommended for any production schedule that may be exercised
 
 ## See also
 
+- [`Fault`](../api/prelude/fault.md) — error classification: Fail, Defect, and Interrupted
 - [`Schedule`](../api/prelude/schedule.md) — full API reference for all schedule variants and `AsyncOptions`
 - [`AsyncDerived`](../api/prelude/derived.md#asyncderivedt-e) — pull-based async computed values
 - [`watchEffect`](../api/prelude/effect.md#watcheffect) — push-based reactive async side effects

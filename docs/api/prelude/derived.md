@@ -6,6 +6,7 @@ import {
     AsyncDerived,
     type DerivedState,
     type AsyncDerivedState,
+    type Fault,
 } from "aljabr/prelude"
 ```
 
@@ -187,10 +188,10 @@ With retry:
 const data = AsyncDerived.create(
     async (signal) => fetchData(signal),
     {
-        schedule:   Schedule.Exponential({ initialDelay: 100, maxDelay: 30_000 }),
-        maxRetries: 5,
-        onRetry:    (attempt, error, delay) =>
-            console.warn(`attempt ${attempt} failed, retrying in ${delay} ms`, error),
+        schedule:    Schedule.Exponential({ initialDelay: 100, maxDelay: 30_000 }),
+        maxRetries:  5,
+        afterRetry:  (attempt, fault, delay) =>
+            console.warn(`attempt ${attempt} failed, retrying in ${delay} ms`, fault),
     },
 )
 ```
@@ -203,13 +204,15 @@ async derived.get(): Promise<T>
 
 Read the current value, triggering evaluation if the state is `Uncomputed`, `Reloading`, or `Failed`. Registers this derived as a dependency in the active tracking context.
 
-Rejects if the computation threw (state transitions to `Failed`) or if the derived is `Disposed`.
+Rejects with a `Fault<E>` if the computation failed (state transitions to `Failed`). Rejects with an `Error` if the derived is `Disposed`.
 
 ```ts
 const user = await profile.get() // triggers fetch on first call
 userId.set(2)
 const user2 = await profile.get() // re-fetches for user 2
 ```
+
+To handle failure without throwing, match on `.state` before calling `.get()`, or use `.peek()` for the last known value.
 
 ### `.peek()`
 
@@ -243,25 +246,49 @@ derived.state: AsyncDerivedState<T, E>
 | `Loading` | First evaluation in progress; no prior value |
 | `Ready<T>` | Computation completed successfully; value is fresh |
 | `Reloading<T>` | A dependency changed; stale value preserved; new computation in flight |
-| `Failed<E>` | The computation failed; exposes retry context when a schedule is configured |
+| `Failed<E>` | The computation failed; exposes fault and retry context |
 | `Disposed` | The derived has been disposed |
 
 `Reloading` is the key stale-while-revalidating state: the prior `value` is still accessible while the new fetch runs.
 
-`Failed` carries `{ error, attempts, nextRetryAt }`. When `nextRetryAt` is a non-null timestamp, the scheduler has queued the next attempt automatically. When it is `null`, the derived has given up.
+`Failed` carries `{ fault, attempts, nextRetryAt }`. The `fault` is a [`Fault<E>`](./fault.md) — one of `Fail<E>`, `Defect`, or `Interrupted`. When `nextRetryAt` is a non-null timestamp, the scheduler has queued the next attempt automatically. When it is `null`, the derived has given up.
 
 ```ts
+import { match } from "aljabr"
+import { Fault } from "aljabr/prelude"
+
 match(profile.state, {
     Uncomputed: () => null,
     Loading:    () => <Spinner />,
     Ready:      ({ value }) => <Profile user={value} />,
     Reloading:  ({ value }) => <Profile user={value} stale />,
-    Failed:     ({ error, nextRetryAt }) =>
+    Failed:     ({ fault, nextRetryAt }) =>
         nextRetryAt
             ? <RetryBanner at={nextRetryAt} />
-            : <Error message={String(error)} />,
+            : <ErrorView message={describeFault(fault)} />,
     Disposed:   () => null,
 })
+```
+
+### `.hasValue()` / `.getValue()` / `.getFault()`
+
+All `AsyncDerivedState` variants expose three convenience methods via the `AsyncDerivedLifecycle` trait:
+
+```ts
+state.hasValue(): boolean     // true for Ready and Reloading
+state.getValue(): T | null    // the value for Ready/Reloading, null otherwise
+state.getFault(): Fault<E> | null  // the fault for Failed, null otherwise
+```
+
+These are useful as guards when you need a quick null-check without a full `match`:
+
+```ts
+if (profile.state.hasValue()) {
+    renderProfile(profile.state.getValue()!)
+}
+
+const fault = profile.state.getFault()
+if (fault) handleFault(fault)
 ```
 
 ### Type definitions
@@ -272,7 +299,7 @@ type AsyncDerivedState<T, E = unknown> =
     | Variant<"Loading",    { value: null }>
     | Variant<"Ready",      { value: T }>
     | Variant<"Reloading",  { value: T }>
-    | Variant<"Failed",     { value: null; error: E; attempts: number; nextRetryAt: number | null }>
+    | Variant<"Failed",     { value: null; fault: Fault<E>; attempts: number; nextRetryAt: number | null }>
     | Variant<"Disposed",   { value: null }>
 ```
 
@@ -310,11 +337,38 @@ results.state       // Reloading (prior empty array preserved)
 await results.get() // [...search results for "hello"]
 ```
 
+### Handling failures
+
+```ts
+import { match } from "aljabr"
+import { Fault } from "aljabr/prelude"
+
+const user = AsyncDerived.create<User, ApiError>(async (signal) => {
+    const res = await fetch("/api/me", { signal })
+    if (!res.ok) throw Fault.Fail(new ApiError(res.status))
+    return res.json()
+})
+
+match(user.state, {
+    Loading:  () => showSpinner(),
+    Ready:    ({ value }) => render(value),
+    Reloading:({ value }) => render(value, /* stale */ true),
+    Failed:   ({ fault }) => match(fault, {
+        Fail:        ({ error }) => showApiError(error),
+        Defect:      ({ thrown }) => showUnexpectedError(thrown),
+        Interrupted: () => { /* disposed or superseded — ignore */ },
+    }),
+    Uncomputed: () => null,
+    Disposed:   () => null,
+})
+```
+
 ---
 
 ## See also
 
 - [`Signal`](./signal.md) — the mutable source values deriveds subscribe to
+- [`Fault`](./fault.md) — the three-variant error union carried by `Failed`
 - [`watchEffect`](./effect.md#watcheffect) — run async side effects reactively
 - [`Schedule`](./schedule.md) — retry-delay policies for `AsyncOptions`
 - [`batch`](./context.md#batch) — coalesce multiple signal writes
