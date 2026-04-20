@@ -1,4 +1,7 @@
-# aljabr
+<div align="center">
+    <h1>Aljabr</h1>
+    <img src="logo-sm.png" alt="Description">
+</div>
 
 > _Al-jabr_ (الجبر) — the Arabic word that gave us "algebra." Bringing structure to chaos is, as it turns out, an ancient art.
 
@@ -168,11 +171,15 @@ type Key = Union<typeof Key>;
 const handle = (k: Key): string =>
     match(k, {
         Press: [
-            when({ key: "Enter" },                         () => "submit"),
-            when({ key: is.union("Tab", "Escape") },       () => "navigation"),
-            when({ key: pred((k) => k.startsWith("F")) },  () => "function key"),
-            when({ key: select("k") }, (_, { k }) => `shifted: ${k}`, (v) => v.shift),
-            when(__,                                        () => "character"),
+            when({ key: "Enter" }, () => "submit"),
+            when({ key: is.union("Tab", "Escape") }, () => "navigation"),
+            when({ key: pred((k) => k.startsWith("F")) }, () => "function key"),
+            when(
+                { key: select("k") },
+                (_, { k }) => `shifted: ${k}`,
+                (v) => v.shift,
+            ),
+            when(__, () => "character"),
         ],
     });
 ```
@@ -277,7 +284,7 @@ const handle = watchEffect(
     async (signal) => api.search(query.get()!, { signal }),
     (result) => updateResults(result),
     {
-        eager:    true,
+        eager: true,
         schedule: Schedule.Exponential({ initialDelay: 100, maxDelay: 30_000 }),
         maxRetries: 5,
     },
@@ -334,16 +341,16 @@ theme.set("dark"); // written to localStorage; restored on next load
 
 The next major release expands aljabr across seven progressive phases, each building on the tag-first, zero-dependency foundation:
 
-| Phase | Focus |
-| ----- | ----- |
-| **1 — Deep Structural Matching** ✓ | `select` bindings for nested extraction, wildcards, combinators (`is.not`, `is.union`), deep recursive sub-patterns |
-| **1.5 — Type Inference for `select` and Combinators** ✓ | Precise `selections` typing: each `select("name")` infers from the variant's field type; `is.not(is.nullish)` narrows to `Exclude<T, null \| undefined>`; `is.union("a","b")` narrows to `"a" \| "b"` |
-| **1.6 — Union Identity & `is.not.*` Namespace** ✓ | Per-factory identity symbol brands every variant prototype; `variantOf`, `is.variant`, `is.union(Factory)` and `is.not(Factory)` for cross-union membership matching; full `is.not.*` namespace for BDD-style pattern authoring |
-| **2 — Data Boundary (`aljabr/schema`)** ✓ | Decode untyped external data (API payloads, form inputs) into typed variants; bidirectional encode/decode roundtrips |
-| **3 — Resilient Async Lifecycles** ✓ | Declarative `Schedule` policies (exponential backoff, jitter) and native timeout/race primitives for `AsyncDerived` and `watchEffect` |
-| **4 — Resource Scoping & DI** | `Scope` finalizers for safe teardown of WebSockets, timers, and file handles; type-safe context injection via Tags and Layers |
-| **5 — Error & Defect Tracking** | Formal separation of expected domain errors from unexpected runtime panics; a `Cause` structure to capture sequential, parallel, and interrupted failures |
-| **6 — Solid-Inspired Factory API** | `createSignal`, `createMemo`, `createEffect`, and `createRoot` wrappers that preserve raw-value ergonomics while surfacing Aljabr's state machine via a `.state()` accessor |
-| **7 — Ecosystem Bindings** | `@aljabr/react` hooks via `useSyncExternalStore`; `@aljabr/hookform-resolver` for schema-backed form validation; intentionally no bundled UI matching components |
+| Phase                                                   | Focus                                                                                                                                                                                                                           |
+| ------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **1 — Deep Structural Matching** ✓                      | `select` bindings for nested extraction, wildcards, combinators (`is.not`, `is.union`), deep recursive sub-patterns                                                                                                             |
+| **1.5 — Type Inference for `select` and Combinators** ✓ | Precise `selections` typing: each `select("name")` infers from the variant's field type; `is.not(is.nullish)` narrows to `Exclude<T, null \| undefined>`; `is.union("a","b")` narrows to `"a" \| "b"`                           |
+| **1.6 — Union Identity & `is.not.*` Namespace** ✓       | Per-factory identity symbol brands every variant prototype; `variantOf`, `is.variant`, `is.union(Factory)` and `is.not(Factory)` for cross-union membership matching; full `is.not.*` namespace for BDD-style pattern authoring |
+| **2 — Data Boundary (`aljabr/schema`)** ✓               | Decode untyped external data (API payloads, form inputs) into typed variants; bidirectional encode/decode roundtrips                                                                                                            |
+| **3 — Resilient Async Lifecycles** ✓                    | Declarative `Schedule` policies (exponential backoff, jitter) and native timeout/race primitives for `AsyncDerived` and `watchEffect`                                                                                           |
+| **4 — Resource Scoping & DI**                           | `Scope` finalizers for safe teardown of WebSockets, timers, and file handles; type-safe context injection via Tags and Layers                                                                                                   |
+| **5 — Error & Defect Tracking**                         | Formal separation of expected domain errors from unexpected runtime panics; a `Cause` structure to capture sequential, parallel, and interrupted failures                                                                       |
+| **6 — Solid-Inspired Factory API**                      | `createSignal`, `createMemo`, `createEffect`, and `createRoot` wrappers that preserve raw-value ergonomics while surfacing Aljabr's state machine via a `.state()` accessor                                                     |
+| **7 — Ecosystem Bindings**                              | `@aljabr/react` hooks via `useSyncExternalStore`; `@aljabr/hookform-resolver` for schema-backed form validation; intentionally no bundled UI matching components                                                                |
 
 For the full design rationale and API sketches, see [docs/roadmap/v0.3.0.md](docs/roadmap/v0.3.0.md).

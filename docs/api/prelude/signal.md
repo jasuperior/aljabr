@@ -23,7 +23,7 @@ By default the lifecycle state is `SignalState<T>` — a `Unset | Active<T> | Di
 ```ts
 Signal.create<T>(): Signal<T>                                      // starts Unset
 Signal.create<T>(initial: T): Signal<T>                            // starts Active
-Signal.create<S, T>(initial: S, protocol: SignalProtocol<S, T>): Signal<T, S>  // custom state
+Signal.create<T, S>(initial: S, protocol: SignalProtocol<S, T>): Signal<T, S>  // custom state
 ```
 
 Creates a new signal. If created inside a reactive owner, the signal is automatically disposed when the owner is disposed.
