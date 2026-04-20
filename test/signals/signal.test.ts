@@ -56,12 +56,6 @@ describe("getter.state() — tracked", () => {
         setCount(1);
         expect(dirty).toBe(true);
     });
-    it("transitions to Disposed after underlying signal is disposed", () => {
-        const [count] = signal(1);
-        // Access the underlying signal via the getter mechanism — dispose via effect
-        // State transitions to Disposed when signal is explicitly disposed
-        expect(getTag(count.state())).toBe("Active");
-    });
 });
 
 describe("getter() — tracked", () => {

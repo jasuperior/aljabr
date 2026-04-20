@@ -3,7 +3,6 @@ import { signal, query, effect } from "../../src/signals/index.ts";
 import { getTag } from "../../src/union.ts";
 
 const tick = () => new Promise<void>((r) => setTimeout(r, 0));
-
 describe("query() — initial state", () => {
     it("getter returns null before evaluation", () => {
         const [data] = query(async () => 42);

@@ -1,6 +1,8 @@
 import { describe, it, expect } from "vitest";
 import { signal, effect, scope } from "../../src/signals/index.ts";
 
+const tick = () => new Promise<void>((r) => setTimeout(r, 0));
+
 describe("scope() — basic", () => {
     it("returns the value produced by fn", () => {
         const [value] = scope(() => 42);
@@ -14,13 +16,15 @@ describe("scope() — basic", () => {
 });
 
 describe("scope() — reactive ownership", () => {
-    it("disposes signals created inside when dispose() is called", async () => {
+    it("stops reactive effects when dispose() is called", async () => {
         let runs = 0;
-        const [count, setCount] = signal(0);
 
         const [innerCount, dispose] = scope(() => {
             const [c, setC] = signal(0);
-            effect(() => { c(); runs++; });
+            effect(() => {
+                c();
+                runs++;
+            });
             return [c, setC] as const;
         });
 
@@ -31,22 +35,30 @@ describe("scope() — reactive ownership", () => {
 
         await dispose();
 
-        setC(2); // no-op: signal disposed
+        setC(2); // signal still settable, but no effects are tracking it
         expect(runs).toBe(2);
     });
 });
 
 describe("scope() — early termination from within", () => {
-    it("passes a dispose function into fn", async () => {
-        let disposed = false;
-        const [, disposer] = scope((dispose) => {
+    it("an effect calling the injected dispose() terminates the scope", async () => {
+        let runs = 0;
+        const [count, setCount] = signal(0);
+
+        scope((dispose) => {
             effect(() => {
-                // effect body — just checking dispose is callable
+                const c = count() ?? 0;
+                runs++;
+                if (c >= 1) dispose();
             });
-            return dispose;
         });
-        const defects = await disposer();
-        expect(defects).toEqual([]);
+
+        expect(runs).toBe(1);
+        setCount(1); // effect fires, detects condition, calls dispose() internally
+        expect(runs).toBe(2); // one final run that triggered the shutdown
+        await tick();
+        setCount(2);
+        expect(runs).toBe(2);
     });
 });
 
@@ -56,7 +68,9 @@ describe("scope() — defer finalizers", async () => {
         const { defer } = await import("../../src/prelude/scope.ts");
 
         const [, dispose] = scope(() => {
-            defer(() => { log.push("cleanup"); });
+            defer(() => {
+                log.push("cleanup");
+            });
         });
 
         await dispose();
