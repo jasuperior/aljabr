@@ -127,7 +127,7 @@ export class Signal<T, S = never> {
      * `set()` accepts full `S` variants. `get()` extracts `T | null` via
      * `protocol.extract`. `read()` returns the full `S` state (tracked).
      */
-    static create<S, T>(initial: S, protocol: SignalProtocol<S, T>): Signal<T, S>;
+    static create<T, S>(initial: S, protocol: SignalProtocol<S, T>): Signal<T, S>;
     static create<T, S>(
         initialOrState?: T | S,
         protocol?: SignalProtocol<S, T>,

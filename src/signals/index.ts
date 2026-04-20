@@ -1,4 +1,5 @@
-import { Signal, type SignalState } from "../prelude/signal.ts";
+import { Signal, type SignalState, type SignalProtocol } from "../prelude/signal.ts";
+export type { SignalProtocol } from "../prelude/signal.ts";
 import {
     Derived,
     AsyncDerived,
@@ -29,14 +30,15 @@ export type Getter<T, S> = {
 };
 
 export type Setter<T> = (value: T | ((prev: T | null) => T)) => void;
+export type StateSetter<S> = (value: S | ((prev: S) => S)) => void;
 
 // ---------------------------------------------------------------------------
 // signal<T>() — reactive mutable value
 // ---------------------------------------------------------------------------
 
-export function signal<T>(): [Getter<T, SignalState<T>>, Setter<T>];
-export function signal<T>(initial: T): [Getter<T, SignalState<T>>, Setter<T>];
-export function signal<T>(
+function _signal<T>(): [Getter<T, SignalState<T>>, Setter<T>];
+function _signal<T>(initial: T): [Getter<T, SignalState<T>>, Setter<T>];
+function _signal<T>(
     ...args: [] | [T]
 ): [Getter<T, SignalState<T>>, Setter<T>] {
     const sig =
@@ -57,6 +59,29 @@ export function signal<T>(
 
     return [getter, setter];
 }
+
+function _signalProtocol<T, S>(
+    initial: S,
+    protocol: SignalProtocol<S, T>,
+): [Getter<T, S>, StateSetter<S>] {
+    const sig = Signal.create<T, S>(initial, protocol);
+
+    const getter = Object.assign(
+        (): T | null => sig.get(),
+        { state: (): S => sig.state() as S },
+    );
+
+    const setter: StateSetter<S> = (value) => {
+        const next = typeof value === "function"
+            ? (value as (prev: S) => S)(sig.peekState() as S)
+            : (value as S);
+        sig.set(next as never);
+    };
+
+    return [getter, setter];
+}
+
+export const signal = Object.assign(_signal, { protocol: _signalProtocol });
 
 // ---------------------------------------------------------------------------
 // memo<T>() — lazy computed value
