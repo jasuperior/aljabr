@@ -41,6 +41,11 @@
             "import": "./dist/schema.js",
             "require": "./dist/schema.cjs",
             "types": "./dist/schema/index.d.ts"
+        },
+        "./signals": {
+            "import": "./dist/signals.js",
+            "require": "./dist/signals.cjs",
+            "types": "./dist/signals/index.d.ts"
         }
     },
     "files": [
