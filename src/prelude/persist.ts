@@ -77,7 +77,7 @@ export function persistedSignal<T>(
 
     const signal = Signal.create(startValue);
 
-    // Mirror every write to the store
+    // Mirror every write to the store — eager so re-runs automatically on each change
     watchEffect(
         async () => {
             const value = signal.get();
@@ -87,7 +87,8 @@ export function persistedSignal<T>(
                 adapter.remove(key);
             }
         },
-        () => { /* writes are the side-effect; onChange is a no-op here */ },
+        () => {},
+        { eager: true },
     );
 
     return signal;
@@ -122,6 +123,7 @@ export function syncToStore<T>(
             if (value !== null) adapter.set(key, serialize(value));
         },
         () => {},
+        { eager: true },
     );
 
     return () => handle.stop();

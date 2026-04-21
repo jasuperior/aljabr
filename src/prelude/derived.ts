@@ -1,4 +1,4 @@
-import { union, Trait, type Variant } from "../union.ts";
+import { union, Trait, type Variant, instanceOf } from "../union.ts";
 import { match } from "../match.ts";
 import {
     type Computation,
@@ -7,6 +7,10 @@ import {
     createOwner,
     scheduleNotification,
 } from "./context.ts";
+import { type AsyncOptions, ScheduleError, computeDelay } from "./schedule.ts";
+import { getTag } from "../union.ts";
+import { type ScopeHandle, Scope, runInScope } from "./scope.ts";
+import { type Fault, Fault as FaultUnion } from "./fault.ts";
 
 // ---------------------------------------------------------------------------
 // DerivedState<T> — lifecycle union for computed values
@@ -122,9 +126,9 @@ export class Derived<T> {
             // notified and re-notifying would cause duplicate flush work.
             const wasComputed = match(this.#state, {
                 Uncomputed: () => false,
-                Computed:   () => true,
-                Stale:      () => false,
-                Disposed:   () => false,
+                Computed: () => true,
+                Stale: () => false,
+                Disposed: () => false,
             });
             if (wasComputed) {
                 this.#state = DerivedState.Stale(this.#state.getValue() as T);
@@ -246,45 +250,74 @@ abstract class AsyncDerivedLifecycle<T, E> extends Trait<{ value: unknown }> {
     hasValue(): boolean {
         return match(this as unknown as AsyncDerivedState<T, E>, {
             Uncomputed: () => false,
-            Loading:    () => false,
-            Ready:      () => true,
-            Reloading:  () => true,
-            Failed:     () => false,
-            Disposed:   () => false,
+            Loading: () => false,
+            Ready: () => true,
+            Reloading: () => true,
+            Failed: () => false,
+            Disposed: () => false,
         });
     }
 
     getValue(): T | null {
         return match(this as unknown as AsyncDerivedState<T, E>, {
             Uncomputed: () => null,
-            Loading:    () => null,
-            Ready:      ({ value }) => value,
-            Reloading:  ({ value }) => value,
-            Failed:     () => null,
-            Disposed:   () => null,
+            Loading: () => null,
+            Ready: ({ value }) => value,
+            Reloading: ({ value }) => value,
+            Failed: () => null,
+            Disposed: () => null,
         });
     }
 
-    getError(): E | null {
+    getFault(): Fault<E> | null {
         return match(this as unknown as AsyncDerivedState<T, E>, {
             Uncomputed: () => null,
-            Loading:    () => null,
-            Ready:      () => null,
-            Reloading:  () => null,
-            Failed:     ({ error }) => error,
-            Disposed:   () => null,
+            Loading: () => null,
+            Ready: () => null,
+            Reloading: () => null,
+            Failed: ({ fault }) => fault,
+            Disposed: () => null,
         });
     }
 }
 
-type AsyncUncomputed = Variant<"Uncomputed", { value: null }, AsyncDerivedLifecycle<never, never>>;
-type AsyncLoading    = Variant<"Loading",    { value: null }, AsyncDerivedLifecycle<never, never>>;
-type AsyncReady<T>   = Variant<"Ready",      { value: T   }, AsyncDerivedLifecycle<T, never>>;
+type AsyncUncomputed = Variant<
+    "Uncomputed",
+    { value: null },
+    AsyncDerivedLifecycle<never, never>
+>;
+type AsyncLoading = Variant<
+    "Loading",
+    { value: null },
+    AsyncDerivedLifecycle<never, never>
+>;
+type AsyncReady<T> = Variant<
+    "Ready",
+    { value: T },
+    AsyncDerivedLifecycle<T, never>
+>;
 /** Dependencies changed while a value exists — the stale value is preserved
  *  and a new computation is in flight. */
-type AsyncReloading<T> = Variant<"Reloading", { value: T }, AsyncDerivedLifecycle<T, never>>;
-type AsyncFailed<E>  = Variant<"Failed",     { value: null; error: E }, AsyncDerivedLifecycle<never, E>>;
-type AsyncDisposed   = Variant<"Disposed",   { value: null }, AsyncDerivedLifecycle<never, never>>;
+type AsyncReloading<T> = Variant<
+    "Reloading",
+    { value: T },
+    AsyncDerivedLifecycle<T, never>
+>;
+type AsyncFailed<E> = Variant<
+    "Failed",
+    {
+        value: null;
+        fault: Fault<E>;
+        attempts: number;
+        nextRetryAt: number | null;
+    },
+    AsyncDerivedLifecycle<never, E>
+>;
+type AsyncDisposed = Variant<
+    "Disposed",
+    { value: null },
+    AsyncDerivedLifecycle<never, never>
+>;
 
 export type AsyncDerivedState<T, E = unknown> =
     | AsyncUncomputed
@@ -296,11 +329,15 @@ export type AsyncDerivedState<T, E = unknown> =
 
 const AsyncDerivedState = union([AsyncDerivedLifecycle]).typed({
     Uncomputed: () => ({ value: null }) as AsyncUncomputed,
-    Loading:    () => ({ value: null }) as AsyncLoading,
-    Ready:      <T>(value: T) => ({ value }) as AsyncReady<T>,
-    Reloading:  <T>(value: T) => ({ value }) as AsyncReloading<T>,
-    Failed:     <E>(error: E) => ({ value: null, error }) as AsyncFailed<E>,
-    Disposed:   () => ({ value: null }) as AsyncDisposed,
+    Loading: () => ({ value: null }) as AsyncLoading,
+    Ready: <T>(value: T) => ({ value }) as AsyncReady<T>,
+    Reloading: <T>(value: T) => ({ value }) as AsyncReloading<T>,
+    Failed: <E>(
+        fault: Fault<E>,
+        attempts: number,
+        nextRetryAt: number | null,
+    ) => ({ value: null, fault, attempts, nextRetryAt }) as AsyncFailed<E>,
+    Disposed: () => ({ value: null }) as AsyncDisposed,
 });
 
 // ---------------------------------------------------------------------------
@@ -315,49 +352,66 @@ const AsyncDerivedState = union([AsyncDerivedLifecycle]).typed({
  * machine includes `Loading` (first run, no prior value) and `Reloading`
  * (re-run after a dep change, stale value preserved for display).
  *
- * @example
+ * When `AsyncOptions` are provided, failed computations are automatically
+ * retried according to the schedule. The thunk receives an `AbortSignal`
+ * that is aborted before each new attempt, enabling clean cancellation of
+ * in-flight network requests.
+ *
+ * @example Basic usage
  * const userId = Signal.create(1);
- * const profile = AsyncDerived.create(async () => {
- *   const id = userId.get()!;
- *   const res = await fetch(`/api/users/${id}`);
+ * const profile = AsyncDerived.create(async (signal) => {
+ *   const res = await fetch(`/api/users/${userId.get()!}`, { signal });
  *   return res.json();
  * });
  *
- * await profile.get(); // triggers fetch, returns Ready value
- * userId.set(2);
- * profile.state; // Reloading — stale value from user 1 still available
- * await profile.get(); // re-fetches for user 2, returns Ready value
+ * @example With retry
+ * const data = AsyncDerived.create(
+ *   async (signal) => fetchData(signal),
+ *   { schedule: Schedule.exponential({ initialDelay: 100, maxDelay: 30_000 }), maxRetries: 5 },
+ * );
  */
 export class AsyncDerived<T, E = unknown> {
-    #fn: () => Promise<T>;
+    #fn: (signal: AbortSignal, scope: ScopeHandle) => Promise<T>;
+    #options: AsyncOptions<E>;
     #state: AsyncDerivedState<T, E> = AsyncDerivedState.Uncomputed();
     #computation: Computation;
+    #attempts = 0;
+    #currentController: AbortController | null = null;
+    #currentScope: ScopeHandle | null = null;
+    #retryTimer: ReturnType<typeof setTimeout> | null = null;
     readonly #subscribers = new Map<Computation, () => void>();
 
-    private constructor(fn: () => Promise<T>) {
+    private constructor(
+        fn: (signal: AbortSignal, scope: ScopeHandle) => Promise<T>,
+        options: AsyncOptions<E> = {},
+    ) {
         this.#fn = fn;
+        this.#options = options;
 
         this.#computation = createOwner();
         this.#computation.dirty = () => {
             const transition = match(this.#state, {
                 Uncomputed: () => null,
-                Loading:    () => null,          // already in-flight, ignore
-                Ready:      ({ value }) => value, // preserve stale value
-                Reloading:  () => null,           // already reloading, ignore
-                Failed:     () => null,
-                Disposed:   () => null,
+                Loading: () => null, // already in-flight, ignore
+                Ready: ({ value }) => value, // preserve stale value
+                Reloading: () => null, // already reloading, ignore
+                Failed: () => null,
+                Disposed: () => null,
             });
             if (transition !== null) {
+                // Cancel any pending retry timer — dep change supersedes it.
+                this.#cancelRetryTimer();
                 this.#state = AsyncDerivedState.Reloading(transition as T);
-                for (const comp of [...this.#subscribers.keys()]) {
-                    scheduleNotification(comp);
-                }
+                this.#notifySubscribers();
             }
         };
     }
 
-    static create<T, E = unknown>(fn: () => Promise<T>): AsyncDerived<T, E> {
-        return new AsyncDerived(fn);
+    static create<T, E = unknown>(
+        fn: (signal: AbortSignal, scope: ScopeHandle) => Promise<T>,
+        options?: AsyncOptions<E>,
+    ): AsyncDerived<T, E> {
+        return new AsyncDerived(fn, options);
     }
 
     /** The current lifecycle state. Pattern-match this with `match`. */
@@ -380,11 +434,11 @@ export class AsyncDerived<T, E = unknown> {
 
         const needsEval = match(this.#state, {
             Uncomputed: () => true,
-            Loading:    () => false,
-            Ready:      () => false,
-            Reloading:  () => true,
-            Failed:     () => true,
-            Disposed:   () => false,
+            Loading: () => false,
+            Ready: () => false,
+            Reloading: () => true,
+            Failed: () => true,
+            Disposed: () => false,
         });
 
         if (needsEval) {
@@ -392,12 +446,20 @@ export class AsyncDerived<T, E = unknown> {
         }
 
         return match(this.#state, {
-            Uncomputed: () => { throw new Error("AsyncDerived evaluation produced no value"); },
-            Loading:    () => { throw new Error("AsyncDerived evaluation produced no value"); },
-            Ready:      ({ value }) => value,
-            Reloading:  ({ value }) => value,
-            Failed:     ({ error }) => { throw error; },
-            Disposed:   () => { throw new Error("AsyncDerived is disposed"); },
+            Uncomputed: () => {
+                throw new Error("AsyncDerived evaluation produced no value");
+            },
+            Loading: () => {
+                throw new Error("AsyncDerived evaluation produced no value");
+            },
+            Ready: ({ value }) => value,
+            Reloading: ({ value }) => value,
+            Failed: ({ fault }) => {
+                throw fault;
+            },
+            Disposed: () => {
+                throw new Error("AsyncDerived is disposed");
+            },
         });
     }
 
@@ -411,11 +473,12 @@ export class AsyncDerived<T, E = unknown> {
 
     /** Dispose this derived value and clear all subscriptions. */
     dispose(): void {
+        this.#cancelRetryTimer();
+        this.#currentController?.abort();
+        void this.#currentScope?.dispose();
         this.#computation.dispose();
         this.#state = AsyncDerivedState.Disposed();
-        for (const comp of [...this.#subscribers.keys()]) {
-            scheduleNotification(comp);
-        }
+        this.#notifySubscribers();
         this.#subscribers.clear();
     }
 
@@ -429,7 +492,25 @@ export class AsyncDerived<T, E = unknown> {
         comp.sources.add(this);
     }
 
+    #notifySubscribers(): void {
+        for (const comp of [...this.#subscribers.keys()]) {
+            scheduleNotification(comp);
+        }
+    }
+
+    #cancelRetryTimer(): void {
+        if (this.#retryTimer !== null) {
+            clearTimeout(this.#retryTimer);
+            this.#retryTimer = null;
+        }
+    }
+
     async #evaluate(): Promise<void> {
+        // Abort any previous in-flight request before starting a new one.
+        this.#currentController?.abort();
+        this.#currentController = new AbortController();
+        const { signal } = this.#currentController;
+
         const hadValue = this.#state.hasValue();
         this.#state = hadValue
             ? AsyncDerivedState.Reloading(this.#state.getValue() as T)
@@ -441,10 +522,101 @@ export class AsyncDerived<T, E = unknown> {
         this.#computation.sources.clear();
 
         try {
-            const value = await trackIn(this.#computation, this.#fn);
+            if (
+                this.#currentScope !== null &&
+                getTag(this.#currentScope.state) !== "Disposed"
+            ) {
+                void this.#currentScope.dispose();
+            }
+            this.#currentScope = Scope();
+            const scope = this.#currentScope;
+            const promise = runInScope(scope, () =>
+                trackIn(this.#computation, () => this.#fn(signal, scope)),
+            );
+            const value =
+                this.#options.timeout !== undefined
+                    ? await this.#withTimeout(promise, this.#options.timeout)
+                    : await promise;
+
+            this.#attempts = 0;
             this.#state = AsyncDerivedState.Ready(value);
         } catch (e) {
-            this.#state = AsyncDerivedState.Failed(e as E);
+            const fault = instanceOf(FaultUnion.Fail, e)
+                ? (e as Fault<E>)
+                : signal.aborted
+                  ? FaultUnion.Interrupted(signal.reason)
+                  : FaultUnion.Defect(e);
+            await this.#handleFailure(fault);
         }
+    }
+
+    async #withTimeout(promise: Promise<T>, timeoutMs: number): Promise<T> {
+        return new Promise<T>((resolve, reject) => {
+            const start = Date.now();
+            const timer = setTimeout(() => {
+                this.#currentController?.abort();
+                reject(ScheduleError.TimedOut(Date.now() - start, timeoutMs));
+            }, timeoutMs);
+
+            promise.then(
+                (value) => {
+                    clearTimeout(timer);
+                    resolve(value);
+                },
+                (error) => {
+                    clearTimeout(timer);
+                    reject(error);
+                },
+            );
+        });
+    }
+
+    async #handleFailure(fault: Fault<E>): Promise<void> {
+        this.#attempts++;
+        const attempts = this.#attempts;
+        const { schedule, maxRetries, shouldRetry, afterRetry } = this.#options;
+        const retryCheck =
+            shouldRetry ?? ((f: Fault<E>) => getTag(f) === "Fail");
+
+        const retriable = schedule !== undefined && retryCheck(fault);
+
+        if (!retriable) {
+            this.#state = AsyncDerivedState.Failed(fault, attempts, null);
+            this.#notifySubscribers();
+            return;
+        }
+
+        if (maxRetries !== undefined && attempts > maxRetries) {
+            this.#state = AsyncDerivedState.Failed(
+                FaultUnion.Fail(
+                    ScheduleError.MaxRetriesExceeded(
+                        attempts,
+                        fault,
+                    ) as unknown as E,
+                ),
+                attempts,
+                null,
+            );
+            this.#notifySubscribers();
+            return;
+        }
+
+        const delay = computeDelay(schedule, attempts, fault);
+        if (delay === null) {
+            this.#state = AsyncDerivedState.Failed(fault, attempts, null);
+            this.#notifySubscribers();
+            return;
+        }
+
+        const nextRetryAt = Date.now() + delay;
+        afterRetry?.(attempts, fault, delay);
+
+        this.#state = AsyncDerivedState.Failed(fault, attempts, nextRetryAt);
+        this.#notifySubscribers();
+
+        this.#retryTimer = setTimeout(() => {
+            this.#retryTimer = null;
+            void this.#evaluate();
+        }, delay);
     }
 }
