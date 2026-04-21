@@ -205,4 +205,4 @@ const missing = Option.None<string>().toResult("name is required")
 
 - [`Option`](./option.md) — nullable value container
 - [`Validation`](./validation.md) — error-accumulating validation
-- [Generic variant types](../../guides/advanced-patterns.md#generic-variant-types) — how `Result` is built with `.typed()`
+- [Generic variant types](../../guides/union-patterns.md#generic-variant-types) — how `Result` is built with `.typed()`

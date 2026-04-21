@@ -216,6 +216,6 @@ theme.set("dark") // written to localStorage; restored on next load
 ## See also
 
 - [Getting Started](../../guides/getting-started.md) — core `union` / `match` walkthrough
-- [Advanced Patterns](../../guides/advanced-patterns.md) — generic unions, `Trait` constraints
+- [Advanced Patterns](../../guides/advanced/index.md) — union branching, reactive UI, signal protocols, and resource lifetime
 - [Core API: union](../union.md)
 - [Core API: match](../match.md)

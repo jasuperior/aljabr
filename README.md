@@ -332,5 +332,5 @@ theme.set("dark"); // written to localStorage; restored on next load
 ## Guides
 
 - [Getting Started](docs/guides/getting-started.md) — walkthrough from first union to real-world patterns
-- [Advanced Patterns](docs/guides/advanced-patterns.md) — impl classes, Trait constraints, complex `when()` compositions
+- [Advanced Patterns](docs/guides/advanced/index.md) — deep composition: union branching, reactive UI, signal protocols, and resource lifetime
 - [Resilient Async](docs/guides/resilient-async.md) — retry, exponential backoff, timeouts, and `AbortSignal` cancellation

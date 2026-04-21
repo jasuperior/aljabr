@@ -611,7 +611,7 @@ type Accepted<T> = Variant<"Accept", { value: T }, Thenable<T>>;
 
 When `Impl` is omitted (or `unknown`), no mixin type is added. When provided, it is intersected with the payload and tag.
 
-See [Generic variant types](../guides/advanced-patterns.md#generic-variant-types) for a full walkthrough.
+See [Generic variant types](../guides/union-patterns.md#generic-variant-types) for a full walkthrough.
 
 ### `union([Impl]).typed`
 
