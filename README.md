@@ -1,6 +1,6 @@
 <div align="center">
     <h1>Aljabr</h1>
-    <img src="logo-sm.png" alt="Description">
+    <img src="assets/logo-flat-sm.png" alt="Description">
 </div>
 
 > _Al-jabr_ (الجبر) — the Arabic word that gave us "algebra." Bringing structure to chaos is, as it turns out, an ancient art.
