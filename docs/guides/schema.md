@@ -1,5 +1,7 @@
 # Working with External Data
 
+> This guide covers the mechanics of the `aljabr/schema` module — its schema builders, decode/encode pipeline, and adapter protocol. For patterns that combine schema decoding with token unions, AST construction, and recursive `match` evaluation, see [Parser Construction](./advanced/parser-construction.md).
+
 aljabr's core is exceptional for modeling the internal world of your application — typed state machines, domain variants, exhaustive matching. But applications always have a boundary: untyped API responses come in, form inputs arrive as raw strings, local storage hands you `JSON.parse` output with no guarantees.
 
 The `aljabr/schema` module is that boundary. It gives you a schema DSL built on aljabr's own union system, a decoder that accumulates all errors simultaneously, a total encoder for the reverse direction, and an adapter protocol for wrapping whatever external validator you already use.

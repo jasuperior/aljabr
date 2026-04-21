@@ -1,5 +1,7 @@
 # Guide: Resilient Async Lifecycles
 
+> This guide covers `Schedule`, `Fault`, retry policies, and cancellation for `AsyncDerived` and `watchEffect`. For patterns that compose async effects with `Ref`, `Derived`, and a real UI concern, see [Reactive UI](./advanced/reactive-ui.md). For resource cleanup and structured lifetime management, see [Resource Lifetime](./advanced/resource-lifetime.md).
+
 Network requests fail. APIs go down. Rate limits hit. This guide walks through aljabr's retry, backoff, timeout, and cancellation primitives — starting from a bare `AsyncDerived`, then progressively hardening it against real-world failure.
 
 Failures are represented as [`Fault<E>`](../api/prelude/fault.md) — a three-variant union that distinguishes expected domain errors (`Fault.Fail<E>`), unexpected panics (`Fault.Defect`), and aborted computations (`Fault.Interrupted`). Understanding `Fault` is the key to reading the `Failed` state in any of the examples below.
