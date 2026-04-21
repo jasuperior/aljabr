@@ -91,10 +91,10 @@ export function createOwner(parent?: Computation | null): Computation {
     const owner: Computation = {
         dirty() {},
         dispose() {
-            for (const cleanup of [...owner.cleanups]) cleanup();
-            owner.cleanups.clear();
             for (const child of [...owner.children]) child.dispose();
             owner.children.clear();
+            for (const cleanup of [...owner.cleanups]) cleanup();
+            owner.cleanups.clear();
             for (const source of [...owner.sources]) source.unsubscribe(owner);
             owner.sources.clear();
             if (owner.owner) owner.owner.children.delete(owner);

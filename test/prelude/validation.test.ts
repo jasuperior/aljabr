@@ -50,7 +50,7 @@ describe("Validation.map", () => {
     it("propagates Invalid unchanged", () => {
         const r = invalid<number, string>("required").map((n) => n + 1);
         expect(getTag(r)).toBe("Invalid");
-        expect((r as Invalid<number, string>).errors).toEqual(["required"]);
+        expect(r.errors).toEqual(["required"]);
     });
     it("propagates Unvalidated unchanged", () => {
         const r = Validation.Unvalidated<number, string>().map((n) => n + 1);
@@ -60,17 +60,25 @@ describe("Validation.map", () => {
 
 describe("Validation.combine (error accumulation)", () => {
     it("Unvalidated + anything yields Unvalidated", () => {
-        const r1 = Validation.Unvalidated<number, string>().combine(valid<string, string>("x"));
+        const r1 = Validation.Unvalidated<number, string>().combine(
+            valid<string, string>("x"),
+        );
         expect(getTag(r1)).toBe("Unvalidated");
-        const r2 = Validation.Unvalidated<number, string>().combine(invalid<string, string>("e"));
+        const r2 = Validation.Unvalidated<number, string>().combine(
+            invalid<string, string>("e"),
+        );
         expect(getTag(r2)).toBe("Unvalidated");
     });
     it("Valid + Unvalidated yields Unvalidated", () => {
-        const r = valid<number, string>(1).combine(Validation.Unvalidated<string, string>());
+        const r = valid<number, string>(1).combine(
+            Validation.Unvalidated<string, string>(),
+        );
         expect(getTag(r)).toBe("Unvalidated");
     });
     it("Invalid + Unvalidated yields Unvalidated", () => {
-        const r = invalid<number, string>("e1").combine(Validation.Unvalidated<string, string>());
+        const r = invalid<number, string>("e1").combine(
+            Validation.Unvalidated<string, string>(),
+        );
         expect(getTag(r)).toBe("Unvalidated");
     });
     it("combines two Valid values into a tuple", () => {
@@ -101,6 +109,80 @@ describe("Validation.combine (error accumulation)", () => {
             "e1",
             "e2",
         ]);
+    });
+});
+
+describe("Validation.combine (flat chaining)", () => {
+    it("three-way chain produces a flat tuple", () => {
+        const r = valid<number, string>(1)
+            .combine(valid<string, string>("x"))
+            .combine(valid<boolean, string>(true));
+        expect(getTag(r)).toBe("Valid");
+        expect(r.value).toEqual([1, "x", true]);
+    });
+    it("four-way chain stays flat", () => {
+        const r = valid<number, string>(1)
+            .combine(valid<string, string>("x"))
+            .combine(valid<boolean, string>(true))
+            .combine(valid<null, string>(null));
+        expect(getTag(r)).toBe("Valid");
+        expect(r.value).toEqual([1, "x", true, null]);
+    });
+    it("flat chain with an Invalid accumulates errors correctly", () => {
+        const r = valid<number, string>(1)
+            .combine(invalid<string, string>("e1"))
+            .combine(invalid<boolean, string>("e2"));
+        expect(getTag(r)).toBe("Invalid");
+        expect(r.errors).toEqual(["e1", "e2"]);
+    });
+    it("three-way chain type narrows to flat tuple", () => {
+        const r = valid<number, string>(1)
+            .combine(valid<string, string>("x"))
+            .combine(valid<boolean, string>(true));
+        expectTypeOf(r).toExtend<
+            ValidationType<[number, string, boolean], string>
+        >();
+    });
+});
+
+describe("Validation.all", () => {
+    it("all Valid produces a Valid tuple", () => {
+        const r = Validation.all([
+            valid<number, string>(1),
+            valid<string, string>("x"),
+            valid<boolean, string>(true),
+        ]);
+        expect(getTag(r)).toBe("Valid");
+        expect(r.value).toEqual([1, "x", true]);
+    });
+    it("any Invalid accumulates all errors", () => {
+        const r = Validation.all([
+            valid<number, string>(1),
+            invalid<string, string>("e1"),
+            invalid<boolean, string>("e2"),
+        ]);
+        expect(getTag(r)).toBe("Invalid");
+        expect(r.errors).toEqual(["e1", "e2"]);
+    });
+    it("any Unvalidated short-circuits to Unvalidated", () => {
+        const r = Validation.all([
+            valid<number, string>(1),
+            Validation.Unvalidated<string, string>(),
+            invalid<boolean, string>("e1"),
+        ]);
+        expect(getTag(r)).toBe("Unvalidated");
+    });
+    it("empty array produces Valid empty tuple", () => {
+        const r = Validation.all([]);
+        expect(getTag(r)).toBe("Valid");
+        expect(r.value).toEqual([]);
+    });
+    it("infers typed tuple from heterogeneous inputs", () => {
+        const r = Validation.all([
+            valid<number, string>(1),
+            valid<string, string>("x"),
+        ]);
+        expectTypeOf(r).toExtend<ValidationType<[number, string], string>>();
     });
 });
 

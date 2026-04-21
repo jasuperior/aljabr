@@ -23,7 +23,7 @@ By default the lifecycle state is `SignalState<T>` — a `Unset | Active<T> | Di
 ```ts
 Signal.create<T>(): Signal<T>                                      // starts Unset
 Signal.create<T>(initial: T): Signal<T>                            // starts Active
-Signal.create<S, T>(initial: S, protocol: SignalProtocol<S, T>): Signal<T, S>  // custom state
+Signal.create<T, S>(initial: S, protocol: SignalProtocol<S, T>): Signal<T, S>  // custom state
 ```
 
 Creates a new signal. If created inside a reactive owner, the signal is automatically disposed when the owner is disposed.
@@ -64,18 +64,18 @@ In both forms `get()` always triggers re-runs on state transitions — even when
 const doubled = Derived.create(() => (count.get() ?? 0) * 2)
 ```
 
-### `.read()`
+### `.state()`
 
 ```ts
-signal.read(): SignalState<T>          // default Signal<T>
-signal.read(): S                       // custom Signal<T, S>
+signal.state(): SignalState<T>          // default Signal<T>
+signal.state(): S                       // custom Signal<T, S>
 ```
 
-Read the **full state union** and register a dependency. Unlike `get()`, which extracts only `T | null`, `read()` gives you the complete state — use it inside reactive contexts when you need to pattern-match on all variants (e.g. to access `Invalid` errors).
+Read the **full state union** and register a dependency. Unlike `get()`, which extracts only `T | null`, `state()` gives you the complete state — use it inside reactive contexts when you need to pattern-match on all variants (e.g. to access `Invalid` errors).
 
 ```ts
 watchEffect(
-    async () => match(field.read(), {
+    async () => match(field.state(), {
         Unvalidated: () => null,
         Valid:       ({ value })  => submit(value),
         Invalid:     ({ errors }) => displayErrors(errors),
@@ -157,7 +157,7 @@ signal.dispose(): void
 Permanently deactivate the signal and clear all subscribers. Future `set()` calls are no-ops.
 
 - **Default `Signal<T>`:** transitions state to `Disposed`.
-- **Custom `Signal<T, S>`:** marks the signal as inert without mutating the state union — `.state` retains its last value.
+- **Custom `Signal<T, S>`:** marks the signal as inert without mutating the state union — `.peekState()` retains its last value.
 - Any `subscribe()` callbacks fire once with `null` before being cleared.
 
 ```ts
@@ -166,17 +166,17 @@ count.peek()  // null
 count.set(99) // no-op
 ```
 
-### `.state`
+### `.peekState()`
 
 ```ts
-signal.state: SignalState<T>   // default Signal<T>
-signal.state: S                // custom Signal<T, S>
+signal.peekState(): SignalState<T>   // default Signal<T>
+signal.peekState(): S                // custom Signal<T, S>
 ```
 
-The current state. **Untracked** — safe to read outside reactive contexts. For tracked reads inside computations, use `read()`.
+The current state. **Untracked** — safe to read outside reactive contexts. For tracked reads inside computations, use `state()`.
 
 ```ts
-match(signal.state, {
+match(signal.peekState(), {
     Unset:    () => "waiting",
     Active:   ({ value }) => `value: ${value}`,
     Disposed: () => "cleaned up",
@@ -206,7 +206,7 @@ const protocol: SignalProtocol<Validation<string, string>, string> = {
     extract: (state) => match(state, {
         Unvalidated: () => null,
         Valid:       ({ value }) => value,
-        Invalid:     () => null,      // errors accessible via .read(), not .get()
+        Invalid:     () => null,      // errors accessible via .state(), not .get()
     }),
     isTerminal: (state) => getTag(state) === "Disposed", // optional
 }
@@ -237,8 +237,8 @@ The lifecycle union for a signal's value. All variants implement `SignalLifecycl
 Returns `true` only for the `Active` variant. Equivalent to `match(state, { Active: () => true, [__]: () => false })`.
 
 ```ts
-Signal.create(0).state.isActive()   // true
-Signal.create<number>().state.isActive() // false (Unset)
+Signal.create(0).peekState().isActive()   // true
+Signal.create<number>().peekState().isActive() // false (Unset)
 ```
 
 #### `.get()`
@@ -250,7 +250,7 @@ Signal.create<number>().state.isActive() // false (Unset)
 Returns the value if `Active`, `null` otherwise. Exposed on `SignalState` to let `Done` results in the `Effect` system inspect their signal without an extra `match`.
 
 ```ts
-const state = Signal.create(42).state
+const state = Signal.create(42).peekState()
 state.get() // 42
 ```
 
@@ -315,11 +315,11 @@ sum.get() // 30
 ```ts
 const sig = Signal.create<string>()
 
-sig.state.isActive() // false — Unset
+sig.peekState().isActive() // false — Unset
 sig.set("hello")
-sig.state.isActive() // true — Active
+sig.peekState().isActive() // true — Active
 sig.dispose()
-sig.state.isActive() // false — Disposed
+sig.peekState().isActive() // false — Disposed
 ```
 
 ### Custom state union — form field
@@ -344,8 +344,8 @@ const email = Signal.create(
     emailProtocol,
 )
 
-email.get()    // null          — Unvalidated, no extractable value
-email.state    // Unvalidated   — full union, untracked
+email.get()          // null          — Unvalidated, no extractable value
+email.peekState()    // Unvalidated   — full union, untracked
 
 email.set(Validation.Valid("ada@example.com"))
 email.get()    // "ada@example.com"
@@ -353,9 +353,9 @@ email.get()    // "ada@example.com"
 email.set(Validation.Invalid(["bad format"]))
 email.get()    // null          — extract returns null for Invalid
 
-// Use read() inside reactive contexts to access the full state:
+// Use state() inside reactive contexts to access the full state:
 watchEffect(
-    async () => match(email.read(), {
+    async () => match(email.state(), {
         Unvalidated: () => null,
         Valid:       ({ value })  => submit(value),
         Invalid:     ({ errors }) => displayErrors(errors),

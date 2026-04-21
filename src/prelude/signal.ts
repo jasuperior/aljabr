@@ -71,21 +71,21 @@ export type SignalProtocol<S, T> = {
  * Reading via `get()` inside a reactive context automatically registers this
  * signal as a dependency. Writing via `set(value)` wraps the value in `Active`
  * and notifies all dependents. The lifecycle state (`Unset | Active | Disposed`)
- * is available via `.state` and `.read()`.
+ * is available via `.peekState()` (untracked) and `.state()` (tracked).
  *
  * **Custom state form** — `Signal<T, S>`:
  * Pass any union type `S` and a `SignalProtocol<S, T>` to `Signal.create()`.
  * `set()` now accepts a full `S` variant. `get()` extracts `T | null` via the
- * protocol's `extract` function. `read()` returns the full `S` state (tracked).
+ * protocol's `extract` function. `state()` returns the full `S` state (tracked).
  *
- * `.read()` is a tracked read that returns the full state union (either
+ * `.state()` is a tracked read that returns the full state union (either
  * `SignalState<T>` or `S`). Use it inside reactive contexts when you need to
  * pattern-match on the state rather than just extract the value.
  *
  * @example Default signal
  * const count = Signal.create(0);
  * count.set(1);
- * match(count.state, {
+ * match(count.peekState(), {
  *   Unset:    () => "no value yet",
  *   Active:   ({ value }) => `value is ${value}`,
  *   Disposed: () => "cleaned up",
@@ -101,7 +101,7 @@ export type SignalProtocol<S, T> = {
  * });
  * field.set(Validation.Valid("hello@example.com"));
  * field.get();    // "hello@example.com"
- * field.read();   // Valid { value: "hello@example.com" }  (tracked)
+ * field.state();   // Valid { value: "hello@example.com" }  (tracked)
  */
 export class Signal<T, S = never> {
     readonly #protocol: SignalProtocol<S, T> | null;
@@ -127,7 +127,7 @@ export class Signal<T, S = never> {
      * `set()` accepts full `S` variants. `get()` extracts `T | null` via
      * `protocol.extract`. `read()` returns the full `S` state (tracked).
      */
-    static create<S, T>(initial: S, protocol: SignalProtocol<S, T>): Signal<T, S>;
+    static create<T, S>(initial: S, protocol: SignalProtocol<S, T>): Signal<T, S>;
     static create<T, S>(
         initialOrState?: T | S,
         protocol?: SignalProtocol<S, T>,
@@ -153,9 +153,9 @@ export class Signal<T, S = never> {
      * The current state. Untracked — safe to read outside reactive contexts.
      * Pattern-match this with `match`.
      *
-     * For tracked reads inside reactive contexts, use `read()` instead.
+     * For tracked reads inside reactive contexts, use `state()` instead.
      */
-    get state(): [S] extends [never] ? SignalState<T> : S {
+    peekState(): [S] extends [never] ? SignalState<T> : S {
         return this.#rawState as [S] extends [never] ? SignalState<T> : S;
     }
 
@@ -180,20 +180,20 @@ export class Signal<T, S = never> {
     /**
      * Read the full state union and register this signal as a dependency.
      *
-     * Unlike `get()` which extracts only `T | null`, `read()` returns the
+     * Unlike `get()` which extracts only `T | null`, `state()` returns the
      * complete state — use it when you need to pattern-match inside a reactive
      * context (e.g. to handle `Invalid` errors, `Unset`, etc.).
      *
      * @example
      * watchEffect(async () => {
-     *   return match(field.read(), {
+     *   return match(field.state(), {
      *     Unvalidated: () => null,
      *     Valid:       ({ value }) => submit(value),
      *     Invalid:     ({ errors }) => displayErrors(errors),
      *   });
      * }, onChange);
      */
-    read(): [S] extends [never] ? SignalState<T> : S {
+    state(): [S] extends [never] ? SignalState<T> : S {
         const comp = getCurrentComputation();
         if (comp && !this.#subscribers.has(comp)) {
             this.#trackComputation(comp);

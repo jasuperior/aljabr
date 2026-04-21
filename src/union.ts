@@ -35,6 +35,22 @@ export const predTag = Symbol("aljabr.pred");
 
 /** @internal */
 export const whenTag = Symbol("aljabr.when");
+
+/** @internal — marks a combinator pattern object (is.not, is.union) */
+export const patternTag = Symbol("aljabr.pattern");
+
+/** @internal — marks a select() extraction binding */
+export const selectTag = Symbol("aljabr.select");
+
+/** @internal — stored on a union factory to carry its unique identity */
+export const unionFactoryTag = Symbol("aljabr.unionFactory");
+
+/** @internal — stored on variant prototypes to link back to their parent union */
+export const parentUnionId = Symbol("aljabr.parentUnion");
+
+/** @internal — stored on individual variant factory functions to record the tag they produce */
+export const variantFactoryTag = Symbol("aljabr.variantFactory");
+
 /** @internal */
 export const requirements: unique symbol = Symbol("aljabr.requirements");
 
@@ -176,7 +192,7 @@ export abstract class Trait<R extends object = {}> {
 }
 
 // ==========================================
-// 3. PRED & WHEN
+// 3. PRED
 // ==========================================
 
 /**
@@ -222,18 +238,412 @@ export function pred(fn: (val: any) => any): any {
     return { [predTag]: true, fn };
 }
 
+// ==========================================
+// 4. COMBINATORS & SELECT
+// ==========================================
+
+/**
+ * A negation combinator produced by {@link is.not}.
+ * Matches any value that does **not** match the inner pattern `P`.
+ *
+ * @typeParam P - The inner pattern type being negated
+ */
+export type NotCombinator<P = unknown> = {
+    readonly [patternTag]: true;
+    readonly kind: "not";
+    readonly pattern: P;
+};
+
+/**
+ * A union combinator produced by {@link is.union}.
+ * Matches if the value satisfies **any** of the inner patterns.
+ *
+ * @typeParam Ps - Tuple of the inner pattern types
+ */
+export type UnionCombinator<
+    Ps extends readonly unknown[] = readonly unknown[],
+> = {
+    readonly [patternTag]: true;
+    readonly kind: "union";
+    readonly patterns: Ps;
+};
+
+/**
+ * Convenience alias for any combinator value.
+ * Use {@link NotCombinator} or {@link UnionCombinator} directly when you need
+ * the specific generic form.
+ */
+export type Combinator = NotCombinator | UnionCombinator;
+
+/**
+ * Extracts the narrowed type that a pattern value produces at the type level.
+ *
+ * - `Pred<T, S>` → `S`
+ * - `UnionCombinator<Ps>` → union of each element's narrowed type
+ * - `NotCombinator<P>` → `never` (Exclude is applied at the call site against the field type)
+ * - Anything else (literals, structural objects) → `P` itself
+ *
+ * @internal
+ */
+export type ExtractNarrowType<P> =
+    P extends Pred<any, infer S>
+        ? S
+        : P extends UnionCombinator<infer Ps extends readonly unknown[]>
+          ? ExtractUnionNarrow<Ps>
+          : P extends NotCombinator<any>
+            ? never
+            : P;
+
+/** @internal */
+export type ExtractUnionNarrow<Ps extends readonly unknown[]> =
+    Ps extends readonly [infer H, ...infer T]
+        ? ExtractNarrowType<H> | ExtractUnionNarrow<T>
+        : never;
+
+/**
+ * Resolves the concrete TypeScript type that a `select()` extraction will
+ * produce for a given field, given the inner pattern constraint (if any) and
+ * the field's type in the variant `V`.
+ *
+ * - No inner pattern (`void`) → `FieldType` verbatim
+ * - `Pred<T, S>` inner → `S`
+ * - `NotCombinator<P>` inner → `Exclude<FieldType, ExtractNarrowType<P>>`
+ * - `UnionCombinator<Ps>` inner → `ExtractUnionNarrow<Ps>`
+ * - Literal inner → the literal itself
+ *
+ * @internal
+ */
+export type ResolveSelectType<InnerPat, FieldType> = [InnerPat] extends [void]
+    ? FieldType
+    : InnerPat extends Pred<any, infer S>
+      ? S
+      : InnerPat extends NotCombinator<infer Inner>
+        ? Exclude<FieldType, ExtractNarrowType<Inner>>
+        : InnerPat extends UnionCombinator<infer Ps extends readonly unknown[]>
+          ? ExtractUnionNarrow<Ps>
+          : InnerPat;
+
+/**
+ * Recursively collects all `select()` markers from a pattern type `P`,
+ * mapping each `select(name)` to its resolved field type from `V`.
+ *
+ * Returns a union of `{ name: Type }` objects — pass through
+ * {@link UnionToIntersection} to produce the final `selections` shape.
+ *
+ * @internal
+ */
+type CollectSelectionItems<P extends object, V> = {
+    [K in keyof P & string]: K extends keyof V
+        ? P[K] extends SelectMarker<infer Name, infer InnerPat>
+            ? { [_ in Name]: ResolveSelectType<InnerPat, V[K]> }
+            : P[K] extends object
+              ? CollectSelectionItems<
+                    Extract<P[K], object>,
+                    Extract<V[K], object>
+                >
+              : never
+        : never;
+}[keyof P & string];
+
+/**
+ * Computes the typed `selections` map for a `when()` arm.
+ *
+ * Given the pattern type `P` and the variant type `V`:
+ * - Traverses `P` to find all {@link SelectMarker} values
+ * - Maps each to its resolved type against the corresponding field in `V`
+ * - Returns an intersection of all `{ name: Type }` records
+ *
+ * If no `select()` markers are present, returns `{}`.
+ *
+ * @typeParam P - The pattern type (from the `when()` call)
+ * @typeParam V - The variant type being matched
+ */
+export type SelectionsFor<P, V> = [P] extends [typeof __]
+    ? {}
+    : P extends object
+      ? UnionToIntersection<{} | CollectSelectionItems<P, V>>
+      : {};
+
+/**
+ * An extraction binding produced by {@link select}.
+ * When placed as a field value inside a {@link when} pattern, the matched
+ * field value is collected into the `selections` map passed as the second
+ * argument to the handler.
+ *
+ * @typeParam Name - The literal key name under which the value is injected
+ * @typeParam InnerPat - The inner pattern type used to constrain and narrow
+ *   the extracted value (`void` means no constraint — use the field's type)
+ */
+export type SelectMarker<Name extends string = string, InnerPat = void> = {
+    readonly [selectTag]: true;
+    readonly name: Name;
+    readonly pattern?: unknown;
+    /** @internal Phantom: carries inner pattern type for type-level inference */
+    readonly _inner?: InnerPat;
+};
+
+/**
+ * Check whether a value is a variant produced by the given union factory.
+ *
+ * Can be called with two arguments (immediate check) or one (curried predicate).
+ *
+ * @example
+ * variantOf(Result, Result.Ok(1))   // true
+ * variantOf(Result, Option.Some(1)) // false
+ *
+ * const isResult = variantOf(Result)
+ * isResult(Result.Err("oops"))      // true
+ * pred(variantOf(Result))           // Pred for use in when() patterns
+ */
+export function variantOf<F extends object>(
+    factory: F,
+): (value: unknown) => boolean;
+export function variantOf<F extends object>(
+    factory: F,
+    value: unknown,
+): boolean;
+export function variantOf(factory: any, ...rest: [unknown?]): any {
+    const id = (factory as any)[unionFactoryTag];
+    const check = (v: unknown) => (v as any)?.[parentUnionId] === id;
+    return rest.length === 0 ? check : check(rest[0]);
+}
+
+/**
+ * Check whether a value is an instance of a specific variant factory.
+ * Checks both union membership and the exact variant tag.
+ *
+ * Can be called with two arguments (immediate check) or one (curried predicate).
+ * Type-level narrowing is deferred to Phase 1.6b — runtime-only for now.
+ *
+ * @example
+ * instanceOf(Fault.Fail)(e)        // true if e is a Fault.Fail variant
+ * instanceOf(Fault.Fail, e)        // uncurried form
+ * instanceOf(Result.Accept, val)   // true if val is Result.Accept
+ */
+export function instanceOf<F extends (...args: any[]) => any>(
+    variantFactory: F,
+): (value: unknown) => boolean;
+export function instanceOf<F extends (...args: any[]) => any>(
+    variantFactory: F,
+    value: unknown,
+): boolean;
+export function instanceOf(variantFactory: any, ...rest: [unknown?]): any {
+    const unionId = (variantFactory as any)[parentUnionId];
+    const tagName = (variantFactory as any)[variantFactoryTag];
+    const check = (v: unknown) =>
+        (v as any)?.[parentUnionId] === unionId &&
+        (v as any)?.[tag] === tagName;
+    return rest.length === 0 ? check : check(rest[0]);
+}
+
+// ── is namespace internals ──────────────────────────────────────────────────
+
+const _isString: Pred<unknown, string> = {
+    [predTag]: true,
+    fn: (v: unknown) => typeof v === "string",
+};
+const _isNumber: Pred<unknown, number> = {
+    [predTag]: true,
+    fn: (v: unknown) => typeof v === "number",
+};
+const _isBoolean: Pred<unknown, boolean> = {
+    [predTag]: true,
+    fn: (v: unknown) => typeof v === "boolean",
+};
+const _isNullish: Pred<unknown, null | undefined> = {
+    [predTag]: true,
+    fn: (v: unknown) => v == null,
+};
+const _isDefined: Pred<unknown> = {
+    [predTag]: true,
+    fn: (v: unknown) => v !== undefined,
+};
+const _isArray: Pred<unknown, unknown[]> = {
+    [predTag]: true,
+    fn: (v: unknown) => Array.isArray(v),
+};
+const _isObject: Pred<unknown, object> = {
+    [predTag]: true,
+    fn: (v: unknown) =>
+        typeof v === "object" && v !== null && !Array.isArray(v),
+};
+
+function _makeNot<P>(pattern: P): NotCombinator<P> {
+    return { [patternTag]: true, kind: "not", pattern } as NotCombinator<P>;
+}
+
+/**
+ * A namespace of pattern primitives for use inside {@link when} pattern objects.
+ *
+ * **Type wildcards** — match a value by its runtime type:
+ * ```ts
+ * when({ age: is.number }, ({ age }) => age * 2)
+ * when({ name: is.string }, ({ name }) => name.toUpperCase())
+ * ```
+ *
+ * **Union membership** — match a variant of a specific union:
+ * ```ts
+ * when({ data: is.variant(Result) }, handler)
+ * when({ val: is.union(Result, Option) }, handler)
+ * ```
+ *
+ * **Combinators** — logical composition of patterns:
+ * ```ts
+ * when({ status: is.not("error") }, handler)
+ * when({ status: is.not.string }, handler)
+ * when({ code: is.union(is.string, is.number) }, handler)
+ * ```
+ */
+export const is: {
+    /** Matches any `string` value. */
+    readonly string: Pred<unknown, string>;
+    /** Matches any `number` value. */
+    readonly number: Pred<unknown, number>;
+    /** Matches any `boolean` value. */
+    readonly boolean: Pred<unknown, boolean>;
+    /** Matches `null` or `undefined`. */
+    readonly nullish: Pred<unknown, null | undefined>;
+    /** Matches any value that is not `undefined`. */
+    readonly defined: Pred<unknown>;
+    /** Matches any array (`Array.isArray`). */
+    readonly array: Pred<unknown, unknown[]>;
+    /** Matches a non-null, non-array object. */
+    readonly object: Pred<unknown, object>;
+    /**
+     * Matches any value that does **not** match the given pattern.
+     * Also available as `is.not.string`, `is.not.number`, etc. for BDD-style authoring.
+     *
+     * @example
+     * when({ status: is.not("error") }, handler)
+     * when({ code: is.not(is.string) }, handler)
+     * when({ code: is.not.string }, handler)
+     * when({ val: is.not.variant(Result) }, handler)
+     */
+    not: {
+        <P>(pattern: P): NotCombinator<P>;
+        readonly string: NotCombinator<Pred<unknown, string>>;
+        readonly number: NotCombinator<Pred<unknown, number>>;
+        readonly boolean: NotCombinator<Pred<unknown, boolean>>;
+        readonly nullish: NotCombinator<Pred<unknown, null | undefined>>;
+        readonly defined: NotCombinator<Pred<unknown>>;
+        readonly array: NotCombinator<Pred<unknown, unknown[]>>;
+        readonly object: NotCombinator<Pred<unknown, object>>;
+        union<const Ps extends unknown[]>(
+            ...patterns: Ps
+        ): NotCombinator<UnionCombinator<Ps>>;
+        variant(factory: unknown): NotCombinator<Pred<unknown>>;
+    };
+    /**
+     * Matches if the value satisfies **any** of the given patterns (logical OR).
+     * Accepts union factories directly: `is.union(Result, Option)` matches
+     * any variant of either union.
+     *
+     * @example
+     * when({ code: is.union(is.string, is.number) }, handler)
+     * when({ status: is.union("pending", "active") }, handler)
+     * when({ data: is.union(Result, Option) }, handler)
+     */
+    union<const Ps extends unknown[]>(...patterns: Ps): UnionCombinator<Ps>;
+    /**
+     * Matches any variant produced by the given union factory.
+     *
+     * @example
+     * when({ data: is.variant(Result) }, handler)
+     */
+    variant(factory: unknown): Pred<unknown>;
+} = {
+    string: _isString,
+    number: _isNumber,
+    boolean: _isBoolean,
+    nullish: _isNullish,
+    defined: _isDefined,
+    array: _isArray,
+    object: _isObject,
+    not: Object.assign(_makeNot, {
+        string: _makeNot(_isString),
+        number: _makeNot(_isNumber),
+        boolean: _makeNot(_isBoolean),
+        nullish: _makeNot(_isNullish),
+        defined: _makeNot(_isDefined),
+        array: _makeNot(_isArray),
+        object: _makeNot(_isObject),
+        union<const Ps extends unknown[]>(
+            ...patterns: Ps
+        ): NotCombinator<UnionCombinator<Ps>> {
+            return _makeNot({
+                [patternTag]: true,
+                kind: "union",
+                patterns,
+            } as UnionCombinator<Ps>);
+        },
+        variant(factory: unknown): NotCombinator<Pred<unknown>> {
+            return _makeNot(pred(variantOf(factory as any)));
+        },
+    }),
+    union(...patterns: any[]) {
+        return {
+            [patternTag]: true,
+            kind: "union",
+            patterns,
+        } as UnionCombinator<any>;
+    },
+    variant(factory: unknown): Pred<unknown> {
+        return pred(variantOf(factory as any));
+    },
+};
+
+/**
+ * Mark a field in a {@link when} pattern for extraction into the handler's
+ * `selections` argument.
+ *
+ * The matched field value is injected as a named property of the `selections`
+ * object passed as the second argument to the handler. Its type is inferred
+ * from the corresponding field type in the variant, optionally narrowed by an
+ * inner pattern constraint.
+ *
+ * @param name - The key under which the extracted value appears in `selections`
+ * @param pattern - Optional pattern the field must satisfy for the arm to match;
+ *   also narrows the extracted value's type
+ *
+ * @example
+ * // Extract without constraint — typed as the field's own type
+ * when({ user: { name: select("name") } }, (val, { name }) => `Hello, ${name}`)
+ *
+ * // Extract with type narrowing
+ * when({ age: select("age", is.number) }, (val, { age }) => age * 2)
+ *
+ * // Extract and exclude nullish — sel.t is Exclude<string | null, null | undefined>
+ * when({ text: select("t", is.not(is.nullish)) }, (val, { t }) => t.toUpperCase())
+ */
+export function select<N extends string>(name: N): SelectMarker<N, void>;
+export function select<N extends string, P>(
+    name: N,
+    pattern: P,
+): SelectMarker<N, P>;
+export function select(
+    name: string,
+    pattern?: unknown,
+): SelectMarker<any, any> {
+    return { [selectTag]: true, name, pattern };
+}
+
+// ==========================================
+// 5. WHEN
+// ==========================================
+
 /**
  * A typed arm object produced by {@link when}.
  * Used as a variant matcher in {@link match} — either as a single value or in an array.
  *
  * @typeParam V - The variant type this arm operates on
  * @typeParam R - The result type produced by the handler
+ * @typeParam P - The pattern type; used to compute the precise `selections` type
  */
-export type WhenArm<V, R> = {
+export type WhenArm<V, R, P = {}> = {
     readonly [whenTag]: true;
-    readonly pattern: { [K in keyof V]?: V[K] | Pred<V[K], any> } | typeof __;
+    readonly pattern: P | typeof __;
     readonly guard?: (val: V) => boolean;
-    readonly handler: (val: V) => R;
+    readonly handler: (val: V, selections: SelectionsFor<P, V>) => R;
 };
 
 /**
@@ -245,40 +655,49 @@ export type WhenArm<V, R> = {
  * - `when(pattern, handler)` — matches when all pattern fields equal the variant's fields
  * - `when(pattern, guard, handler)` — structural pattern and guard must both pass
  *
- * Pattern field values may be literals (strict equality) or {@link Pred} wrappers
- * (predicate evaluation). An empty pattern `{}` matches any value.
+ * Pattern field values may be:
+ * - Literals — strict equality
+ * - {@link pred} wrappers — predicate evaluation
+ * - {@link is}`.*` wildcards — type checks (`is.string`, `is.number`, …)
+ * - {@link is.not} / {@link is.union} combinators — logical composition
+ * - {@link select} markers — extract the field into the handler's `selections` argument
+ * - Plain objects — recursive structural sub-patterns
  *
  * Arms in an array are evaluated left to right; the first match wins.
  * Always end an arm array with `when(__, ...)` when pattern or guard arms might not
  * cover every possible value.
  *
+ * The `selections` second argument is typed precisely: each `select("name")` in the
+ * pattern produces a corresponding `{ name: FieldType }` entry, narrowed by any
+ * inner pattern constraint.
+ *
  * @example
  * match(event, {
  *   KeyPress: [
- *     when({ key: "Enter" },                         () => "submit"),
- *     when({ key: pred((k) => k.startsWith("F")) },  () => "function key"),
- *     when((v) => v.key.length > 1,                  () => "special"),
- *     when(__,                                        () => "character"),
+ *     when({ key: "Enter" },                              () => "submit"),
+ *     when({ key: is.union("Tab", "Escape") },            () => "navigation"),
+ *     when({ key: select("k") }, (_, { k }) => `char: ${k}`),
+ *     when(__,                                            () => "other"),
  *   ],
  * })
  */
 export function when<V = any, R = any>(
     pattern: typeof __,
     handler: (val: V) => R,
-): WhenArm<V, R>;
+): WhenArm<V, R, typeof __>;
 export function when<V = any, R = any>(
     guard: (val: V) => boolean,
     handler: (val: V) => R,
-): WhenArm<V, R>;
-export function when<V = any, R = any>(
-    pattern: object,
-    handler: (val: V) => R,
-): WhenArm<V, R>;
-export function when<V = any, R = any>(
-    pattern: object,
+): WhenArm<V, R, {}>;
+export function when<V = any, R = any, P extends object = {}>(
+    pattern: P,
+    handler: (val: V, selections: SelectionsFor<P, V>) => R,
+): WhenArm<V, R, P>;
+export function when<V = any, R = any, P extends object = {}>(
+    pattern: P,
     guard: (val: V) => boolean,
-    handler: (val: V) => R,
-): WhenArm<V, R>;
+    handler: (val: V, selections: SelectionsFor<P, V>) => R,
+): WhenArm<V, R, P>;
 export function when(
     patternOrGuard: any,
     guardOrHandler: any,
@@ -309,7 +728,7 @@ export function when(
 }
 
 // ==========================================
-// 4. THE `union` FACTORY
+// 6. THE `union` FACTORY
 // ==========================================
 
 /**
@@ -401,17 +820,24 @@ export function union(factoriesOrImpls: any): any {
 }
 
 function buildUnion(factories: Record<string, any>, impl: any[]): any {
+    const id = Symbol();
     const result: any = {};
 
     for (const key in factories) {
         const item = factories[key];
-        result[key] = (...args: any[]) => {
+        const factory = (...args: any[]) => {
             const payload =
                 typeof item === "function" ? item(...args) : { ...item };
 
             const proto = Object.create(null);
             Object.defineProperty(proto, tag, {
                 value: key,
+                enumerable: false,
+                writable: false,
+                configurable: false,
+            });
+            Object.defineProperty(proto, parentUnionId, {
+                value: id,
                 enumerable: false,
                 writable: false,
                 configurable: false,
@@ -427,7 +853,31 @@ function buildUnion(factories: Record<string, any>, impl: any[]): any {
 
             return createVariant(proto, payload);
         };
+
+        // Stamp the factory function with union identity + variant tag so
+        // instanceOf(Factory)(value) can check both membership and tag.
+        Object.defineProperty(factory, parentUnionId, {
+            value: id,
+            enumerable: false,
+            writable: false,
+            configurable: false,
+        });
+        Object.defineProperty(factory, variantFactoryTag, {
+            value: key,
+            enumerable: false,
+            writable: false,
+            configurable: false,
+        });
+
+        result[key] = factory;
     }
+
+    Object.defineProperty(result, unionFactoryTag, {
+        value: id,
+        enumerable: false,
+        writable: false,
+        configurable: false,
+    });
 
     return result;
 }

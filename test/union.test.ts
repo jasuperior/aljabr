@@ -8,6 +8,7 @@ import {
     getTag,
     pred,
     when,
+    variantOf,
     Trait,
     type Pred,
     type WhenArm,
@@ -239,5 +240,48 @@ describe("when()", () => {
         expect((when(guard, handler) as any)[whenTag]).toBe(true);
         expect((when({}, handler) as any)[whenTag]).toBe(true);
         expect((when({}, guard, handler) as any)[whenTag]).toBe(true);
+    });
+});
+
+// ==========================================
+// variantOf()
+// ==========================================
+
+const EvA = union({
+    KeyPress: (key: string, shift: boolean) => ({ key, shift }),
+    Click: (x: number, y: number) => ({ x, y }),
+    Message: (text: string | null) => ({ text }),
+});
+const EvB = union({
+    KeyPress: (key: string, shift: boolean) => ({ key, shift }),
+    Click: (x: number, y: number) => ({ x, y }),
+    Message: (text: string | null) => ({ text }),
+});
+
+describe("variantOf()", () => {
+    it("direct form: returns true for a variant of the given union", () => {
+        expect(variantOf(EvA, EvA.KeyPress("a", false))).toBe(true);
+        expect(variantOf(EvA, EvA.Click(0, 0))).toBe(true);
+    });
+
+    it("direct form: returns false for a variant of a different union with identical shape", () => {
+        expect(variantOf(EvA, EvB.KeyPress("a", false))).toBe(false);
+    });
+
+    it("direct form: returns false for non-variant primitives", () => {
+        expect(variantOf(EvA, "hello")).toBe(false);
+        expect(variantOf(EvA, 42)).toBe(false);
+        expect(variantOf(EvA, null)).toBe(false);
+        expect(variantOf(EvA, undefined)).toBe(false);
+    });
+
+    it("curried form: returns true for variants of the given union", () => {
+        const isEvA = variantOf(EvA);
+        expect(isEvA(EvA.Message("hi"))).toBe(true);
+    });
+
+    it("curried form: returns false for variants of a different union", () => {
+        const isEvA = variantOf(EvA);
+        expect(isEvA(EvB.Message("hi"))).toBe(false);
     });
 });

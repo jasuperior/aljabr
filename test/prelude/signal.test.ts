@@ -80,11 +80,11 @@ describe("SignalState.get", () => {
 describe("Signal.create", () => {
     it("starts Unset when created with no argument", () => {
         const s = Signal.create<number>();
-        expect(getTag(s.state)).toBe("Unset");
+        expect(getTag(s.peekState())).toBe("Unset");
     });
     it("starts Active when created with an initial value", () => {
         const s = Signal.create(42);
-        expect(getTag(s.state)).toBe("Active");
+        expect(getTag(s.peekState())).toBe("Active");
         expect(s.peek()).toBe(42);
     });
 });
@@ -93,7 +93,7 @@ describe("Signal.set / Signal.peek", () => {
     it("set transitions Unset to Active", () => {
         const s = Signal.create<number>();
         s.set(10);
-        expect(getTag(s.state)).toBe("Active");
+        expect(getTag(s.peekState())).toBe("Active");
         expect(s.peek()).toBe(10);
     });
     it("set updates an already-Active signal", () => {
@@ -106,7 +106,7 @@ describe("Signal.set / Signal.peek", () => {
         s.dispose();
         s.set(99);
         expect(s.peek()).toBeNull();
-        expect(getTag(s.state)).toBe("Disposed");
+        expect(getTag(s.peekState())).toBe("Disposed");
     });
 });
 
@@ -114,16 +114,16 @@ describe("Signal.dispose", () => {
     it("transitions to Disposed", () => {
         const s = Signal.create(1);
         s.dispose();
-        expect(getTag(s.state)).toBe("Disposed");
+        expect(getTag(s.peekState())).toBe("Disposed");
         expect(s.peek()).toBeNull();
     });
 });
 
-describe("Signal.state", () => {
+describe("Signal.peekState", () => {
     it("is pattern-matchable via match", async () => {
         const { match } = await import("../../src/match");
         const s = Signal.create(7);
-        const result = match(s.state, {
+        const result = match(s.peekState(), {
             Unset: () => "unset",
             Active: ({ value }) => `active:${value}`,
             Disposed: () => "disposed",
@@ -157,7 +157,7 @@ describe("Signal reactivity", () => {
         s.set(2);
         expect(dirty).toBe(false);
     });
-    it("read() notifies a subscriber when set() is called", async () => {
+    it("state() notifies a subscriber when set() is called", async () => {
         const { createOwner, trackIn } = await import(
             "../../src/prelude/context"
         );
@@ -165,7 +165,7 @@ describe("Signal reactivity", () => {
         let dirty = false;
         const comp = createOwner(null);
         comp.dirty = () => { dirty = true; };
-        trackIn(comp, () => s.read());
+        trackIn(comp, () => s.state());
         s.set(2);
         expect(dirty).toBe(true);
     });
@@ -194,7 +194,7 @@ const makeField = () =>
 describe("Signal.create with custom protocol", () => {
     it("starts with the provided initial state", () => {
         const s = makeField();
-        expect(getTag(s.state)).toBe("Unvalidated");
+        expect(getTag(s.peekState())).toBe("Unvalidated");
     });
     it("get() extracts via protocol — returns null for Unvalidated", () => {
         const s = makeField();
@@ -203,7 +203,7 @@ describe("Signal.create with custom protocol", () => {
     it("set() accepts full variants", () => {
         const s = makeField();
         s.set(Validation.Valid("hello@example.com"));
-        expect(getTag(s.state)).toBe("Valid");
+        expect(getTag(s.peekState())).toBe("Valid");
         expect(s.get()).toBe("hello@example.com");
     });
     it("get() returns null for Invalid even after set()", () => {
@@ -220,7 +220,7 @@ describe("Signal.create with custom protocol", () => {
         const s = makeField();
         s.dispose();
         s.set(Validation.Valid("after-dispose"));
-        expect(getTag(s.state)).toBe("Unvalidated");
+        expect(getTag(s.peekState())).toBe("Unvalidated");
     });
     it("isTerminal stops notifications when the terminal state is set", async () => {
         const { createOwner, trackIn } = await import("../../src/prelude/context");
@@ -243,21 +243,21 @@ describe("Signal.create with custom protocol", () => {
         s.set(Validation.Invalid(["error"]));
         expect(notifyCount).toBe(0); // terminal — subscribers cleared, no notification
         s.set(Validation.Valid("too late"));
-        expect(getTag(s.state)).toBe("Invalid"); // state frozen after terminal
+        expect(getTag(s.peekState())).toBe("Invalid"); // state frozen after terminal
     });
 });
 
-describe("Signal<T, S> read()", () => {
+describe("Signal<T, S> state()", () => {
     it("returns the full state union (tracked)", async () => {
         const { createOwner, trackIn } = await import("../../src/prelude/context");
         const s = makeField();
         let dirty = false;
         const comp = createOwner(null);
         comp.dirty = () => { dirty = true; };
-        trackIn(comp, () => s.read());
+        trackIn(comp, () => s.state());
         s.set(Validation.Invalid(["required"]));
         expect(dirty).toBe(true);
-        const errors = match(s.state, {
+        const errors = match(s.peekState(), {
             Unvalidated: () => [] as string[],
             Valid:       () => [] as string[],
             Invalid:     ({ errors }) => errors,
@@ -266,18 +266,18 @@ describe("Signal<T, S> read()", () => {
     });
 });
 
-describe("Signal<T>.read() — default signal", () => {
+describe("Signal<T>.state() — default signal", () => {
     it("returns SignalState<T> and registers a dependency", async () => {
         const { createOwner, trackIn } = await import("../../src/prelude/context");
         const s = Signal.create(42);
         let dirty = false;
         const comp = createOwner(null);
         comp.dirty = () => { dirty = true; };
-        trackIn(comp, () => s.read());
+        trackIn(comp, () => s.state());
         s.set(99);
         expect(dirty).toBe(true);
-        expect(getTag(s.read())).toBe("Active");
-        expectTypeOf(s.read()).toExtend<SignalStateType<number>>();
+        expect(getTag(s.state())).toBe("Active");
+        expectTypeOf(s.state()).toExtend<SignalStateType<number>>();
     });
 });
 

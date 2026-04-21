@@ -168,5 +168,7 @@ The full `when(pattern, guard, handler)` form: pattern fields are checked first,
 ## What's next
 
 - [Advanced Patterns](./advanced-patterns.md) — impl classes, Trait constraints, complex compositions
+- [Working with External Data](./schema.md) — decoding API payloads, encoding, transforms, and custom adapters
 - [API Reference: union](../api/union.md) — full `union()`, `Trait`, `pred`, `when`, `getTag` docs
 - [API Reference: match](../api/match.md) — full `match()` docs with error behavior
+- [API Reference: aljabr/schema](../api/schema.md) — full schema module reference

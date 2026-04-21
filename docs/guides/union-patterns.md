@@ -227,6 +227,262 @@ const format = (f: Field): string =>
 
 ---
 
+## Deep structural matching, `is`, and `select`
+
+### Deep structural patterns
+
+`when()` patterns recurse into plain object sub-patterns. You can match nested fields directly without manual destructuring in the handler:
+
+```ts
+const Event = union({
+  UserAction: (user: { name: string; role: string }, action: string) => ({ user, action }),
+})
+type Event = Union<typeof Event>
+
+match(event, {
+  UserAction: [
+    when({ user: { role: "admin" } }, () => "admin action"),
+    when(__, () => "user action"),
+  ],
+})
+```
+
+Recursion stops at Aljabr variant boundaries — if a payload field holds another variant instance, `when()` will not recurse into it. Use a guard function or a separate `match()` call to inspect nested variants.
+
+### Type wildcards with `is`
+
+The `is` namespace provides pattern primitives that match by runtime type, for use as field values inside `when()` patterns:
+
+```ts
+import { is } from "aljabr"
+
+const Form = union({
+  Field: (value: string | number | null, required: boolean) => ({ value, required }),
+})
+type Form = Union<typeof Form>
+
+match(form, {
+  Field: [
+    when({ value: is.string,  required: true  }, ({ value }) => validate(value)),
+    when({ value: is.number              }, ({ value }) => value.toFixed(2)),
+    when({ value: is.nullish, required: true  }, () => "required field is empty"),
+    when(__,                                    () => "optional empty"),
+  ],
+})
+```
+
+Available wildcards: `is.string`, `is.number`, `is.boolean`, `is.nullish`, `is.defined`, `is.array`, `is.object`. See the [API reference](../api/union.md#is) for the full list.
+
+### Combinators: `is.not` and `is.union`
+
+`is.not(pattern)` negates any pattern. `is.union(...patterns)` is logical OR across patterns. Both compose with wildcards, literals, and each other:
+
+```ts
+const Message = union({
+  Alert: (code: string, level: string) => ({ code, level }),
+})
+type Message = Union<typeof Message>
+
+match(msg, {
+  Alert: [
+    when({ level: is.union("error", "fatal") }, () => showCritical()),
+    when({ level: is.not("debug") },             () => showNormal()),
+    when(__,                                      () => logDebug()),
+  ],
+})
+```
+
+```ts
+// is.not composes with is.*
+when({ value: is.not(is.nullish) }, ({ value }) => process(value))
+
+// is.union composes with is.*
+when({ id: is.union(is.string, is.number) }, ({ id }) => String(id))
+```
+
+`is.not` is also a namespace — each wildcard has a BDD-style pre-computed counterpart:
+
+```ts
+// These are equivalent pairs:
+when({ code: is.not(is.string) },  handler)
+when({ code: is.not.string },      handler)   // shorthand
+
+when({ flag: is.not(is.boolean) }, handler)
+when({ flag: is.not.boolean },     handler)   // shorthand
+```
+
+The pre-computed values (`is.not.string`, `is.not.number`, `is.not.array`, etc.) are plain values — not callable — consistent with how `is.string` works.
+
+### Extracting values with `select`
+
+`select(name)` binds a field to a named slot in the handler's second argument. This lets you extract nested or guarded values without repeating the field path inside the handler body. The extracted value is **typed precisely** — no casts needed:
+
+```ts
+import { select } from "aljabr"
+
+const Nav = union({
+  Route: (path: string, params: Record<string, string>) => ({ path, params }),
+})
+type Nav = Union<typeof Nav>
+
+match(nav, {
+  Route: [
+    when(
+      { path: "/user", params: { id: select("id") } },
+      (val, { id }) => loadUser(id),  // id: string — typed from params field
+    ),
+    when(__, () => notFound()),
+  ],
+})
+```
+
+`select` also accepts an optional second argument — a pattern that the field must satisfy for the arm to match. The inner pattern also **narrows the extracted type**:
+
+```ts
+// Only fires when `name` is non-nullish; sel.name is string (null excluded)
+when(
+  { user: { name: select("name", is.not(is.nullish)) } },
+  (val, { name }) => `Hello, ${name}`,
+  //                          ^ name: string, not string | null
+)
+```
+
+Multiple selections work naturally — each `select()` in the pattern contributes a typed key to the `selections` map:
+
+```ts
+when(
+  { key: select("k"), shift: select("s") },
+  (val, { k, s }) => s ? `Shift+${k}` : k,
+  //         ^ k: string, s: boolean — each typed from their variant field
+)
+```
+
+### Typed selections: how the inference works
+
+The `selections` type is computed from the pattern at the `match()` call site. For each `select("name")` in the pattern, the type of the corresponding field in the variant is used:
+
+```ts
+const Key = union({
+  Press: (key: string, shift: boolean) => ({ key, shift }),
+})
+
+match(e, {
+  Press: when(
+    { key: select("k"), shift: select("s") },
+    // TypeScript infers: selections: { k: string; s: boolean }
+    (val, sel) => {
+      sel.k  // string ✓
+      sel.s  // boolean ✓
+    },
+  ),
+})
+```
+
+When no `select()` markers appear in the pattern, `selections` is `{}` — safe to omit or ignore:
+
+```ts
+when({ key: "Enter" }, () => "submit")  // no second arg needed
+```
+
+Inner pattern constraints narrow the extracted type:
+
+| Inner pattern | Extracted type (when field is `T`) |
+|---|---|
+| _(none)_ | `T` |
+| `is.string` | `string` |
+| `is.number` | `number` |
+| `is.not(is.nullish)` | `Exclude<T, null \| undefined>` |
+| `is.union("a", "b")` | `"a" \| "b"` |
+
+---
+
+## Cross-union matching with `is.variant` and `variantOf`
+
+Aljabr's tag-first dispatch is fast, but the tag alone can't distinguish two unions that share a variant name. If both `Result` and `Option` define an `"Ok"` variant, `getTag` alone is insufficient — you need union identity, not just the tag string.
+
+Every factory created by `union()` carries a unique symbol internally. Every variant prototype it produces is stamped with the same symbol. This lets you ask "is this value from **that** specific union?" regardless of what its tag string is.
+
+### `is.variant(factory)` in `when()` patterns
+
+Use `is.variant(factory)` as a field value in a `when()` pattern to test whether a field holds any variant from a specific union:
+
+```ts
+import { union, match, when, is, __, Union } from "aljabr"
+
+const Result = union({ Ok: (v: number) => ({ v }), Err: (e: string) => ({ e }) })
+const Option = union({ Some: (v: number) => ({ v }), None: { v: null } })
+
+const Container = union({
+  Wrap: (payload: unknown) => ({ payload }),
+})
+
+const describe = (c: ReturnType<typeof Container.Wrap>): string =>
+  match(c, {
+    Wrap: [
+      when({ payload: is.variant(Result) }, () => "contains a Result"),
+      when({ payload: is.variant(Option) }, () => "contains an Option"),
+      when({ payload: is.string },           () => "contains a string"),
+      when(__,                               () => "contains something else"),
+    ],
+  })
+
+describe(Container.Wrap(Result.Ok(42)))   // "contains a Result"
+describe(Container.Wrap(Option.None()))   // "contains an Option"
+describe(Container.Wrap("hello"))         // "contains a string"
+```
+
+Without `is.variant`, matching against `Result.Ok` would dispatch on the tag `"Ok"` — which might also match an `Option.Ok` if that variant existed.
+
+### `is.union(Factory1, Factory2)` for OR membership
+
+Pass union factories directly to `is.union` to match a field that can be any variant of any of those unions:
+
+```ts
+const Wrapper = union({ Wrap: (val: unknown) => ({ val }) })
+
+match(wrapper, {
+  Wrap: [
+    when({ val: is.union(Result, Option) }, () => "Result or Option variant"),
+    when(__, () => "something else"),
+  ],
+})
+```
+
+Factories and other patterns mix freely in the same `is.union(...)` call:
+
+```ts
+when({ val: is.union(Result, is.string) }, handler) // Result variant or a plain string
+```
+
+### `is.not(Factory)` and `is.not.variant(factory)` for negation
+
+Both forms work symmetrically:
+
+```ts
+when({ data: is.not(Result) },         handler)  // data is NOT a Result variant
+when({ data: is.not.variant(Result) }, handler)  // identical — namespace form
+```
+
+### `variantOf` for runtime checks outside patterns
+
+When you need a membership check outside of a `when()` pattern — in a guard function, a filter, or any imperative code — use the standalone `variantOf`:
+
+```ts
+import { variantOf } from "aljabr"
+
+// Direct form
+variantOf(Result, someValue) // boolean
+
+// Curried form — useful for array filtering
+const results = values.filter(variantOf(Result))
+
+// Compose with pred() for use in when() arms
+when({ data: pred(variantOf(Result)) }, handler)
+// (equivalent to is.variant — use whichever reads more clearly)
+```
+
+---
+
 ## Modeling state machines
 
 aljabr pairs naturally with state machine patterns. Each state is a variant; transitions are functions that return new variants:
@@ -345,68 +601,76 @@ unwrapOr(Option.Some(3), 0)  // 3
 unwrapOr(Option.None(),  0)  // 0
 ```
 
-### Building a generic `Result<T, E>`
+### Building a generic `RemoteData<T, E>`
 
-A fuller example that combines `Variant<>`, `.typed()`, and an impl mixin for Promise-like chaining. The key insight: define named variant aliases once, then reuse them as both cast targets in the factory and members of the `Result<T, E>` union type.
+`RemoteData<T, E>` is a well-known pattern for modeling the four states of an async data fetch. Unlike the built-in `AsyncDerived`, it's a pure value type — no reactivity, no evaluation machinery — making it ideal for explicit state containers in complex UIs.
+
+This example shows `Variant<>`, `.typed()`, and an impl mixin all working together on a type that genuinely isn't in the library:
 
 ```ts
-import { union, match, Trait, Variant } from "aljabr";
+import { union, match, Trait, Variant, Union } from "aljabr";
 
-// Impl class — shared behavior across all variants.
-// then() returns Result<R1, R2>, enabling typed .then() chains.
-abstract class Thenable<T> extends Trait<{ value: unknown }> {
-    then<R1 = T, R2 = never>(
-        onAccepted?: ((value: T) => R1 | PromiseLike<R1>) | null,
-        onRejected?: ((reason: any) => R2 | PromiseLike<R2>) | null,
-    ): Result<R1, R2> {
-        return match(this as unknown as Result, {
-            Accept: ({ value }) => {
-                const accepted = onAccepted ? onAccepted(value as T) : value;
-                return "then" in (accepted as any)
-                    ? Result.Expect(accepted as any)
-                    : Result.Accept(accepted);
-            },
-            Expect: ({ pending }) => Result.Expect(pending.then(onAccepted as any, onRejected as any)),
-            Reject: ({ error })   => onRejected ? Result.Accept(onRejected(error)) : Result.Reject(error),
-        }) as any as Result<R1, R2>;
+// Impl class — shared behavior for mapping over success values.
+abstract class Mappable<T, E> extends Trait {
+    map<U>(fn: (value: T) => U): RemoteData<U, E> {
+        return match(this as unknown as RemoteData<T, E>, {
+            NotAsked: () => RemoteData.NotAsked(),
+            Loading:  () => RemoteData.Loading(),
+            Success:  ({ data }) => RemoteData.Success(fn(data)),
+            Failure:  ({ error }) => RemoteData.Failure(error),
+        }) as RemoteData<U, E>;
+    }
+
+    getOrElse(fallback: T): T {
+        return match(this as unknown as RemoteData<T, E>, {
+            NotAsked: () => fallback,
+            Loading:  () => fallback,
+            Success:  ({ data }) => data,
+            Failure:  () => fallback,
+        });
     }
 }
 
-// Named variant aliases — defined once, used in both the union type and the factory casts.
-export type Accepted<T> = Variant<"Accept", { value: T },                             Thenable<T>>;
-export type Expected<T> = Variant<"Expect", { pending: PromiseLike<T>; value: null }, Thenable<T>>;
-export type Rejected<E> = Variant<"Reject", { error: E; value: null },                Thenable<never>>;
+// Named variant aliases — typed parameters preserved via cast targets.
+export type NotAsked<T, E> = Variant<"NotAsked", Record<never, never>,   Mappable<T, E>>;
+export type Loading<T, E>  = Variant<"Loading",  Record<never, never>,   Mappable<T, E>>;
+export type Success<T, E>  = Variant<"Success",  { data: T },            Mappable<T, E>>;
+export type Failure<T, E>  = Variant<"Failure",  { error: E },           Mappable<T, E>>;
 
-export type Result<T = unknown, E = never> = Accepted<T> | Expected<T> | Rejected<E>;
+export type RemoteData<T, E> = NotAsked<T, E> | Loading<T, E> | Success<T, E> | Failure<T, E>;
 
-export const Result = union([Thenable]).typed({
-    Accept: <T>(value: T)                => ({ value }               as Accepted<T>),
-    Expect: <T>(pending: PromiseLike<T>) => ({ pending, value: null } as Expected<T>),
-    Reject: <E>(error: E)                => ({ error,  value: null }  as Rejected<E>),
+export const RemoteData = union([Mappable]).typed({
+    NotAsked: <T, E>()           => ({} as NotAsked<T, E>),
+    Loading:  <T, E>()           => ({} as Loading<T, E>),
+    Success:  <T, E>(data: T)    => ({ data }  as Success<T, E>),
+    Failure:  <T, E>(error: E)   => ({ error } as Failure<T, E>),
 });
 ```
 
 **What you get:**
 
 ```ts
-Result.Accept(3).value                     // number ✓
-Result.Reject(new Error()).error            // Error  ✓
-Result.Expect(Promise.resolve(42)).pending // PromiseLike<number> ✓
+const rd = RemoteData.Success<User, string>({ name: "Alice", id: 1 })
+rd.data  // User ✓
 
-// Typed chains
-Result.Accept(3).then(n => n * 2)
-// → Result<number, never> ✓
+RemoteData.Failure<User, string>("Not found").error  // string ✓
 
-// Awaitable
-const value = await Result.Accept("hello");
-// → "hello" (string) ✓
+// map() preserves type safety
+RemoteData.Success<number, string>(42)
+    .map(n => n * 2)
+    // → RemoteData.Success<number, string> { data: 84 } ✓
 
-// Match with full narrowing
-match(Result.Accept(3), {
-    Accept: ({ value }) => `got ${value}`,  // value: number
-    Expect: ({ pending }) => `waiting...`,
-    Reject: ({ error }) => `error: ${error}`,
-});
+// getOrElse() provides a safe fallback
+RemoteData.Failure<string, Error>(new Error()).getOrElse("default")
+// → "default" ✓
+
+// Exhaustive match with full narrowing
+match(rd, {
+    NotAsked: () => renderEmpty(),
+    Loading:  () => renderSpinner(),
+    Success:  ({ data }) => renderUser(data),   // data: User
+    Failure:  ({ error }) => renderError(error), // error: string
+})
 ```
 
 ### How it compares to the plain `union()` form
@@ -439,5 +703,7 @@ This is especially useful for writing helper functions that operate on a single 
 ## See also
 
 - [Getting Started](./getting-started.md)
+- [Working with External Data](./schema.md) — `aljabr/schema`: decode, encode, transform, adapters
 - [API Reference: union](../api/union.md)
 - [API Reference: match](../api/match.md)
+- [API Reference: aljabr/schema](../api/schema.md)

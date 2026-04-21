@@ -52,10 +52,10 @@ export abstract class Thenable<T> extends Trait<{ value: unknown }> {
     }
 }
 
-export type Accepted<T> = Variant<"Accept", { value: T }, Thenable<T>>;
+export type Accepted<T> = Variant<"Accept", { value: T; error?: never }, Thenable<T>>;
 export type Expected<T> = Variant<
     "Expect",
-    { pending: PromiseLike<T>; value: null },
+    { pending: PromiseLike<T>; value: null; error?: never },
     Thenable<T>
 >;
 export type Rejected<E> = Variant<

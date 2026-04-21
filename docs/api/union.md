@@ -1,9 +1,9 @@
-# API Reference: union, Trait, pred, when, getTag
+# API Reference: union, Trait, pred, is, select, when, getTag
 
 These exports live in `src/union.ts` and are re-exported from the package root.
 
 ```ts
-import { union, Trait, pred, when, getTag, __, tag, Union, FactoryPayload, Variant } from "aljabr"
+import { union, Trait, pred, is, select, when, getTag, variantOf, __, tag, Union, FactoryPayload, Variant } from "aljabr"
 ```
 
 ---
@@ -139,29 +139,317 @@ type Pred<T, S extends T = T> = {
 
 ---
 
+## `is`
+
+A namespace of pattern primitives for use as field values inside [`when()`](#when) patterns. Two categories: type wildcards that check a value's runtime type, and logical combinators that compose patterns.
+
+```ts
+import { is } from "aljabr"
+```
+
+### Type wildcards
+
+Each wildcard is a [`Pred`](#pred) that matches values of the corresponding type:
+
+| Wildcard | Equivalent runtime check |
+|---|---|
+| `is.string` | `typeof v === "string"` |
+| `is.number` | `typeof v === "number"` |
+| `is.boolean` | `typeof v === "boolean"` |
+| `is.nullish` | `v == null` (null or undefined) |
+| `is.defined` | `v !== undefined` |
+| `is.array` | `Array.isArray(v)` |
+| `is.object` | `typeof v === "object" && v !== null && !Array.isArray(v)` |
+
+```ts
+when({ age: is.number },   ({ age }) => age * 2)
+when({ name: is.string },  ({ name }) => name.toUpperCase())
+when({ data: is.nullish }, () => "no data")
+when({ list: is.array },   ({ list }) => list.length)
+```
+
+Note: `is.object` does not match arrays — use `is.array` for those.
+
+### `is.not`
+
+`is.not` is both callable and a namespace. The callable form negates any pattern; the namespace form provides pre-computed BDD-style shorthands.
+
+#### Callable: `is.not(pattern)`
+
+```ts
+is.not<P>(pattern: P): NotCombinator<P>
+```
+
+Matches any value that does **not** match the given pattern. The inner pattern may be a literal, a `Pred`, a union factory, another combinator, or a structural object.
+
+The return type is `NotCombinator<P>` — it carries the inner pattern type `P` so the match engine can compute `Exclude<FieldType, NarrowOf<P>>` when used inside `select()`.
+
+```ts
+when({ status: is.not("error") },    handler)   // any status except "error"
+when({ code:   is.not(is.string) },  handler)   // code is not a string
+when({ text:   is.not(is.nullish) }, handler)   // text is defined and non-null
+when({ data:   is.not(Result) },     handler)   // data is not a Result variant
+```
+
+#### Namespace: pre-computed wildcard values
+
+Each `is.*` wildcard has a pre-computed counterpart under `is.not.*` — a plain `NotCombinator` value, not callable:
+
+| Value | Equivalent |
+|---|---|
+| `is.not.string` | `is.not(is.string)` |
+| `is.not.number` | `is.not(is.number)` |
+| `is.not.boolean` | `is.not(is.boolean)` |
+| `is.not.nullish` | `is.not(is.nullish)` |
+| `is.not.defined` | `is.not(is.defined)` |
+| `is.not.array` | `is.not(is.array)` |
+| `is.not.object` | `is.not(is.object)` |
+
+```ts
+when({ code: is.not.string },  handler)   // code is not a string
+when({ flag: is.not.boolean }, handler)   // flag is not a boolean
+when({ list: is.not.array },   handler)   // list is not an array
+```
+
+#### Namespace: parameterized mirrors
+
+```ts
+is.not.union<const Ps extends unknown[]>(...patterns: Ps): NotCombinator<UnionCombinator<Ps>>
+is.not.variant(factory: unknown): NotCombinator<Pred<unknown>>
+```
+
+Equivalent to wrapping `is.union(...)` or `is.variant(...)` in `is.not(...)`:
+
+```ts
+when({ level: is.not.union("debug", "trace") }, handler)  // not debug or trace
+when({ data:  is.not.variant(Result) },         handler)  // data is not a Result variant
+```
+
+### `is.union(...patterns)`
+
+```ts
+is.union<const Ps extends unknown[]>(...patterns: Ps): UnionCombinator<Ps>
+```
+
+Matches if the value satisfies **any** of the given patterns (logical OR). Patterns may be literals, `Pred` values, other combinators, or **union factories**.
+
+The return type is `UnionCombinator<Ps>` — the tuple of inner pattern types is preserved, so `is.union("Tab", "Enter")` produces `UnionCombinator<["Tab", "Enter"]>` rather than erasing to `unknown[]`.
+
+```ts
+when({ key:    is.union("Tab", "Enter") },       handler)   // Tab or Enter
+when({ code:   is.union(is.string, is.number) }, handler)   // string or number
+when({ status: is.union("pending", "active") },  handler)   // either status
+when({ data:   is.union(Result, Option) },        handler)  // any Result or Option variant
+when({ val:    is.union(Result, is.string) },     handler)  // Result variant or a string
+```
+
+When a union factory is passed as a pattern argument, the match engine checks `is.variant` membership rather than structural matching.
+
+### `is.variant(factory)`
+
+```ts
+is.variant(factory: unknown): Pred<unknown>
+```
+
+Returns a `Pred` that matches any variant produced by the given union factory. Equivalent to `pred(variantOf(factory))`.
+
+Use directly as a field value in a `when()` pattern, or compose with other combinators:
+
+```ts
+when({ data: is.variant(Result) }, handler)              // data is any Result variant
+when({ val:  is.not(is.variant(Option)) }, handler)      // val is not an Option variant
+when({ val:  is.union(is.variant(Result), is.string) },  // Result variant or string
+     handler)
+```
+
+See also [`variantOf`](#variantof) for the standalone runtime helper.
+
+### Types
+
+```ts
+// Negation combinator — carries the inner pattern type
+type NotCombinator<P = unknown> = {
+  readonly kind: "not"
+  readonly pattern: P
+}
+
+// Union combinator — carries the tuple of inner pattern types
+type UnionCombinator<Ps extends readonly unknown[] = readonly unknown[]> = {
+  readonly kind: "union"
+  readonly patterns: Ps
+}
+
+// Convenience alias
+type Combinator = NotCombinator | UnionCombinator
+```
+
+---
+
+## `select()`
+
+```ts
+function select<N extends string>(name: N): SelectMarker<N, void>
+function select<N extends string, P>(name: N, pattern: P): SelectMarker<N, P>
+```
+
+Marks a field in a [`when()`](#when) pattern for extraction. When the arm matches, the field's value is collected into a `selections` map and injected as the second argument to the handler.
+
+An optional second argument constrains the field: the arm only matches if the field also satisfies that pattern, and the extracted value's type is narrowed accordingly.
+
+```ts
+// Extract without constraint — typed as the field's own type
+when({ key: select("k") }, (val, { k }) => `pressed: ${k}`)
+//                                   ^ k: string (inferred from the variant)
+
+// Extract with narrowing — arm only fires when text is non-null; t is string
+when({ text: select("t", is.not(is.nullish)) }, (val, { t }) => t.toUpperCase())
+//                                                         ^ t: string (null excluded)
+
+// Extract from a nested path
+when({ user: { name: select("name") } }, (val, { name }) => `Hello, ${name}`)
+//                                                  ^ name: string
+
+// Multiple selections — each typed independently
+when(
+  { key: select("k"), shift: select("s") },
+  (val, { k, s }) => s ? `Shift+${k}` : k,
+  //         ^ k: string, s: boolean
+)
+```
+
+### Handler signature with `select`
+
+The `selections` second argument is typed precisely based on the pattern. Each `select("name")` in the pattern contributes a `{ name: FieldType }` entry to the selections type, optionally narrowed by an inner pattern constraint:
+
+```ts
+// No select markers → selections is {}
+when({ key: "Enter" }, (val, sel) => ...)
+//                              ^ sel: {}
+
+// Single select → selections is { k: string }
+when({ key: select("k") }, (val, sel) => sel.k.toUpperCase())
+//                                  ^ sel: { k: string }
+
+// Inner pattern narrows the type
+when({ text: select("t", is.not(is.nullish)) }, (val, sel) => sel.t.toUpperCase())
+//                                                       ^ sel: { t: string }
+
+// is.number inner → extracted as number
+when({ code: select("c", is.number) }, (val, sel) => sel.c * 2)
+//                                             ^ sel: { c: number }
+```
+
+The type is computed from the pattern and variant at the `match()` call site — handlers that omit the second argument continue to type-check without changes.
+
+### `SelectMarker` type
+
+```ts
+type SelectMarker<Name extends string = string, InnerPat = void> = {
+  readonly name: Name
+  readonly pattern?: unknown
+  // phantom: carries inner pattern type for type-level inference
+  readonly _inner?: InnerPat
+}
+```
+
+`Name` is preserved as a string literal (e.g. `"k"`, not `string`), and `InnerPat` carries the inner pattern type for use in `SelectionsFor`. When no inner pattern is given, `InnerPat = void` and the field's own type from `V` is used.
+
+### `SelectionsFor<P, V>`
+
+```ts
+type SelectionsFor<P, V>
+```
+
+Computes the `selections` type for a `when()` arm. Given the pattern type `P` and the variant type `V`:
+
+- Traverses `P` recursively to find all `SelectMarker` values
+- For each, resolves the extracted type: `V[K]` when unconstrained, or the narrowed type from the inner pattern
+- Returns the intersection of all `{ name: Type }` records — `{}` when no markers are present
+
+Used internally by `WhenArm` and `when()`. Exported for advanced use cases such as writing helpers that accept typed `when()` arms.
+
+---
+
+## `variantOf()`
+
+```ts
+function variantOf<F extends object>(factory: F): (value: unknown) => boolean
+function variantOf<F extends object>(factory: F, value: unknown): boolean
+```
+
+Checks whether a value is a variant produced by the given union factory. Every factory created by `union()` carries a unique internal symbol; every variant prototype it produces is stamped with the same symbol. `variantOf` compares them.
+
+Two calling forms:
+
+- **Direct**: `variantOf(factory, value)` — immediate boolean check
+- **Curried**: `variantOf(factory)` — returns a reusable predicate function
+
+```ts
+const Result = union({ Ok: (v: number) => ({ v }), Err: (e: string) => ({ e }) })
+const Option = union({ Some: (v: number) => ({ v }), None: { v: null } })
+
+// Direct form
+variantOf(Result, Result.Ok(1))   // true
+variantOf(Result, Option.Some(1)) // false — different factory
+variantOf(Result, "hello")        // false — not a variant at all
+
+// Curried form
+const isResult = variantOf(Result)
+isResult(Result.Err("oops")) // true
+isResult(Option.None())      // false
+
+// Composes with pred() for use in when() patterns
+when({ data: pred(variantOf(Result)) }, handler)
+```
+
+This is especially useful when you need a runtime membership check outside of a `match()` — for guards, filters, or conditional rendering logic.
+
+For use inside `when()` patterns, prefer [`is.variant(factory)`](#isvariantfactory) which wraps this in a `Pred` automatically.
+
+---
+
 ## `when()`
 
 ```ts
 // Catch-all: always matches
-function when<V, R>(pattern: typeof __, handler: (val: V) => R): WhenArm<V, R>
+function when<V, R>(
+  pattern: typeof __,
+  handler: (val: V) => R
+): WhenArm<V, R, typeof __>
 
 // Guard-only: matches when guard(val) returns true
-function when<V, R>(guard: (val: V) => boolean, handler: (val: V) => R): WhenArm<V, R>
+function when<V, R>(
+  guard: (val: V) => boolean,
+  handler: (val: V) => R
+): WhenArm<V, R, {}>
 
-// Structural: matches when all pattern fields equal the variant's fields
-function when<V, R>(pattern: object, handler: (val: V) => R): WhenArm<V, R>
+// Structural: matches when all pattern fields satisfy the pattern
+function when<V, R, P extends object>(
+  pattern: P,
+  handler: (val: V, selections: SelectionsFor<P, V>) => R
+): WhenArm<V, R, P>
 
 // Structural + guard: both must pass
-function when<V, R>(pattern: object, guard: (val: V) => boolean, handler: (val: V) => R): WhenArm<V, R>
+function when<V, R, P extends object>(
+  pattern: P,
+  guard: (val: V) => boolean,
+  handler: (val: V, selections: SelectionsFor<P, V>) => R
+): WhenArm<V, R, P>
 ```
 
 Constructs a pattern match arm for use as a variant matcher inside [`match()`](match.md). Arms are used either as a single value or in an array (first-match-wins).
 
 ### Pattern matching rules
 
-Pattern keys are matched in order:
-- If the pattern value is a [`Pred`](#pred), `pred.fn(variantField)` is called
-- Otherwise, strict equality (`===`) is used
+Each field in the pattern is evaluated against the corresponding field on the variant value:
+
+- **[`Pred`](#pred)** — `pred.fn(fieldValue)` is called
+- **[`Combinator`](#is)** (`is.not`, `is.union`) — evaluated recursively
+- **[`SelectMarker`](#select)** — field is extracted into `selections`; the optional inner pattern is evaluated if present
+- **Plain object (not an Aljabr variant)** — matched recursively as a sub-pattern
+- **Anything else** — strict equality (`===`)
+
+Recursion into sub-patterns stops at Aljabr variant boundaries (values that carry a `[tag]` on their prototype).
 
 An empty pattern `{}` matches any value (all-keys-pass vacuously).
 
@@ -174,34 +462,51 @@ when(__, () => "fallback")
 // Guard-only
 when((v) => v.x > 0, () => "positive x")
 
-// Structural pattern
+// Structural pattern — literal equality
 when({ key: "Enter" }, () => "submit")
 
-// Pattern with pred
-when({ key: pred((k) => k.startsWith("F")) }, () => "function key")
+// Pattern with is.* wildcard
+when({ age: is.number }, ({ age }) => age * 2)
 
-// Structural + guard
+// Pattern with combinator
+when({ status: is.not("error") }, handler)
+
+// Deep structural match
+when({ user: { name: "Alice" } }, () => "found Alice")
+
+// Extract a field with select
+when({ key: select("k") }, (val, { k }) => `pressed: ${k}`)
+
+// Extract with type constraint
+when({ age: select("age", is.number) }, (val, { age }) => age)
+
+// Pattern + guard
 when({ active: true }, (v) => v.count > 10, () => "active and busy")
 
 // Array of arms in match
 match(event, {
   KeyPress: [
-    when({ key: "Enter" }, () => "submit"),
-    when({ key: "Escape" }, () => "cancel"),
-    when(__, () => "other"),
+    when({ key: "Enter" },                         () => "submit"),
+    when({ key: is.union("Tab", "Escape") },       () => "navigation"),
+    when({ key: select("k", is.not(is.nullish)) }, (_, { k }) => `char: ${k}`),
+    when(__,                                        () => "other"),
   ],
 })
 ```
 
-### `WhenArm<V, R>` type
+### `WhenArm<V, R, P>` type
 
 ```ts
-type WhenArm<V, R> = {
-  readonly pattern: { [K in keyof V]?: V[K] | Pred<V[K]> } | typeof __
+type WhenArm<V, R, P = {}> = {
+  readonly pattern: P | typeof __
   readonly guard?: (val: V) => boolean
-  readonly handler: (val: V) => R
+  readonly handler: (val: V, selections: SelectionsFor<P, V>) => R
 }
 ```
+
+The third type parameter `P` carries the pattern type. It defaults to `{}` (no selections, handler receives `{}`). `match()` accepts `WhenArm<V, R, any>` so arms with any pattern type are assignable.
+
+The `selections` argument to the handler is always required at the type level (never optional). It is `{}` when the pattern has no `select()` markers, making it safe to omit in the handler body.
 
 ---
 
