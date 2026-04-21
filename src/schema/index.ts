@@ -205,7 +205,7 @@ function _decode(
             }
             return errors.length > 0
                 ? Validation.Invalid(errors)
-                : Validation.Valid(values)
+                : Validation.Valid(values as unknown)
         },
 
         ObjectSchema: ({ shape, mode }) => {
