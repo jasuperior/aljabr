@@ -2,6 +2,7 @@ import { Signal } from "./signal.ts";
 import { Derived } from "./derived.ts";
 import { Option } from "./option.ts";
 import { getCurrentComputation, untrack } from "./context.ts";
+import { ReactiveArray, type IteratorOptions } from "./reactive-array.ts";
 
 // ---------------------------------------------------------------------------
 // Path type machinery
@@ -75,7 +76,8 @@ type RefHolder = {
     state: unknown;
     unset: boolean;
     signals: Map<string, Signal<unknown>>;
-    handles: Map<string, Ref<any> | Derived<unknown>>;
+    lengthSignals: Map<string, Signal<number>>;
+    handles: Map<string, Ref<any> | Derived<unknown> | RefArray<any>>;
     bindings: Map<string, () => void>;       // path → unsubscribe fn
     boundSignals: Map<string, Signal<unknown>>; // path → source signal
     disposed: boolean;
@@ -90,6 +92,7 @@ function resolveFullPath(prefix: string, path: string): string {
 }
 
 function getAtPath(obj: unknown, path: string): unknown {
+    if (path === "") return obj;
     const parts = path.split(".");
     let current = obj;
     for (const part of parts) {
@@ -100,6 +103,7 @@ function getAtPath(obj: unknown, path: string): unknown {
 }
 
 function setAtPath(obj: unknown, path: string, value: unknown): unknown {
+    if (path === "") return value;
     return deepSet(obj, path.split("."), value);
 }
 
@@ -124,6 +128,8 @@ function deepSet(
 }
 
 function isRelated(signalPath: string, changedPath: string): boolean {
+    if (changedPath === "") return true; // root changed → all signals are related
+    if (signalPath === "") return true;  // root signal relates to any change
     return (
         signalPath === changedPath ||
         signalPath.startsWith(changedPath + ".") ||
@@ -151,7 +157,8 @@ function collectLeafChanges(
         if (Array.isArray(oldVal) && Array.isArray(newVal)) {
             const len = Math.max(oldVal.length, newVal.length);
             for (let i = 0; i < len; i++) {
-                collectLeafChanges(`${path}.${i}`, oldVal[i], newVal[i], out);
+                const childPath = path ? `${path}.${i}` : `${i}`;
+                collectLeafChanges(childPath, oldVal[i], newVal[i], out);
             }
             return;
         }
@@ -163,12 +170,8 @@ function collectLeafChanges(
                 ...Object.keys(newObj),
             ]);
             for (const key of keys) {
-                collectLeafChanges(
-                    `${path}.${key}`,
-                    oldObj[key],
-                    newObj[key],
-                    out,
-                );
+                const childPath = path ? `${path}.${key}` : key;
+                collectLeafChanges(childPath, oldObj[key], newObj[key], out);
             }
             return;
         }
@@ -176,6 +179,318 @@ function collectLeafChanges(
 
     // Leaf: primitives differ, or type mismatch (object ↔ primitive, array ↔ object, etc.)
     out.push([path, newVal]);
+}
+
+// ---------------------------------------------------------------------------
+// Module-level reactive helpers (shared by Ref and RefArray)
+// ---------------------------------------------------------------------------
+
+function getOrCreateSignal(holder: RefHolder, fullPath: string): Signal<unknown> {
+    let sig = holder.signals.get(fullPath);
+    if (!sig) {
+        const value = holder.unset ? undefined : getAtPath(holder.state, fullPath);
+        sig = untrack(() => Signal.create<unknown>(value as unknown));
+        holder.signals.set(fullPath, sig);
+    }
+    return sig;
+}
+
+function cleanupOutOfRangeSignals(
+    holder: RefHolder,
+    arrayPath: string,
+    newLength: number,
+): void {
+    const prefix = arrayPath ? `${arrayPath}.` : "";
+    for (const [key, sig] of [...holder.signals]) {
+        const rest = arrayPath
+            ? (key.startsWith(prefix) ? key.slice(prefix.length) : null)
+            : key;
+        if (rest === null) continue;
+        const index = Number(rest.split(".")[0]);
+        if (!isNaN(index) && index >= newLength) {
+            sig.dispose();
+            holder.signals.delete(key);
+            holder.handles.delete(key);
+        }
+    }
+}
+
+function applyArrayMutation(
+    holder: RefHolder,
+    fullPath: string,
+    oldArr: unknown[],
+    newArr: unknown[],
+): void {
+    holder.state = setAtPath(holder.state, fullPath, newArr);
+    holder.unset = false;
+
+    const changes: Array<[string, unknown]> = [];
+    collectLeafChanges(fullPath, oldArr, newArr, changes);
+
+    const toNotify = new Set<string>();
+    toNotify.add(fullPath);
+    for (const [p] of changes) {
+        toNotify.add(p);
+        const parts = p.split(".");
+        for (let i = parts.length - 1; i > 0; i--) {
+            toNotify.add(parts.slice(0, i).join("."));
+        }
+    }
+    for (const p of toNotify) {
+        const sig = holder.signals.get(p);
+        if (sig) sig.set(getAtPath(holder.state, p));
+    }
+
+    // Update length signal if present and size changed
+    if (newArr.length !== oldArr.length) {
+        const lengthSig = holder.lengthSignals.get(fullPath);
+        if (lengthSig) lengthSig.set(newArr.length);
+    }
+
+    if (newArr.length < oldArr.length) {
+        cleanupOutOfRangeSignals(holder, fullPath, newArr.length);
+    }
+}
+
+// ---------------------------------------------------------------------------
+// RefArray<T>  (defined before Ref so Ref.create can reference it)
+// ---------------------------------------------------------------------------
+
+/**
+ * A reactive mutable container for a root-level array. Returned by
+ * `Ref.create(T[])` and `Ref.at(path)` when the path resolves to an array.
+ *
+ * Unlike `Ref<T[]>`, `RefArray<T>` exposes pathless mutation methods that
+ * operate directly on the root array without requiring a path argument.
+ *
+ * Per-index reads (`get(i)`, `at(i)`) and `length()` are all reactive —
+ * they register fine-grained dependencies so that subscribers are notified
+ * only when the specific index (or length) they read actually changes.
+ *
+ * Iterator methods (`map`, `filter`, `sort`) return a `ReactiveArray<U>` —
+ * a read-only derived view that maintains per-index reactivity across
+ * structural mutations.
+ *
+ * @example
+ * const items = Ref.create([1, 2, 3, 4, 5]);
+ *
+ * items.push(6);                                  // [1, 2, 3, 4, 5, 6]
+ * items.pop();                                    // [1, 2, 3, 4, 5]
+ * items.splice(1, 2, 10, 20);                     // [1, 10, 20, 4, 5]
+ *
+ * const evens = items.filter(x => x % 2 === 0);  // ReactiveArray<number>
+ * const doubled = evens.map(x => x * 2);          // ReactiveArray<number>
+ */
+export class RefArray<T> {
+    readonly #holder: RefHolder;
+    readonly #prefix: string;
+
+    private constructor(holder: RefHolder, prefix: string) {
+        this.#holder = holder;
+        this.#prefix = prefix;
+    }
+
+    /** @internal Create a RefArray backed by an existing shared holder. */
+    static _fromHolder<T>(holder: RefHolder, prefix: string): RefArray<T> {
+        return new RefArray<T>(holder, prefix);
+    }
+
+    /**
+     * Create a `RefArray` with an initial array value.
+     * Prefer `Ref.create(T[])` — this static is provided for direct use.
+     */
+    static create<T>(initial: T[]): RefArray<T> {
+        const owner = getCurrentComputation();
+        const holder: RefHolder = {
+            state: initial,
+            unset: false,
+            signals: new Map(),
+            lengthSignals: new Map(),
+            handles: new Map(),
+            bindings: new Map(),
+            boundSignals: new Map(),
+            disposed: false,
+        };
+        const refArray = new RefArray<T>(holder, "");
+        if (owner) owner.cleanups.add(() => refArray.dispose());
+        return refArray;
+    }
+
+    /** `true` if this RefArray was created without an initial value. */
+    get isUnset(): boolean {
+        return this.#holder.unset;
+    }
+
+    // -------------------------------------------------------------------------
+    // Pathless root mutations
+    // -------------------------------------------------------------------------
+
+    /** Append one or more items to the end of the array. */
+    push(...items: T[]): void {
+        if (this.#holder.disposed) return;
+        const arr = this.#getArr() ?? [];
+        applyArrayMutation(this.#holder, this.#prefix, arr, [...arr, ...items]);
+    }
+
+    /**
+     * Remove and return the last element of the array.
+     * Returns `undefined` if the array is empty.
+     */
+    pop(): T | undefined {
+        if (this.#holder.disposed) return undefined;
+        const arr = this.#getArr() ?? [];
+        if (arr.length === 0) return undefined;
+        const last = arr[arr.length - 1] as T;
+        applyArrayMutation(this.#holder, this.#prefix, arr, arr.slice(0, -1));
+        return last;
+    }
+
+    /** Remove and/or insert elements starting at `start`. */
+    splice(start: number, deleteCount: number, ...items: T[]): void {
+        if (this.#holder.disposed) return;
+        const arr = this.#getArr() ?? [];
+        const newArr = [...arr];
+        newArr.splice(start, deleteCount, ...items);
+        applyArrayMutation(this.#holder, this.#prefix, arr, newArr);
+    }
+
+    /** Swap elements at indices `from` and `to`. No-op if indices are equal or out of bounds. */
+    move(from: number, to: number): void {
+        if (this.#holder.disposed) return;
+        const arr = this.#getArr() ?? [];
+        if (from === to || from >= arr.length || to >= arr.length) return;
+        const newArr = [...arr];
+        [newArr[from], newArr[to]] = [newArr[to], newArr[from]];
+        applyArrayMutation(this.#holder, this.#prefix, arr, newArr);
+    }
+
+    // -------------------------------------------------------------------------
+    // Per-index reactive reads
+    // -------------------------------------------------------------------------
+
+    /**
+     * Read the item at index `i` and register it as a tracked dependency.
+     * Returns `undefined` for out-of-bounds indices or when unset.
+     */
+    get(i: number): T | undefined {
+        const fullPath = this.#prefix ? `${this.#prefix}.${i}` : `${i}`;
+        getOrCreateSignal(this.#holder, fullPath).get();
+        if (this.#holder.unset) return undefined;
+        const arr = this.#getArr();
+        return arr ? (arr[i] as T) : undefined;
+    }
+
+    /**
+     * Returns a `Derived<T | undefined>` handle for index `i`.
+     * Each call creates a new Derived — cache it if reused frequently.
+     */
+    at(i: number): Derived<T | undefined> {
+        const self = this;
+        return untrack(() => Derived.create((): T | undefined => self.get(i)));
+    }
+
+    /**
+     * Returns the current length of the array and registers it as a dependency.
+     * Subscribers are notified only when the array size changes.
+     */
+    length(): number {
+        this.#getOrCreateLengthSignal().get();
+        const arr = this.#getArr();
+        return arr ? arr.length : 0;
+    }
+
+    // -------------------------------------------------------------------------
+    // Iterator methods → ReactiveArray
+    // -------------------------------------------------------------------------
+
+    /**
+     * Returns a `ReactiveArray<U>` where each element is transformed by `fn`.
+     * 1:1 index mapping is maintained — no key function required.
+     */
+    map<U>(fn: (item: T, i: number) => U): ReactiveArray<U> {
+        const self = this;
+        return ReactiveArray._create<U>(() => {
+            const len = self.length();
+            return Array.from({ length: len }, (_, i) => fn(self.get(i)!, i));
+        }, null);
+    }
+
+    /**
+     * Returns a `ReactiveArray<T>` containing only items for which `fn` returns `true`.
+     *
+     * Provide a `key` function via `opts` for surgical per-index invalidation
+     * when items are objects.
+     */
+    filter(fn: (item: T, i: number) => boolean, opts?: IteratorOptions<T>): ReactiveArray<T> {
+        const keyFn = opts?.key ?? ((item: T) => item);
+        const keyIsDefault = !opts?.key;
+        const self = this;
+        return ReactiveArray._create<T>(() => {
+            const len = self.length();
+            const items: T[] = Array.from({ length: len }, (_, i) => self.get(i)!);
+            return items.filter(fn);
+        }, keyFn, keyIsDefault);
+    }
+
+    /**
+     * Returns a `ReactiveArray<T>` sorted by `comparator`.
+     *
+     * Provide a `key` function via `opts` for surgical per-index invalidation.
+     */
+    sort(comparator: (a: T, b: T) => number, opts?: IteratorOptions<T>): ReactiveArray<T> {
+        const keyFn = opts?.key ?? ((item: T) => item);
+        const keyIsDefault = !opts?.key;
+        const self = this;
+        return ReactiveArray._create<T>(() => {
+            const len = self.length();
+            const items: T[] = Array.from({ length: len }, (_, i) => self.get(i)!);
+            return [...items].sort(comparator);
+        }, keyFn, keyIsDefault);
+    }
+
+    // -------------------------------------------------------------------------
+    // Lifecycle
+    // -------------------------------------------------------------------------
+
+    /**
+     * Dispose this RefArray and all internal reactive nodes.
+     *
+     * No-op on sub-RefArrays created via `Ref.at()` — only root RefArrays
+     * (created via `Ref.create(T[])` or `RefArray.create()`) own the holder.
+     */
+    dispose(): void {
+        if (this.#prefix !== "") return; // non-root shares holder with parent Ref
+        if (this.#holder.disposed) return;
+        this.#holder.disposed = true;
+        for (const unsub of this.#holder.bindings.values()) unsub();
+        this.#holder.bindings.clear();
+        this.#holder.boundSignals.clear();
+        for (const sig of this.#holder.signals.values()) sig.dispose();
+        this.#holder.signals.clear();
+        for (const sig of this.#holder.lengthSignals.values()) sig.dispose();
+        this.#holder.lengthSignals.clear();
+        this.#holder.handles.clear();
+    }
+
+    // -------------------------------------------------------------------------
+    // Internal
+    // -------------------------------------------------------------------------
+
+    #getArr(): T[] | undefined {
+        if (this.#holder.unset) return undefined;
+        return getAtPath(this.#holder.state, this.#prefix) as T[] | undefined;
+    }
+
+    #getOrCreateLengthSignal(): Signal<number> {
+        let sig = this.#holder.lengthSignals.get(this.#prefix);
+        if (!sig) {
+            const arr = this.#getArr();
+            const len = arr ? arr.length : 0;
+            sig = untrack(() => Signal.create<number>(len));
+            this.#holder.lengthSignals.set(this.#prefix, sig);
+        }
+        return sig;
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -202,8 +517,9 @@ function collectLeafChanges(
  * Reference equality is checked at each node before recursing.
  *
  * **`.at(path)`** — returns a stable reactive handle:
- * - Object or array path → `Ref<V>`, a scoped view that forwards mutations
- *   to the root's signal map.
+ * - Array path → `RefArray<E>`, a scoped reactive array.
+ * - Object path → `Ref<V>`, a scoped view that forwards mutations to the
+ *   root's signal map.
  * - Primitive (leaf) path → `Derived<V>`, a writable reactive handle that
  *   routes reads and writes through the Ref's signal machinery.
  *
@@ -218,8 +534,9 @@ function collectLeafChanges(
  * state.patch("user", { name: "Bob", age: 30 });  // only notifies "user.name"
  * state.push("scores", 5);                         // appends 5
  *
- * const userRef = state.at("user");               // Ref<{ name: string; age: number }>
- * const nameHandle = state.at("user.name");       // Derived<string>
+ * const scoresRef  = state.at("scores");           // RefArray<number>
+ * const userRef    = state.at("user");             // Ref<{ name: string; age: number }>
+ * const nameHandle = state.at("user.name");        // Derived<string>
  */
 export class Ref<T extends object> {
     readonly #holder: RefHolder;
@@ -230,20 +547,25 @@ export class Ref<T extends object> {
         this.#prefix = prefix;
     }
 
+    /** Create a `RefArray<T>` from a root array. */
+    static create<T>(initial: T[]): RefArray<T>;
     /** Create a Ref with an initial value (active state). */
     static create<T extends object>(initial: T): Ref<T>;
     /**
      * Create a Ref in `Unset` state — no initial value.
      * `get(path)` returns `undefined` until the first `set(path, value)` call.
-     * Check `ref.isUnset` before reading.
      */
     static create<T extends object>(): Ref<T>;
-    static create<T extends object>(initial?: T): Ref<T> {
+    static create<T extends object>(initial?: T | T[]): Ref<T> | RefArray<any> {
+        if (Array.isArray(initial)) {
+            return RefArray.create(initial);
+        }
         const owner = getCurrentComputation();
         const holder: RefHolder = {
             state: initial ?? null,
             unset: initial === undefined,
             signals: new Map(),
+            lengthSignals: new Map(),
             handles: new Map(),
             bindings: new Map(),
             boundSignals: new Map(),
@@ -266,7 +588,7 @@ export class Ref<T extends object> {
      */
     get<P extends Path<T>>(path: P): PathValue<T, P> | undefined {
         const fullPath = resolveFullPath(this.#prefix, path as string);
-        this.#getOrCreateSignal(fullPath).get(); // tracked — registers dependency
+        getOrCreateSignal(this.#holder, fullPath).get(); // tracked — registers dependency
         if (this.#holder.unset) return undefined;
         return getAtPath(this.#holder.state, fullPath) as PathValue<T, P>;
     }
@@ -344,24 +666,28 @@ export class Ref<T extends object> {
     /**
      * Returns a stable reactive handle for the subtree or leaf at `path`.
      *
-     * - **Object or array path** → `Ref<V>`, a scoped view into this Ref's
-     *   internal state. Its mutations forward to the root's signal map. Repeated
-     *   calls with the same `path` return the identical `Ref<V>` instance.
+     * - **Array path** → `RefArray<E>`, a scoped reactive array.
+     * - **Object path** → `Ref<V>`, a scoped view into this Ref's internal state.
+     *   Mutations forward to the root's signal map. Repeated calls return the
+     *   identical `Ref<V>` instance.
      * - **Primitive (leaf) path** → `Derived<V>`, a writable reactive handle.
      *   Reads track through this Ref's signal for `path`. Writes route back
      *   through `set(path, value)`. Repeated calls return the same `Derived<V>`.
      *
      * @example
-     * const userRef  = state.at("user");       // Ref<{ name: string; age: number }>
-     * const nameD    = state.at("user.name");  // Derived<string>
+     * const scoresRef = state.at("scores");    // RefArray<number>
+     * const userRef   = state.at("user");      // Ref<{ name: string; age: number }>
+     * const nameD     = state.at("user.name"); // Derived<string>
      * nameD.get();                             // tracked read
      * nameD.set("Bob");                        // forwards to state.set("user.name", "Bob")
      */
     at<P extends Path<T>>(
         path: P,
-    ): PathValue<T, P> extends object
-        ? Ref<PathValue<T, P> & object>
-        : Derived<PathValue<T, P> | undefined> {
+    ): PathValue<T, P> extends any[]
+        ? RefArray<PathValue<T, P>[number]>
+        : PathValue<T, P> extends object
+          ? Ref<PathValue<T, P> & object>
+          : Derived<PathValue<T, P> | undefined> {
         const fullPath = resolveFullPath(this.#prefix, path as string);
         const cached = this.#holder.handles.get(fullPath);
         if (cached) return cached as any;
@@ -370,9 +696,12 @@ export class Ref<T extends object> {
             ? undefined
             : getAtPath(this.#holder.state, fullPath);
 
-        let handle: Ref<any> | Derived<unknown>;
-        if (isObjectLike(currentValue)) {
-            // Object or array — scoped sub-Ref sharing the same holder
+        let handle: Ref<any> | Derived<unknown> | RefArray<any>;
+        if (Array.isArray(currentValue)) {
+            // Array path → shared RefArray
+            handle = RefArray._fromHolder(this.#holder, fullPath);
+        } else if (isObjectLike(currentValue)) {
+            // Object path — scoped sub-Ref sharing the same holder
             handle = new Ref(this.#holder, fullPath);
         } else {
             // Primitive or undefined — writable Derived that routes through Ref
@@ -400,7 +729,7 @@ export class Ref<T extends object> {
         if (this.#holder.disposed) return;
         const fullPath = resolveFullPath(this.#prefix, path as string);
         const arr = (getAtPath(this.#holder.state, fullPath) as unknown[]) ?? [];
-        this.#applyArrayMutation(fullPath, arr, [...arr, ...items]);
+        applyArrayMutation(this.#holder, fullPath, arr, [...arr, ...items]);
     }
 
     /**
@@ -413,7 +742,7 @@ export class Ref<T extends object> {
         const fullPath = resolveFullPath(this.#prefix, path as string);
         const arr = (getAtPath(this.#holder.state, fullPath) as unknown[]) ?? [];
         if (arr.length === 0) return undefined;
-        this.#applyArrayMutation(fullPath, arr, arr.slice(0, -1));
+        applyArrayMutation(this.#holder, fullPath, arr, arr.slice(0, -1));
         return arr[arr.length - 1] as ArrayItem<T, P>;
     }
 
@@ -433,7 +762,7 @@ export class Ref<T extends object> {
         const arr = (getAtPath(this.#holder.state, fullPath) as unknown[]) ?? [];
         const newArr = [...arr];
         newArr.splice(start, deleteCount, ...items);
-        this.#applyArrayMutation(fullPath, arr, newArr);
+        applyArrayMutation(this.#holder, fullPath, arr, newArr);
     }
 
     /**
@@ -447,7 +776,7 @@ export class Ref<T extends object> {
         if (from === to || from >= arr.length || to >= arr.length) return;
         const newArr = [...arr];
         [newArr[from], newArr[to]] = [newArr[to], newArr[from]];
-        this.#applyArrayMutation(fullPath, arr, newArr);
+        applyArrayMutation(this.#holder, fullPath, arr, newArr);
     }
 
     /**
@@ -507,6 +836,8 @@ export class Ref<T extends object> {
         this.#holder.boundSignals.clear();
         for (const sig of this.#holder.signals.values()) sig.dispose();
         this.#holder.signals.clear();
+        for (const sig of this.#holder.lengthSignals.values()) sig.dispose();
+        this.#holder.lengthSignals.clear();
         this.#holder.handles.clear();
     }
 
@@ -647,69 +978,10 @@ export class Ref<T extends object> {
         return record;
     }
 
-    #getOrCreateSignal(fullPath: string): Signal<unknown> {
-        let sig = this.#holder.signals.get(fullPath);
-        if (!sig) {
-            const value =
-                this.#holder.unset
-                    ? undefined
-                    : getAtPath(this.#holder.state, fullPath);
-            sig = untrack(() => Signal.create<unknown>(value as unknown));
-            this.#holder.signals.set(fullPath, sig);
-        }
-        return sig;
-    }
-
     #notifyRelated(changedPath: string): void {
         for (const [key, sig] of this.#holder.signals) {
             if (isRelated(key, changedPath)) {
                 sig.set(getAtPath(this.#holder.state, key));
-            }
-        }
-    }
-
-    #applyArrayMutation(
-        fullPath: string,
-        oldArr: unknown[],
-        newArr: unknown[],
-    ): void {
-        this.#holder.state = setAtPath(this.#holder.state, fullPath, newArr);
-        this.#holder.unset = false;
-
-        // Collect changed leaves and build the notify set
-        const changes: Array<[string, unknown]> = [];
-        collectLeafChanges(fullPath, oldArr, newArr, changes);
-
-        const toNotify = new Set<string>();
-        toNotify.add(fullPath);
-        for (const [p] of changes) {
-            toNotify.add(p);
-            const parts = p.split(".");
-            for (let i = parts.length - 1; i > 0; i--) {
-                toNotify.add(parts.slice(0, i).join("."));
-            }
-        }
-        for (const p of toNotify) {
-            const sig = this.#holder.signals.get(p);
-            if (sig) sig.set(getAtPath(this.#holder.state, p));
-        }
-
-        // Dispose signals for indices that no longer exist after a shrink
-        if (newArr.length < oldArr.length) {
-            this.#cleanupOutOfRangeSignals(fullPath, newArr.length);
-        }
-    }
-
-    #cleanupOutOfRangeSignals(arrayPath: string, newLength: number): void {
-        const prefix = arrayPath + ".";
-        for (const [key, sig] of [...this.#holder.signals]) {
-            if (!key.startsWith(prefix)) continue;
-            const rest = key.slice(prefix.length);
-            const index = Number(rest.split(".")[0]);
-            if (!isNaN(index) && index >= newLength) {
-                sig.dispose();
-                this.#holder.signals.delete(key);
-                this.#holder.handles.delete(key);
             }
         }
     }

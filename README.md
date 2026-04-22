@@ -48,6 +48,8 @@ aljabr ships four independent entry points. Use what you need; ignore what you d
 - **Signal** — reactive mutable container; accepts a custom state union for domain-specific lifecycles
 - **Derived / AsyncDerived** — lazy computed values; async variant with Loading, Reloading, Ready, Failed, and Disposed states
 - **Ref** — reactive container for structured objects and arrays; per-path subscriptions, two-way signal bindings, first-class array mutations (`push`, `pop`, `splice`, `move`)
+- **RefArray** — reactive root-level array (returned by `Ref.create(T[])` and `Ref.at(arrayPath)`); pathless mutations + per-index reactive reads via `get(i)`, `at(i)`, and `length()`
+- **ReactiveArray** — read-only per-index reactive view returned by `map`, `filter`, and `sort`; key-based incremental diffing for surgical per-index invalidation; fully chainable
 - **Scope / Resource** — structured resource lifetime with LIFO cleanup guarantees; `Resource(acquire, release)` bracket pattern; `defer()` / `acquire()` for implicit scope stacks; `Symbol.asyncDispose` support
 - **watchEffect** — reactive async side effects with configurable retry policies (`Schedule.Fixed`, `.Linear`, `.Exponential`, `.Custom`), timeouts, `AbortSignal` cancellation, and `afterRetry` hooks
 - **Fault** — classify async failures into Fail (retryable domain error), Defect (unexpected panic), and Interrupted (abort)
@@ -311,6 +313,57 @@ formField.set("Dave");
 state.get("user.name"); // "Dave"
 ```
 
+**`Ref.create(T[])` returns `RefArray<T>`** — a reactive root-level array with pathless mutations and per-index reactive reads:
+
+```ts
+import { Ref } from "aljabr/prelude";
+
+// Ref.create([...]) returns RefArray<number>, not Ref<number[]>
+const items = Ref.create([1, 2, 3, 4, 5]);
+
+items.push(6);            // append
+items.pop();              // remove last
+items.splice(1, 2);       // remove 2 starting at index 1
+items.move(0, 3);         // swap positions
+
+items.get(0);             // tracked per-index read
+items.at(0);              // Derived<number | undefined> handle
+items.length();           // reactive length signal
+```
+
+**`RefArray.map / filter / sort`** return a `ReactiveArray<T>` — a read-only per-index reactive view:
+
+```ts
+const state = Ref.create({ items: [1, 2, 3, 4, 5] });
+
+// state.at("items") returns RefArray<number>
+const evens = state.at("items")
+    .filter(x => x % 2 === 0);            // ReactiveArray<number> → [2, 4]
+
+const doubled = state.at("items")
+    .filter(x => x % 2 === 0)
+    .map(x => x * 2);                     // ReactiveArray<number> → [4, 8]
+
+// Only the changed position fires — not the whole list
+evens.get(0);   // 2 — tracked; notified when this slot changes
+evens.length(); // 2 — notified only when output size changes
+
+state.push("items", 6); // evens becomes [2, 4, 6], length signal fires
+```
+
+For object arrays, pass a `key` function to enable surgical per-position invalidation:
+
+```ts
+type User = { id: number; name: string };
+const users = Ref.create<{ list: User[] }>({
+    list: [{ id: 1, name: "Alice" }, { id: 2, name: "Bob" }],
+});
+
+const sorted = users.at("list").sort(
+    (a, b) => a.name.localeCompare(b.name),
+    { key: u => u.id },  // identity by id — position changes don't fire unaffected slots
+);
+
 ### Async effects and retry
 
 ```ts
@@ -389,6 +442,8 @@ const [data, { refetch }] = query(() => fetchUser(count()));
 - [`Signal<T, S>`](docs/api/prelude/signal.md) — reactive mutable container; custom state protocols
 - [`Derived<T>` / `AsyncDerived<T, E>`](docs/api/prelude/derived.md) — lazy computed reactive values
 - [`Ref<T>`](docs/api/prelude/ref.md) — structured reactive objects and arrays
+- [`RefArray<T>`](docs/api/prelude/ref.md#refarrayt) — reactive root-level array; pathless mutations, per-index reads, iterator methods
+- [`ReactiveArray<T>`](docs/api/prelude/reactive-array.md) — read-only per-index reactive view; key-based incremental diffing; chainable `map` / `filter` / `sort`
 - [`Scope` / `Resource`](docs/api/prelude/scope.md) — structured resource lifetimes
 - [`Effect<T, E>` / `watchEffect`](docs/api/prelude/effect.md) — reactive async effects
 - [`Fault<E>`](docs/api/prelude/fault.md) — classify async failures

@@ -1,7 +1,12 @@
-# API Reference: Ref
+# API Reference: Ref · RefArray
 
 ```ts
-import { Ref, type Path, type PathValue, type ArrayPath, type ArrayItem } from "aljabr/prelude"
+import {
+  Ref,
+  RefArray,
+  type Path, type PathValue,
+  type ArrayPath, type ArrayItem,
+} from "aljabr/prelude"
 ```
 
 ---
@@ -21,18 +26,31 @@ Internally, `Ref<T>` maintains a flat `Map<string, Signal<unknown>>` of leaf sig
 ### `Ref.create()`
 
 ```ts
-Ref.create<T extends object>(initial: T): Ref<T>   // active state
-Ref.create<T extends object>(): Ref<T>             // Unset state
+Ref.create<T>(initial: T[]): RefArray<T>            // array → RefArray
+Ref.create<T extends object>(initial: T): Ref<T>    // object → Ref (active state)
+Ref.create<T extends object>(): Ref<T>              // no value → Ref (Unset state)
 ```
 
-Creates a new `Ref`. If called inside a reactive computation, the Ref is automatically disposed when the owner is disposed.
+Creates a new `Ref` or `RefArray` depending on the argument type.
+
+- **Array argument** → returns `RefArray<T>`. Prefer this over `Ref.create<T[]>({...})` when the root IS the array.
+- **Object argument** → returns `Ref<T>` in active state.
+- **No argument** → returns `Ref<T>` in `Unset` state; `get()` returns `undefined` until first `set()`.
+
+If called inside a reactive computation, the result is automatically disposed when the owner is disposed.
 
 ```ts
+// Object Ref (active)
 const state = Ref.create({
     user: { name: "Alice", age: 30 },
     scores: [1, 2, 3],
     active: true,
 })
+
+// Root array → RefArray<number>
+const items = Ref.create([1, 2, 3, 4, 5])
+items.push(6)           // RefArray methods available at the root
+items.length()          // 6
 
 // Unset — no initial value; get() returns undefined until first set()
 const pending = Ref.create<{ name: string }>()
@@ -141,14 +159,17 @@ userRef.isUnset  // true — handle is still alive, just empty
 
 ```ts
 ref.at<P extends Path<T>>(path: P):
-    PathValue<T, P> extends object
-        ? Ref<PathValue<T, P> & object>
-        : Derived<PathValue<T, P> | undefined>
+    PathValue<T, P> extends any[]
+        ? RefArray<PathValue<T, P>[number]>
+        : PathValue<T, P> extends object
+          ? Ref<PathValue<T, P> & object>
+          : Derived<PathValue<T, P> | undefined>
 ```
 
 Returns a stable reactive handle for the subtree or leaf at `path`.
 
-- **Object or array path** → `Ref<V>`, a scoped view that forwards mutations to the root's signal map.
+- **Array path** → `RefArray<E>`, a scoped reactive array backed by the same shared holder. All mutations propagate to the root's signal map and vice versa.
+- **Object path** → `Ref<V>`, a scoped view that forwards mutations to the root's signal map.
 - **Primitive (leaf) path** → `Derived<V | undefined>`, a writable reactive handle. Reads track through the Ref's signal for `path`; writes route back through `ref.set(path, value)`.
 
 Repeated calls with the same `path` return the **same cached instance**.
@@ -156,9 +177,16 @@ Repeated calls with the same `path` return the **same cached instance**.
 `.at()` is **binding-unaware** — it always returns the same type of handle regardless of whether a signal has been bound to the path via `.bind()`.
 
 ```ts
-const userRef  = ref.at("user")       // Ref<{ name: string; age: number }>
-const nameD    = ref.at("user.name")  // Derived<string | undefined>
+const scoresRef = ref.at("scores")    // RefArray<number>
+const userRef   = ref.at("user")      // Ref<{ name: string; age: number }>
+const nameD     = ref.at("user.name") // Derived<string | undefined>
 
+// RefArray: per-index reads + iterator methods
+scoresRef.get(0)            // 1 — tracked
+scoresRef.length()          // 3 — tracked
+const evens = scoresRef.filter(x => x % 2 === 0)  // ReactiveArray<number>
+
+// Primitive Derived: tracked read and write
 nameD.get()           // tracked read
 nameD.set("Bob")      // forwards to ref.set("user.name", "Bob")
 ```
@@ -344,6 +372,7 @@ ref.set("active", false)  // no-op after dispose
 
 | Method | Deletion-aware | Binding-aware | Returns | Cached |
 |---|---|---|---|---|
+| `.at(path)` — array | No | No | `RefArray<E>` | Yes |
 | `.at(path)` — object | No | No | `Ref<V>` | Yes |
 | `.at(path)` — leaf | No | No | `Derived<V \| undefined>` | Yes |
 | `.maybeAt(path)` | Yes | No | `Derived<Option<V>>` | No |
@@ -470,9 +499,209 @@ ref.get("name")        // "Ada"
 
 ---
 
+---
+
+## `RefArray<T>`
+
+```ts
+import { Ref, RefArray } from "aljabr/prelude"
+```
+
+A reactive mutable container for a root-level array. Returned by `Ref.create(T[])` and `Ref.at(path)` when the path resolves to an array.
+
+Unlike `Ref<T[]>`, `RefArray<T>` exposes **pathless mutation methods** and **per-index reactive reads** without requiring a path argument. The element type `T` is the item type, not the array type.
+
+---
+
+### `RefArray.create()`
+
+```ts
+RefArray.create<T>(initial: T[]): RefArray<T>
+```
+
+Creates a standalone `RefArray`. Equivalent to `Ref.create(T[])` — prefer the latter for consistency.
+
+```ts
+const items = RefArray.create([10, 20, 30])
+items.get(0)    // 10
+items.length()  // 3
+```
+
+---
+
+### `.get(i)`
+
+```ts
+refArray.get(i: number): T | undefined
+```
+
+Read the item at index `i` and register it as a dependency in the active tracking context. Returns `undefined` for out-of-bounds indices.
+
+Only subscribers to index `i` are notified when `items[i]` changes — other index subscribers are unaffected.
+
+```ts
+const items = Ref.create([1, 2, 3])
+const first = Derived.create(() => items.get(0))
+
+items.splice(0, 1, 99)
+first.get()  // 99
+```
+
+---
+
+### `.at(i)`
+
+```ts
+refArray.at(i: number): Derived<T | undefined>
+```
+
+Returns a `Derived<T | undefined>` handle for index `i`. Each call creates a new `Derived`. Cache it if reused frequently.
+
+```ts
+const firstHandle = items.at(0)  // Derived<number | undefined>
+firstHandle.get()  // 1
+```
+
+---
+
+### `.length()`
+
+```ts
+refArray.length(): number
+```
+
+Returns the current length of the array and registers it as a reactive dependency. Subscribers are notified **only when the array size changes**, not on element-only mutations.
+
+```ts
+const len = Derived.create(() => items.length())
+items.push(4)   // len invalidated (3 → 4)
+items.move(0, 3) // len NOT invalidated (size unchanged)
+```
+
+---
+
+### Pathless mutations
+
+All methods operate on the root array without requiring a path argument.
+
+#### `.push(...items)`
+
+```ts
+refArray.push(...items: T[]): void
+```
+
+Append one or more items to the end.
+
+#### `.pop()`
+
+```ts
+refArray.pop(): T | undefined
+```
+
+Remove and return the last item. Returns `undefined` on an empty array.
+
+#### `.splice(start, deleteCount, ...items)`
+
+```ts
+refArray.splice(start: number, deleteCount: number, ...items: T[]): void
+```
+
+Remove and/or insert elements starting at `start`. Signals for indices that no longer exist are disposed.
+
+#### `.move(from, to)`
+
+```ts
+refArray.move(from: number, to: number): void
+```
+
+Swap the elements at indices `from` and `to`. Only signals at those two positions are notified. No-op if `from === to` or either index is out of bounds.
+
+---
+
+### Iterator methods
+
+All return a [`ReactiveArray<U>`](./reactive-array.md) — a read-only per-index reactive view.
+
+#### `.map(fn)`
+
+```ts
+refArray.map<U>(fn: (item: T, i: number) => U): ReactiveArray<U>
+```
+
+Returns a new `ReactiveArray<U>` where each element is transformed by `fn`. 1:1 index correspondence is maintained — no key function needed.
+
+```ts
+const doubled = items.map(x => x * 2)  // ReactiveArray<number>
+```
+
+#### `.filter(fn, opts?)`
+
+```ts
+refArray.filter(
+  fn: (item: T, i: number) => boolean,
+  opts?: { key?: (item: T) => unknown },
+): ReactiveArray<T>
+```
+
+Returns a `ReactiveArray<T>` containing only items matching `fn`. Provide a `key` function for surgical per-position invalidation when items are objects.
+
+```ts
+const evens = items.filter(x => x % 2 === 0)
+
+// Object array — always provide a key:
+const activeUsers = users.filter(
+  u => u.active,
+  { key: u => u.id },
+)
+```
+
+#### `.sort(comparator, opts?)`
+
+```ts
+refArray.sort(
+  comparator: (a: T, b: T) => number,
+  opts?: { key?: (item: T) => unknown },
+): ReactiveArray<T>
+```
+
+Returns a `ReactiveArray<T>` sorted by `comparator`. Provide a `key` for surgical per-position invalidation.
+
+```ts
+const sorted = items.sort((a, b) => a - b)
+```
+
+---
+
+### `.dispose()`
+
+```ts
+refArray.dispose(): void
+```
+
+Dispose the RefArray and all internal reactive nodes. **No-op on sub-RefArrays** returned by `Ref.at()` — only root RefArrays (created via `Ref.create(T[])` or `RefArray.create()`) own the holder.
+
+---
+
+### Key function and dev warnings
+
+`filter` and `sort` break index correspondence — without identity tracking, a mutation that reorders elements would fire every per-position subscriber. The `key` option enables surgical invalidation:
+
+```ts
+type IteratorOptions<T> = { key?: (item: T) => unknown }
+```
+
+**Default key:** `item => item` (reference equality). Works for primitive arrays. For object arrays, this breaks under `Ref`'s immutable-update model (every `patch` produces new references). **Always provide a `key` for object arrays.**
+
+**Dev-mode warnings fire when:**
+- No key is provided and items are objects (warning emitted once per `ReactiveArray` instance)
+- Two items produce the same key (duplicate keys → ambiguous identity)
+
+---
+
 ## See also
 
 - [`Signal<T, S>`](./signal.md) — flat reactive value container; used internally by `Ref`
 - [`Derived<T>`](./derived.md) — lazy computed reactive value; returned by `.at()` for leaf paths
+- [`ReactiveArray<T>`](./reactive-array.md) — read-only per-index reactive view returned by iterator methods
 - [`Option<T>`](./option.md) — present/absent container; returned by `.maybeAt()`
 - [`batch`](./context.md#batch) — coalesce multiple Ref writes into a single notification pass

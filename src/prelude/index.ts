@@ -11,4 +11,5 @@ export * from "./persist.ts";
 export * from "./tree.ts";
 export * from "./validation.ts";
 export * from "./ref.ts";
+export * from "./reactive-array.ts";
 export { instanceOf } from "../union.ts";
