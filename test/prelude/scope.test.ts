@@ -9,6 +9,7 @@ import {
     acquire,
     type ScopeHandle,
 } from "../../src/prelude/scope";
+import { createOwner, trackIn } from "../../src/prelude/context";
 import { getTag } from "../../src/union";
 import { match } from "../../src/match";
 
@@ -218,34 +219,58 @@ describe("Scope[Symbol.asyncDispose]", () => {
 // ---------------------------------------------------------------------------
 
 describe("Scope — catchDefect option", () => {
-    it("routes cascade defects to the provided handler instead of console.warn", async () => {
+    it("direct dispose() returns defects without calling catchDefect", async () => {
         const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
         const catchDefect = vi.fn();
 
-        // We test the cascade path by using [Symbol.asyncDispose] — the cascade
-        // fires when the owning computation disposes, which happens in [Symbol.asyncDispose]
-        // only indirectly. The easier route: verify that catchDefect is wired at
-        // construction time by constructing the Scope with the option and inspecting
-        // that no console.warn fires when catchDefect is provided.
-
-        // Build a scope whose finalizer throws, and dispose it explicitly using
-        // the internal path — we can verify behaviour by checking the catchDefect
-        // callback fires when we go through the cascade path.
-        //
-        // The cascade fires on computation.dispose → handle.dispose → defects routed.
-        // We replicate this by calling [Symbol.asyncDispose] on a child scope that
-        // has a defect, using the catchDefect hook.
-
         const scope = Scope({ catchDefect });
-        scope.defer(() => { throw new Error("cascade defect"); });
+        scope.defer(() => { throw new Error("direct defect"); });
 
-        // dispose() directly collects the defect but does NOT call catchDefect
-        // (catchDefect is for the fire-and-forget cascade path).
         const defects = await scope.dispose();
         expect(defects).toHaveLength(1);
+        // Direct disposal returns defects to the caller — catchDefect is NOT invoked
         expect(catchDefect).not.toHaveBeenCalled();
         expect(warnSpy).not.toHaveBeenCalled();
 
+        warnSpy.mockRestore();
+    });
+
+    it("cascade path routes defects to catchDefect instead of console.warn", async () => {
+        const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+        const catchDefect = vi.fn();
+
+        // Create a parent computation; Scope() auto-parents to getCurrentComputation().
+        const parent = createOwner(null);
+        trackIn(parent, () => {
+            const scope = Scope({ catchDefect });
+            scope.defer(() => { throw new Error("cascade defect"); });
+        });
+
+        // Disposing the parent fires all child computation cleanups, which triggers
+        // the Scope's cascade disposal (fire-and-forget path → catchDefect).
+        parent.dispose();
+
+        // Cascade is async — let the promise chain settle.
+        await new Promise(r => setTimeout(r, 0));
+
+        expect(catchDefect).toHaveBeenCalledOnce();
+        expect(warnSpy).not.toHaveBeenCalled();
+        warnSpy.mockRestore();
+    });
+
+    it("cascade path uses console.warn when no catchDefect is provided", async () => {
+        const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+
+        const parent = createOwner(null);
+        trackIn(parent, () => {
+            const scope = Scope(); // no catchDefect
+            scope.defer(() => { throw new Error("warn defect"); });
+        });
+
+        parent.dispose();
+        await new Promise(r => setTimeout(r, 0));
+
+        expect(warnSpy).toHaveBeenCalledOnce();
         warnSpy.mockRestore();
     });
 });

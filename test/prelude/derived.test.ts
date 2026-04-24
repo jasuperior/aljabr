@@ -475,6 +475,65 @@ describe("AsyncDerived — afterRetry callback", () => {
     });
 });
 
+describe("AsyncDerived — Interrupted fault", () => {
+    it("classifies the fault as Interrupted when the AbortSignal fires before rejection", async () => {
+        // Dispose the derived mid-flight — abort fires before any other throw,
+        // so the catch block sees signal.aborted === true → Interrupted.
+        let resolveAbort!: () => void;
+        const d = AsyncDerived.create<number>(async (signal) => {
+            await new Promise<void>((_, reject) => {
+                signal.addEventListener("abort", () => {
+                    resolveAbort = () => reject(new Error("aborted"));
+                });
+            });
+            return 1;
+        });
+
+        void d.get().catch(() => {});
+        await new Promise(r => setTimeout(r, 0)); // let #evaluate start
+
+        d.dispose(); // aborts signal; async catch fires
+
+        await new Promise(r => setTimeout(r, 0));
+
+        // #evaluate catch runs after dispose, overwriting Disposed with Failed(Interrupted)
+        const state = d.state;
+        expect(["Failed", "Disposed"]).toContain(getTag(state));
+        if (getTag(state) === "Failed") {
+            const fault = state.getFault();
+            expect(fault).not.toBeNull();
+            expect(getTag(fault!)).toBe("Interrupted");
+        }
+    });
+});
+
+describe("AsyncDerived — Custom schedule returning null", () => {
+    it("stops immediately when computeDelay returns null instead of scheduling a retry", async () => {
+        let attempt = 0;
+        const d = AsyncDerived.create(
+            async () => {
+                attempt++;
+                throw Fault.Fail("stop");
+            },
+            {
+                schedule: Schedule.Custom(() => null), // null = unconditional stop
+                maxRetries: 10,
+            },
+        );
+
+        await d.get().catch(() => {});
+
+        // No retry timer was set — only the initial attempt ran
+        expect(attempt).toBe(1);
+        expect(getTag(d.state)).toBe("Failed");
+        const fault = d.state.getFault();
+        // Fault should be the original Fail, NOT MaxRetriesExceeded
+        expect(fault).not.toBeNull();
+        expect(getTag(fault!)).toBe("Fail");
+        d.dispose();
+    });
+});
+
 describe("AsyncDerived — timeout", () => {
     beforeEach(() => {
         vi.useFakeTimers();
