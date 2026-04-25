@@ -82,8 +82,27 @@ export function trackIn<T>(computation: Computation, fn: () => T): T {
 
 /**
  * Create a new owner node in the computation tree.
- * If `parent` is not provided, the current computation is used as the parent.
- * Pass `null` explicitly to create a root owner with no parent.
+ *
+ * @param parent - The parent owner to attach to, or `null` to create a root
+ *   owner with no parent. Omit to inherit the currently active computation.
+ * @returns The new {@link Computation} owner.
+ *
+ * @remarks
+ * **Disposal is LIFO.** When `dispose()` is called, child owners are disposed
+ * in reverse creation order, then cleanups are run in reverse registration
+ * order. Resources created last are released first — matching the guarantee
+ * provided by `try/finally` and `Symbol.asyncDispose`.
+ *
+ * @example
+ * const root = createOwner(null);
+ *
+ * const child = createOwner(root);
+ * child.cleanups.add(() => console.log("child"));
+ *
+ * root.cleanups.add(() => console.log("root"));
+ *
+ * root.dispose();
+ * // logs: "child", then "root"
  */
 export function createOwner(parent?: Computation | null): Computation {
     const p = parent !== undefined ? parent : getCurrentComputation();
@@ -91,9 +110,9 @@ export function createOwner(parent?: Computation | null): Computation {
     const owner: Computation = {
         dirty() {},
         dispose() {
-            for (const child of [...owner.children]) child.dispose();
+            for (const child of [...owner.children].reverse()) child.dispose();
             owner.children.clear();
-            for (const cleanup of [...owner.cleanups]) cleanup();
+            for (const cleanup of [...owner.cleanups].reverse()) cleanup();
             owner.cleanups.clear();
             for (const source of [...owner.sources]) source.unsubscribe(owner);
             owner.sources.clear();

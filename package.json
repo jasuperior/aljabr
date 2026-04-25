@@ -46,6 +46,26 @@
             "import": "./dist/signals.js",
             "require": "./dist/signals.cjs",
             "types": "./dist/signals/index.d.ts"
+        },
+        "./ui": {
+            "import": "./dist/ui.js",
+            "require": "./dist/ui.cjs",
+            "types": "./dist/ui/index.d.ts"
+        },
+        "./ui/dom": {
+            "import": "./dist/ui-dom.js",
+            "require": "./dist/ui-dom.cjs",
+            "types": "./dist/ui/dom/index.d.ts"
+        },
+        "./ui/jsx-runtime": {
+            "import": "./dist/ui-jsx-runtime.js",
+            "require": "./dist/ui-jsx-runtime.cjs",
+            "types": "./dist/ui/jsx-runtime.d.ts"
+        },
+        "./ui/jsx-dev-runtime": {
+            "import": "./dist/ui-jsx-dev-runtime.js",
+            "require": "./dist/ui-jsx-dev-runtime.cjs",
+            "types": "./dist/ui/jsx-dev-runtime.d.ts"
         }
     },
     "files": [

@@ -13,14 +13,16 @@ It started as a pattern-matching utility. It grew into a small, coherent standar
 
 ## What's in the box
 
-aljabr ships four independent entry points. Use what you need; ignore what you don't.
+aljabr ships independent entry points. Use what you need; ignore what you don't.
 
-| Entry point      | What it gives you                                                                                                         |
-| ---------------- | ------------------------------------------------------------------------------------------------------------------------- |
-| `aljabr`         | Tagged union factories, exhaustive `match()`, `when()` arms, structural patterns, `is.*` wildcards, `select()` extraction |
-| `aljabr/prelude` | Result, Option, Validation, Signal, Derived, Ref, Scope, Resource, watchEffect, persistence                               |
-| `aljabr/schema`  | Type-safe decode/encode pipeline for external data; errors surface as a `Validation`                                      |
-| `aljabr/signals` | Convenience layer over the reactive primitives (`signal()`, `memo()`, `effect()`, `scope()`, `query()`)                   |
+| Entry point            | What it gives you                                                                                                         |
+| ---------------------- | ------------------------------------------------------------------------------------------------------------------------- |
+| `aljabr`               | Tagged union factories, exhaustive `match()`, `when()` arms, structural patterns, `is.*` wildcards, `select()` extraction |
+| `aljabr/prelude`       | Result, Option, Validation, Signal, Derived, Ref, Scope, Resource, watchEffect, persistence                               |
+| `aljabr/schema`        | Type-safe decode/encode pipeline for external data; errors surface as a `Validation`                                      |
+| `aljabr/signals`       | Convenience layer over the reactive primitives (`signal()`, `memo()`, `effect()`, `scope()`, `query()`)                   |
+| `aljabr/ui`            | Native reactive UI layer — `view()`, `createRenderer()`, JSX support, function components                                 |
+| `aljabr/ui/dom`        | DOM rendering target (`domHost`) for browser apps                                                                         |
 
 ---
 
@@ -48,6 +50,8 @@ aljabr ships four independent entry points. Use what you need; ignore what you d
 - **Signal** — reactive mutable container; accepts a custom state union for domain-specific lifecycles
 - **Derived / AsyncDerived** — lazy computed values; async variant with Loading, Reloading, Ready, Failed, and Disposed states
 - **Ref** — reactive container for structured objects and arrays; per-path subscriptions, two-way signal bindings, first-class array mutations (`push`, `pop`, `splice`, `move`)
+- **RefArray** — reactive root-level array (returned by `Ref.create(T[])` and `Ref.at(arrayPath)`); pathless mutations + per-index reactive reads via `get(i)`, `at(i)`, and `length()`
+- **ReactiveArray** — read-only per-index reactive view returned by `map`, `filter`, and `sort`; key-based incremental diffing for surgical per-index invalidation; fully chainable
 - **Scope / Resource** — structured resource lifetime with LIFO cleanup guarantees; `Resource(acquire, release)` bracket pattern; `defer()` / `acquire()` for implicit scope stacks; `Symbol.asyncDispose` support
 - **watchEffect** — reactive async side effects with configurable retry policies (`Schedule.Fixed`, `.Linear`, `.Exponential`, `.Custom`), timeouts, `AbortSignal` cancellation, and `afterRetry` hooks
 - **Fault** — classify async failures into Fail (retryable domain error), Defect (unexpected panic), and Interrupted (abort)
@@ -63,6 +67,20 @@ aljabr ships four independent entry points. Use what you need; ignore what you d
 - **Deep error paths** — every `DecodeError` carries `path: (string | number)[]`; errors accumulate like `Validation`
 - **Custom codecs** — `defineDecoder<I, O>()` and `defineCodec<I, O>()` for bespoke decode/encode pipelines
 - **`decode()` / `encode()` / `roundtrip()`** — returns a `Validation<T, DecodeError>`
+
+**UI (`aljabr/ui`)**
+
+- **`view()` factory** — create element, component, and fragment nodes with a single, overloaded function; also the JSX factory target
+- **JSX support** — set `jsxImportSource: "aljabr/ui"` in tsconfig; `<div>`, `<>`, and function components just work
+- **Function components** — plain functions `(props: P) => ViewNode`; no classes, no hooks, no registration
+- **Reactive children** — wrap any child in `() => ...` to create a reactive region that re-renders in place when signal dependencies change
+- **Reactive props** — function props (non-event-handlers) are tracked reactively; only the affected attribute is updated on change
+- **Reactive lists** — pass a `ReactiveArray<ViewNode>` directly as a child; the list region re-renders when the array mutates
+- **Pluggable renderer** — `RendererHost<N, E>` interface allows DOM, canvas, SSR, or any custom target as equal peers
+- **`domHost`** — production DOM implementation with class/style/event/IDL-property mapping
+- **Lifecycle via `Scope`** — `defer()` and `acquire()` register cleanup on the current component owner; LIFO disposal on unmount
+- **Context** — existing `context<T>()` threads through the owner tree across component boundaries; no Provider needed
+- **No magic unwrapping** — signals are never auto-read; reactivity is explicit via getter functions
 
 **Zero dependencies — pure TypeScript, no runtime footprint.**
 
@@ -241,6 +259,41 @@ const conn = await scope.acquire(
 await scope.dispose(); // conn.close() called automatically
 ```
 
+### 6. Render a reactive UI
+
+```ts
+import { createRenderer, view } from "aljabr/ui";
+import { domHost } from "aljabr/ui/dom";
+import { Signal, Ref } from "aljabr/prelude";
+
+const { mount } = createRenderer(domHost);
+
+// Reactive signal — any child reading it re-renders on change
+const count = Signal.create(0);
+
+function Counter() {
+    return view("div", null,
+        view("span", null, () => `Count: ${count.get()}`),
+        view("button", { onClick: () => count.set((count.get() ?? 0) + 1) }, "+"),
+    );
+}
+
+const unmount = mount(() => view(Counter, {}), document.getElementById("root")!);
+```
+
+With JSX (add `"jsxImportSource": "aljabr/ui"` to tsconfig):
+
+```tsx
+function Counter() {
+    return (
+        <div>
+            <span>{() => `Count: ${count.get()}`}</span>
+            <button onClick={() => count.set((count.get() ?? 0) + 1)}>+</button>
+        </div>
+    );
+}
+```
+
 ---
 
 ## Prelude
@@ -311,6 +364,57 @@ formField.set("Dave");
 state.get("user.name"); // "Dave"
 ```
 
+**`Ref.create(T[])` returns `RefArray<T>`** — a reactive root-level array with pathless mutations and per-index reactive reads:
+
+```ts
+import { Ref } from "aljabr/prelude";
+
+// Ref.create([...]) returns RefArray<number>, not Ref<number[]>
+const items = Ref.create([1, 2, 3, 4, 5]);
+
+items.push(6);            // append
+items.pop();              // remove last
+items.splice(1, 2);       // remove 2 starting at index 1
+items.move(0, 3);         // swap positions
+
+items.get(0);             // tracked per-index read
+items.at(0);              // Derived<number | undefined> handle
+items.length();           // reactive length signal
+```
+
+**`RefArray.map / filter / sort`** return a `ReactiveArray<T>` — a read-only per-index reactive view:
+
+```ts
+const state = Ref.create({ items: [1, 2, 3, 4, 5] });
+
+// state.at("items") returns RefArray<number>
+const evens = state.at("items")
+    .filter(x => x % 2 === 0);            // ReactiveArray<number> → [2, 4]
+
+const doubled = state.at("items")
+    .filter(x => x % 2 === 0)
+    .map(x => x * 2);                     // ReactiveArray<number> → [4, 8]
+
+// Only the changed position fires — not the whole list
+evens.get(0);   // 2 — tracked; notified when this slot changes
+evens.length(); // 2 — notified only when output size changes
+
+state.push("items", 6); // evens becomes [2, 4, 6], length signal fires
+```
+
+For object arrays, pass a `key` function to enable surgical per-position invalidation:
+
+```ts
+type User = { id: number; name: string };
+const users = Ref.create<{ list: User[] }>({
+    list: [{ id: 1, name: "Alice" }, { id: 2, name: "Bob" }],
+});
+
+const sorted = users.at("list").sort(
+    (a, b) => a.name.localeCompare(b.name),
+    { key: u => u.id },  // identity by id — position changes don't fire unaffected slots
+);
+
 ### Async effects and retry
 
 ```ts
@@ -356,6 +460,69 @@ const [data, { refetch }] = query(() => fetchUser(count()));
 
 ---
 
+## UI layer
+
+`aljabr/ui` is a native reactive rendering system. It does not diff a virtual DOM — it renders a static tree once and surgically updates only the regions whose signal dependencies change.
+
+```ts
+import { createRenderer, view, Fragment } from "aljabr/ui";
+import { domHost } from "aljabr/ui/dom";
+
+const { mount } = createRenderer(domHost);
+```
+
+### Reactive regions
+
+Wrap any child in a function to make it a **reactive region**. The renderer subscribes to the signals read inside it and re-evaluates only that region when dependencies change:
+
+```ts
+const theme = Signal.create<"light" | "dark">("light");
+const user = Signal.create("Alice");
+
+mount(() =>
+    view("div", { class: () => `app app--${theme.get()}` },
+        view("h1", null, () => `Hello, ${user.get()}`),
+        view("p", null, "This line never re-renders."),
+    ),
+    document.body,
+);
+
+theme.set("dark"); // updates class — <h1> and <p> untouched
+user.set("Bob");   // updates <h1> text — class and <p> untouched
+```
+
+### Function components
+
+A component is any function `(props: P) => ViewNode`. Signals created inside a component are owned by that component and disposed when it unmounts:
+
+```ts
+function Timer() {
+    const elapsed = Signal.create(0);
+    const id = setInterval(() => elapsed.set((elapsed.get() ?? 0) + 1), 1000);
+    defer(() => clearInterval(id));
+
+    return view("span", null, () => `${elapsed.get()}s`);
+}
+
+mount(() => view(Timer, {}), document.body);
+```
+
+### Reactive lists
+
+Pass a `ReactiveArray<ViewNode>` (from `RefArray.map`, `.filter`, `.sort`) directly as a child:
+
+```ts
+const items = Ref.create({ list: ["apple", "banana", "cherry"] });
+
+const rows = items.at("list").map(item => view("li", null, item));
+
+mount(() => view("ul", null, rows), document.body);
+
+items.push("list", "date"); // new <li> appears — rest untouched
+```
+
+---
+
 ## API Reference
 
 ### Core
@@ -380,6 +547,14 @@ const [data, { refetch }] = query(() => fetchUser(count()));
 
 - [`signal()` / `memo()` / `effect()` / `scope()` / `query()`](docs/api/signals.md) — convenience reactive API
 
+### UI (`aljabr/ui`)
+
+- [`view()` / `Fragment` / `ViewNode`](docs/api/ui.md) — element, component, and fragment factories
+- [`createRenderer()` / `mount()`](docs/api/ui.md#createrendererhost-protocol) — renderer factory and mounting
+- [`RendererHost<N, E>`](docs/api/ui.md#rendererhost) — contract for custom rendering targets
+- [`domHost`](docs/api/ui.md#domhost) — production DOM implementation
+- [JSX reference](docs/api/ui.md#jsx-reference) — tsconfig setup and JSX/`view()` equivalence
+
 ### Prelude (`aljabr/prelude`)
 
 - [Prelude overview](docs/api/prelude/index.md) — all modules at a glance
@@ -389,6 +564,8 @@ const [data, { refetch }] = query(() => fetchUser(count()));
 - [`Signal<T, S>`](docs/api/prelude/signal.md) — reactive mutable container; custom state protocols
 - [`Derived<T>` / `AsyncDerived<T, E>`](docs/api/prelude/derived.md) — lazy computed reactive values
 - [`Ref<T>`](docs/api/prelude/ref.md) — structured reactive objects and arrays
+- [`RefArray<T>`](docs/api/prelude/ref.md#refarrayt) — reactive root-level array; pathless mutations, per-index reads, iterator methods
+- [`ReactiveArray<T>`](docs/api/prelude/reactive-array.md) — read-only per-index reactive view; key-based incremental diffing; chainable `map` / `filter` / `sort`
 - [`Scope` / `Resource`](docs/api/prelude/scope.md) — structured resource lifetimes
 - [`Effect<T, E>` / `watchEffect`](docs/api/prelude/effect.md) — reactive async effects
 - [`Fault<E>`](docs/api/prelude/fault.md) — classify async failures
@@ -401,6 +578,7 @@ const [data, { refetch }] = query(() => fetchUser(count()));
 
 ## Guides
 
+- [Building UI with aljabr](docs/guides/ui.md) — static tree → reactive regions → components → lifecycle → reactive lists
 - [Getting Started](docs/guides/getting-started.md) — first union through real-world patterns
 - [Union Patterns](docs/guides/union-patterns.md) — `is.*`, `select()`, destructuring, guards
 - [Schema](docs/guides/schema.md) — decoding external data, error paths, object modes, variant mapping
@@ -408,6 +586,6 @@ const [data, { refetch }] = query(() => fetchUser(count()));
 - [Advanced Patterns](docs/guides/advanced/index.md)
     - [Union Branching](docs/guides/advanced/union-branching.md) — Result chaining, Option as null discipline
     - [Signal Protocols](docs/guides/advanced/signal-protocols.md) — domain-specific signal state machines
-    - [Reactive UI](docs/guides/advanced/reactive-ui.md) — Ref + Derived + AsyncDerived composition
+    - [Reactive UI Patterns](docs/guides/advanced/reactive-ui.md) — Ref + Derived + AsyncDerived composition for complex data-layer state
     - [Resource Lifetime](docs/guides/advanced/resource-lifetime.md) — Scope boundaries, bracket patterns
     - [Parser Construction](docs/guides/advanced/parser-construction.md) — token/AST unions, recursive match

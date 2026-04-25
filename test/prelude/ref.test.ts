@@ -686,6 +686,33 @@ describe("ref.delete", () => {
         // Binding released — the set on sig should not update the ref
         expect(ref.get("user.name")).toBeUndefined();
     });
+
+    it("removes an element from a nested array by index path", () => {
+        // Exercises #deleteAtPath Array.isArray branch (tail.length === 0, obj is array)
+        const ref = makeState(); // scores: [1, 2, 3]
+        ref.delete("scores.1"); // remove index 1 → [1, 3]
+        const scores = ref.get("scores") as number[];
+        expect(scores).toHaveLength(2);
+        expect(scores[0]).toBe(1);
+        expect(scores[1]).toBe(3);
+    });
+
+    it("recursively descends into a nested array element to delete a deeper key", () => {
+        // Exercises #deleteAtPath recursive Array.isArray branch (tail.length > 0, obj is array)
+        type Row = { items: Array<{ id: number; label: string }> };
+        const ref = Ref.create<Row>({
+            items: [
+                { id: 1, label: "a" },
+                { id: 2, label: "b" },
+            ],
+        });
+        ref.delete("items.0.label"); // recurse into array[0], delete "label"
+        const first = ref.get("items.0")!;
+        expect(first.id).toBe(1);
+        expect(first.label).toBeUndefined();
+        const second = ref.get("items.1") as { id: number; label: string };
+        expect(second.label).toBe("b"); // sibling unchanged
+    });
 });
 
 // ---------------------------------------------------------------------------
