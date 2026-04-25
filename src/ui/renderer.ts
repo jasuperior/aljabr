@@ -15,6 +15,33 @@ import { type Child, type ViewNode, view } from "./view-node.ts";
 // createRenderer
 // ---------------------------------------------------------------------------
 
+/**
+ * Create a renderer bound to a specific {@link RendererHost}.
+ *
+ * Returns a `{ view, mount }` pair. `view` is re-exported for convenience so
+ * callers only need to import from the renderer. `mount` attaches a component
+ * tree to a container and returns an unmount function.
+ *
+ * @typeParam N - Base node type of the host.
+ * @typeParam E - Element node type of the host; must extend `N`.
+ * @param host - The rendering target to use (e.g. {@link domHost}).
+ * @param _protocol - Optional batching protocol; reserved for v0.3.4 rAF support.
+ * @returns An object with `view` (the {@link view} factory) and `mount`.
+ *
+ * @example
+ * import { createRenderer } from "aljabr/ui";
+ * import { domHost } from "aljabr/ui/dom";
+ *
+ * const { mount } = createRenderer(domHost);
+ *
+ * const unmount = mount(
+ *   () => view("h1", null, "Hello world"),
+ *   document.getElementById("root")!,
+ * );
+ *
+ * // Later:
+ * unmount(); // removes all nodes and disposes reactive subscriptions
+ */
 export function createRenderer<N, E extends N>(
     host: RendererHost<N, E>,
     _protocol?: RendererProtocol,
@@ -272,6 +299,16 @@ function mountReactiveArray<N, E extends N>(
 // getCurrentOwner — exposed for renderers that need the owner tree
 // ---------------------------------------------------------------------------
 
+/**
+ * Return the currently active owner computation, or `null` if called outside
+ * a reactive context.
+ *
+ * Primarily useful for custom renderer implementations or advanced
+ * integrations that need to attach cleanups or child owners to the current
+ * component's scope.
+ *
+ * @returns The active {@link Computation}, or `null`.
+ */
 export function getCurrentOwner(): Computation | null {
     return getCurrentComputation();
 }

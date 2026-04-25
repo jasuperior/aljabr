@@ -4,6 +4,26 @@ import type { RendererHost } from "../types.ts";
 // domHost — DOM implementation of RendererHost
 // ---------------------------------------------------------------------------
 
+/**
+ * Production DOM implementation of {@link RendererHost}.
+ *
+ * Pass to {@link createRenderer} to mount component trees into the browser DOM.
+ *
+ * **Property mapping:**
+ * - `class` / `className` → `setAttribute("class", value)`
+ * - `style` (string) → `setAttribute("style", value)`
+ * - `style` (object) → `Object.assign(el.style, value)`
+ * - `on*` (function) → `addEventListener(eventName, handler)`
+ * - Known IDL properties (`value`, `checked`, `disabled`, …) → direct assignment
+ * - Everything else → `setAttribute(key, String(value))`
+ *
+ * @example
+ * import { createRenderer } from "aljabr/ui";
+ * import { domHost } from "aljabr/ui/dom";
+ *
+ * const { mount } = createRenderer(domHost);
+ * const unmount = mount(() => view("p", null, "hello"), document.body);
+ */
 export const domHost: RendererHost<Node, Element> = {
     createElement(tag: string): Element {
         return document.createElement(tag);
