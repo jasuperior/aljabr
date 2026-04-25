@@ -101,13 +101,13 @@ isLoggedIn.set(true);
 
 ## Part 3: Reactive props
 
-Any prop value that is a function (and doesn't start with `on`) is tracked as a reactive getter. The renderer subscribes to its dependencies and calls `host.setProperty` when they change — without re-rendering the element.
+Any prop value that is a `Signal`, `Derived`, or other readable (anything with a `.get()` method) is automatically bound as a reactive getter. You can also pass an explicit function — both are equivalent. The renderer subscribes to dependencies and calls `host.setProperty` when they change, without re-rendering the element.
 
 ```ts
 const theme = Signal.create<"light" | "dark">("light");
 
 mount(
-  () => view("div", { class: () => `app app--${theme.get()}` },
+  () => view("div", { class: theme },  // shorthand — pass the signal directly
     view("p", null, "Content"),
   ),
   document.body,
@@ -117,7 +117,22 @@ theme.set("dark");
 // Only the class attribute is updated — <p> is untouched
 ```
 
-Event handlers (`onClick`, `onInput`, etc.) are always passed as-is. They are never wrapped reactively, so passing an arrow function is fine:
+The explicit function form is equivalent and useful when the prop value is a derived expression rather than a signal read:
+
+```ts
+view("div", { class: () => `app app--${theme.get()}` }, ...)
+```
+
+The same shorthand works for children. Passing a signal as a child wraps it in a reactive region:
+
+```ts
+const name = Signal.create("Alice");
+
+view("p", null, name)           // shorthand
+view("p", null, () => name.get())  // equivalent explicit form
+```
+
+Event handlers (`onClick`, `onInput`, etc.) are always passed as-is and are never treated as reactive getters:
 
 ```ts
 view("button", {
@@ -141,7 +156,7 @@ function Greeting({ name }: GreetingProps) {
 mount(() => view(Greeting, { name: "world" }), document.body);
 ```
 
-### Reactive props in components
+### Local reactive state
 
 To make a component's output reactive, accept signal getters as props and use them inside function children:
 
@@ -160,6 +175,31 @@ function Counter({ label }: CounterProps) {
 ```
 
 The `Signal.create` call is local to the component. The reactive graph is owned by this component instance and disposed when the component unmounts.
+
+### Passing signals into components
+
+Signals passed as component props arrive in the component body as-is — the component receives the `Signal` object and decides where reactivity goes. The shorthand normalization that applies to host elements does **not** apply at the component boundary.
+
+```ts
+type CounterProps = { count: Signal<number> };
+
+function Counter({ count }: CounterProps) {
+  return view("strong", null, () => String(count.get()));
+}
+
+const n = Signal.create(0);
+view(Counter, { count: n })
+// n.set(1) → only the <strong> text updates
+```
+
+To re-run the entire component when an external signal changes — tearing down and rebuilding the subtree — wrap the invocation in a reactive region:
+
+```ts
+() => view(Counter, { count: n.get() })
+// n.set(1) → Counter's full subtree rebuilds
+```
+
+Use the passthrough form when only part of the component's output should be reactive. Use the reactive invocation form when the component should act as a pure function of its props — and accept that the cost is a full remount.
 
 ### Children
 

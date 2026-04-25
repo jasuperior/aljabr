@@ -1,5 +1,6 @@
 import { union, type Variant } from "../union.ts";
-import type { ReactiveArray } from "../prelude/reactive-array.ts";
+import { ReactiveArray } from "../prelude/reactive-array.ts";
+import { RefArray } from "../prelude/ref.ts";
 
 // ---------------------------------------------------------------------------
 // Explicit variant payload types
@@ -108,6 +109,8 @@ export type ViewNode =
  * | `ViewNode` | Mounted as-is |
  * | `() => Child` | **Reactive region** — re-evaluated when dependencies change |
  * | `ReactiveArray<any>` | **Reactive list** — re-rendered when the array mutates |
+ * | `RefArray<any>` | **Reactive list** — re-rendered when the array mutates |
+ * | `{ get(): Child }` | **Readable shorthand** — normalized to `() => r.get()` by `view()` |
  *
  * @example
  * // Static text
@@ -131,7 +134,9 @@ export type Child =
     | undefined
     | ViewNode
     | (() => Child)
-    | ReactiveArray<any>; // invariant class — accepts any ReactiveArray regardless of item type
+    | ReactiveArray<any> // invariant — accepts any ReactiveArray regardless of item type
+    | RefArray<any>      // invariant — accepts any RefArray regardless of item type
+    | { get(): Child };  // any readable (Signal, Derived, custom) — normalized to () => r.get() in view()
 
 // ---------------------------------------------------------------------------
 // Fragment — special symbol for the JSX Fragment type
@@ -150,6 +155,36 @@ export type Child =
  */
 export const Fragment: unique symbol = Symbol("aljabr.Fragment");
 export type Fragment = typeof Fragment;
+
+// ---------------------------------------------------------------------------
+// Normalization helpers — called by view() before building ViewNode payloads
+// ---------------------------------------------------------------------------
+
+function isReadable(v: unknown): v is { get(): unknown } {
+    return (
+        v !== null &&
+        typeof v === "object" &&
+        !(v instanceof ReactiveArray) &&
+        !(v instanceof RefArray) &&
+        typeof (v as Record<string, unknown>).get === "function"
+    );
+}
+
+function normalizeChild(child: Child): Child {
+    if (isReadable(child)) return () => (child as { get(): Child }).get();
+    return child;
+}
+
+function normalizeProps(props: Record<string, unknown> | null): Record<string, unknown> {
+    if (!props) return {};
+    const out: Record<string, unknown> = {};
+    for (const [key, value] of Object.entries(props)) {
+        out[key] = !key.startsWith("on") && isReadable(value)
+            ? () => (value as { get(): unknown }).get()
+            : value;
+    }
+    return out;
+}
 
 // ---------------------------------------------------------------------------
 // Internal runtime factory
@@ -271,7 +306,7 @@ export function view(
     ...children: Child[]
 ): ViewNode {
     if (tagOrFn === Fragment) {
-        return _factory.Fragment(children);
+        return _factory.Fragment(children.map(normalizeChild));
     }
     if (typeof tagOrFn === "function") {
         const mergedProps: Record<string, unknown> = { ...(props ?? {}) };
@@ -284,5 +319,9 @@ export function view(
             props: mergedProps,
         });
     }
-    return _factory.Element({ tag: tagOrFn, props: props ?? {}, children });
+    return _factory.Element({
+        tag: tagOrFn,
+        props: normalizeProps(props ?? null),
+        children: children.map(normalizeChild),
+    });
 }

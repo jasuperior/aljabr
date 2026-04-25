@@ -8,6 +8,7 @@ import {
     runInContext,
 } from "../prelude/context.ts";
 import { ReactiveArray } from "../prelude/reactive-array.ts";
+import { RefArray } from "../prelude/ref.ts";
 import type { RendererHost, RendererProtocol } from "./types.ts";
 import { type Child, type ViewNode, view } from "./view-node.ts";
 
@@ -82,7 +83,7 @@ function reconcileChild<N, E extends N>(
         return;
     }
 
-    if (child instanceof ReactiveArray) {
+    if (child instanceof ReactiveArray || child instanceof RefArray) {
         mountReactiveArray(host, child, parent, anchor, owner);
         return;
     }
@@ -232,9 +233,11 @@ function mountReactiveRegion<N, E extends N>(
 // per-index updates are left for v0.3.4.
 // ---------------------------------------------------------------------------
 
+type ReactiveList<T> = { get(i: number): T | undefined; length(): number };
+
 function mountReactiveArray<N, E extends N>(
     host: RendererHost<N, E>,
-    arr: ReactiveArray<ViewNode>,
+    arr: ReactiveList<ViewNode>,
     parent: E,
     anchor: N | null,
     parentOwner: Computation,
