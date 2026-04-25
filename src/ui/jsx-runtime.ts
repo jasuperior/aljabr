@@ -1,3 +1,12 @@
+/**
+ * JSX runtime for aljabr/ui.
+ *
+ * Set `jsxImportSource: "aljabr/ui"` in your `tsconfig.json` to have
+ * TypeScript automatically import `jsx` and `Fragment` from this module.
+ * You do not need to import anything from here directly in application code.
+ *
+ * @module
+ */
 import { type ViewNode, type Child, Fragment as FragmentSymbol, view } from "./view-node.ts";
 
 export { FragmentSymbol as Fragment };
@@ -9,6 +18,23 @@ export { FragmentSymbol as Fragment };
 
 type JsxProps = Record<string, unknown> & { children?: unknown };
 
+/**
+ * JSX element factory invoked by the TypeScript compiler for single-child
+ * and static JSX expressions.
+ *
+ * Overloads cover the three JSX forms:
+ * - **Fragment** (`<>…</>`) → {@link FragmentViewNode}
+ * - **Intrinsic element** (`<div>`, `<span>`, …) → {@link ElementViewNode}
+ * - **Component** (`<MyComp prop={…} />`) → {@link ComponentViewNode}
+ *
+ * All three delegate to {@link view} after normalising the JSX `props`
+ * object (separating `children` from own props, normalising child arrays).
+ *
+ * @param type - Tag name, Fragment symbol, or component function.
+ * @param props - Props object emitted by the JSX transform.
+ * @param _key - Optional JSX key (not used by the reconciler).
+ * @returns A {@link ViewNode} ready to be passed to `mount`.
+ */
 function _jsx(type: typeof FragmentSymbol, props: { children?: unknown }, _key?: string): ViewNode;
 function _jsx(type: string, props: JsxProps, _key?: string): ViewNode;
 function _jsx<P extends Record<string, unknown>>(type: (props: P) => ViewNode, props: P & { children?: unknown }, _key?: string): ViewNode;
@@ -40,8 +66,11 @@ function normalizeChildren(raw: unknown): Child[] {
     return [raw as Child];
 }
 
+/** JSX factory for static and single-child expressions. Alias of {@link _jsx}. */
 export const jsx = _jsx;
+/** JSX factory for multi-child expressions. Alias of {@link _jsx}. */
 export const jsxs = _jsx;
+/** JSX dev-mode factory. Alias of {@link _jsx} — no additional instrumentation. */
 export const jsxDEV = _jsx;
 
 // ---------------------------------------------------------------------------
@@ -50,7 +79,19 @@ export const jsxDEV = _jsx;
 
 type HTMLProps = Record<string, unknown>;
 
+/**
+ * TypeScript JSX type namespace for aljabr/ui.
+ *
+ * Declares the JSX element type (`ViewNode`), the children attribute name
+ * (`children`), and the full set of intrinsic HTML element names. All
+ * intrinsic element props accept `Record<string, unknown>` for maximum
+ * flexibility — aljabr does not enforce per-element prop types.
+ *
+ * This namespace is consumed automatically by TypeScript when
+ * `jsxImportSource: "aljabr/ui"` is set in `tsconfig.json`.
+ */
 export namespace JSX {
+    /** The type returned by every JSX expression. */
     export type Element = ViewNode;
 
     export interface ElementChildrenAttribute {

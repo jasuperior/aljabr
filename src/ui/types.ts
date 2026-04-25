@@ -113,23 +113,39 @@ export interface RendererHost<N, E extends N> {
 }
 
 /**
- * Optional batching escape hatch for rendering targets that need
- * explicit control over flush timing.
+ * Optional batching escape hatch for controlling when reactive updates are
+ * flushed to the rendering target.
  *
- * When provided to {@link createRenderer}, the renderer defers DOM updates
- * by calling `scheduleFlush` rather than applying them synchronously. The
- * host calls the supplied `flush` callback when it is ready — typically
- * inside `requestAnimationFrame` for canvas-based targets.
+ * When provided to {@link createRenderer}, the renderer defers all pending
+ * mutations by calling `scheduleFlush` instead of applying them synchronously.
+ * The host calls the supplied `flush` callback when it is ready to process
+ * updates. Multiple signal writes that arrive before the next flush are
+ * coalesced — `scheduleFlush` is invoked only once per pending batch, not
+ * once per write.
  *
- * The DOM host does not use this protocol; it flushes synchronously.
+ * Without a protocol, updates flush synchronously in the same microtask as
+ * the signal write — the default for most applications.
  *
- * @example
+ * @example rAF batching — all writes in a frame become one DOM pass
+ * ```ts
  * const rafProtocol: RendererProtocol = {
  *   scheduleFlush(flush) {
  *     requestAnimationFrame(flush);
  *   },
  * };
- * const { mount } = createRenderer(canvasHost, rafProtocol);
+ * const { mount } = createRenderer(domHost, rafProtocol);
+ * ```
+ *
+ * @example Microtask batching — defer to the next microtask checkpoint
+ * ```ts
+ * const microtaskProtocol: RendererProtocol = {
+ *   scheduleFlush(flush) {
+ *     queueMicrotask(flush);
+ *   },
+ * };
+ * ```
+ *
+ * @see {@link createRenderer}
  */
 export interface RendererProtocol {
     /**

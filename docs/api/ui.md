@@ -106,7 +106,9 @@ Everything `view()` accepts as a child:
 | `null \| undefined \| false` | Skipped — renders nothing |
 | `ViewNode` | Mounted as-is |
 | `() => Child` | **Reactive region** — re-evaluated when signal dependencies change |
-| `ReactiveArray<ViewNode>` | **Reactive list** — re-rendered when the array mutates |
+| `ReactiveArray<Child>` | **Reactive list** — re-rendered when the array mutates |
+| `RefArray<Child>` | **Reactive list** — re-rendered when the array mutates |
+| `{ get(): Child }` | **Readable shorthand** — normalised to `() => r.get()` by `view()` |
 
 ### Reactive children
 
@@ -133,7 +135,7 @@ view("div", null, () =>
 
 ### Reactive lists
 
-Pass a `ReactiveArray<ViewNode>` (from `RefArray.map`, `.filter`, or `.sort`) directly as a child:
+Pass a `ReactiveArray<Child>` (from `RefArray.map`, `.filter`, or `.sort`) directly as a child. Items can be `ViewNode` values, primitives, or nested `ReactiveArray` instances — the full `Child` type is supported:
 
 ```ts
 const items = ref.at("list").map(item =>
@@ -165,17 +167,17 @@ const el = <><span>a</span><span>b</span></>;
 
 ## `ViewNode`
 
-**Import:** `import { ViewNode } from "aljabr/ui"` (exported as `ViewNodeFactory`)
+**Import:** `import { ViewNode } from "aljabr/ui"`
 
 Direct variant constructors. Prefer `view()` for typical usage; these are useful when building `ViewNode` values programmatically.
 
 ```ts
-import { ViewNodeFactory } from "aljabr/ui";
+import { ViewNode } from "aljabr/ui";
 
-ViewNodeFactory.Element({ tag: "div", props: { class: "box" }, children: [] })
-ViewNodeFactory.Text("hello")
-ViewNodeFactory.Component({ fn: MyComp, props: { label: "click" } })
-ViewNodeFactory.Fragment([view("span", null, "a")])
+ViewNode.Element({ tag: "div", props: { class: "box" }, children: [] })
+ViewNode.Text("hello")
+ViewNode.Component({ fn: MyComp, props: { label: "click" } })
+ViewNode.Fragment([view("span", null, "a")])
 ```
 
 ### `ViewNode` type
@@ -281,13 +283,44 @@ Event handlers (`on*` props) are passed as-is and never treated as reactive valu
 
 **Import:** `import type { RendererProtocol } from "aljabr/ui"`
 
-Optional batching escape hatch. When provided to `createRenderer`, the renderer defers updates by calling `scheduleFlush` instead of applying them synchronously. Reserved for v0.3.4 (`requestAnimationFrame`-based DOM batching).
+Optional batching escape hatch. When provided to `createRenderer`, the renderer defers reactive updates by calling `scheduleFlush` instead of applying them synchronously. Multiple writes that arrive before the next flush are coalesced — `scheduleFlush` is called once per pending batch, not once per write.
 
 ```ts
 interface RendererProtocol {
   scheduleFlush(flush: () => void): void;
 }
 ```
+
+Without a protocol, updates flush synchronously — the default for most applications.
+
+### rAF batching
+
+```ts
+import { createRenderer } from "aljabr/ui";
+import { domHost } from "aljabr/ui/dom";
+
+const { mount } = createRenderer(domHost, {
+  scheduleFlush(flush) {
+    requestAnimationFrame(flush);
+  },
+});
+```
+
+All signal writes within a frame are batched into a single DOM pass on the next animation frame.
+
+### Microtask batching
+
+```ts
+const { mount } = createRenderer(domHost, {
+  scheduleFlush(flush) {
+    queueMicrotask(flush);
+  },
+});
+```
+
+Defers the flush to the end of the current microtask queue — finer-grained than rAF but still avoids multiple synchronous DOM writes from a single event handler.
+
+See the [Renderer Protocol guide](../guides/advanced/renderer-protocol.md) for a deeper walkthrough.
 
 ---
 
@@ -381,7 +414,38 @@ cls.set("inactive");
 // <div class="inactive"> — only the class attribute is updated
 ```
 
+Passing a `Signal`, `Derived`, or any other readable directly (without wrapping in `() =>`) works too — `view()` normalises it automatically for host element props:
+
+```ts
+view("div", { class: cls })  // equivalent to { class: () => cls.get() }
+```
+
 Event handler props (`onClick`, `onInput`, etc.) are always passed as-is and never tracked reactively.
+
+### Prop diffing
+
+Reactive prop computations are diffed before writing to the host: `host.setProperty` is only called when the new value differs from the previous one (`!==`). If a signal notifies but the derived prop value is unchanged, the DOM write is skipped.
+
+---
+
+## Dev-mode warnings
+
+In development builds (`process.env.NODE_ENV !== "production"`), aljabr emits `console.warn` messages for common authoring mistakes. These checks are tree-shaken in production bundles.
+
+### Signal passed as a component prop
+
+```
+[aljabr] Signal/readable passed as component prop "count".
+Components receive the raw value — call .get() inside the component body
+to read it reactively, or use () => view(Component, { count: signal.get() })
+to make the whole component reactive.
+```
+
+**Why it fires:** Unlike host element props (where readables are auto-wrapped), component props are forwarded as-is. If you write `view(Counter, { count: sig })`, the component receives a `Signal` object — not a number. The warning surfaces this mismatch early.
+
+**Fix options:**
+- Type the prop as `Signal<T>` and call `.get()` inside the component to place reactivity granularly.
+- Pass `() => view(Counter, { count: sig.get() })` to re-run the whole component when the signal changes.
 
 ---
 

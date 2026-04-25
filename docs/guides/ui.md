@@ -101,13 +101,13 @@ isLoggedIn.set(true);
 
 ## Part 3: Reactive props
 
-Any prop value that is a `Signal`, `Derived`, or other readable (anything with a `.get()` method) is automatically bound as a reactive getter. You can also pass an explicit function — both are equivalent. The renderer subscribes to dependencies and calls `host.setProperty` when they change, without re-rendering the element.
+For **host elements**, any prop value that is a `Signal`, `Derived`, or other readable (anything with a `.get()` method that is not a `ReactiveArray` or `RefArray`) is automatically normalised into a reactive getter before the element is mounted. You can also pass an explicit function — both are equivalent.
 
 ```ts
 const theme = Signal.create<"light" | "dark">("light");
 
 mount(
-  () => view("div", { class: theme },  // shorthand — pass the signal directly
+  () => view("div", { class: theme },  // shorthand — signal auto-wrapped
     view("p", null, "Content"),
   ),
   document.body,
@@ -117,7 +117,7 @@ theme.set("dark");
 // Only the class attribute is updated — <p> is untouched
 ```
 
-The explicit function form is equivalent and useful when the prop value is a derived expression rather than a signal read:
+The explicit function form is equivalent and useful when the prop value is a derived expression rather than a direct signal read:
 
 ```ts
 view("div", { class: () => `app app--${theme.get()}` }, ...)
@@ -128,7 +128,7 @@ The same shorthand works for children. Passing a signal as a child wraps it in a
 ```ts
 const name = Signal.create("Alice");
 
-view("p", null, name)           // shorthand
+view("p", null, name)              // shorthand — signal auto-wrapped
 view("p", null, () => name.get())  // equivalent explicit form
 ```
 
@@ -139,6 +139,8 @@ view("button", {
   onClick: () => theme.set(theme.get() === "light" ? "dark" : "light"),
 }, "Toggle theme")
 ```
+
+> **Component props are different.** The auto-wrapping above applies only to host element props. When you write `view(MyComponent, { count: sig })`, the component receives the `Signal` object itself — not a reactive getter. See [Part 4](#part-4-function-components) for how to handle this correctly.
 
 ---
 
@@ -434,6 +436,40 @@ mount(() => view(App, {}), document.getElementById("root")!);
 
 ---
 
+## Part 8: Batching updates with RendererProtocol
+
+By default, every reactive update flushes synchronously — a signal write is immediately reflected in the DOM. This is fine for most apps, but for high-frequency updates (rapid user input, animation ticks, bulk data loads) it can cause unnecessary layout thrash.
+
+Pass a `RendererProtocol` to `createRenderer` to defer and coalesce updates:
+
+```ts
+import { createRenderer } from "aljabr/ui";
+import { domHost } from "aljabr/ui/dom";
+
+const { mount } = createRenderer(domHost, {
+  scheduleFlush(flush) {
+    requestAnimationFrame(flush);
+  },
+});
+```
+
+Now every reactive update that fires within a single animation frame is queued. The renderer calls `scheduleFlush` once and applies all pending DOM mutations together on the next frame — one layout pass instead of many.
+
+Multiple `scheduleFlush` calls for the same pending batch are coalesced: if ten signals change before the next frame, `scheduleFlush` is called once, not ten times.
+
+### When to use it
+
+| Scenario | Recommendation |
+|---|---|
+| Interactive UI, form inputs, normal navigation | Default (synchronous) — simpler, predictable |
+| Rapid signal writes (60fps animation, streaming data) | rAF protocol — one DOM pass per frame |
+| Test environments | Default (synchronous) — no async required |
+| Canvas / WebGL rendering targets | Custom protocol tied to the render loop |
+
+See the [Renderer Protocol guide](./advanced/renderer-protocol.md) for a full walkthrough including custom schedulers and testing patterns.
+
+---
+
 ## How it works
 
 A few implementation details worth knowing as a consumer:
@@ -444,7 +480,7 @@ A few implementation details worth knowing as a consumer:
 
 **Component owners form a tree.** Each component creates a child owner of its parent. When a component's owner is disposed (on unmount), all child owners — and all signals, derived values, and deferred cleanups registered inside — are disposed in reverse creation order (LIFO).
 
-**No magic unwrapping.** Aljabr never implicitly reads a signal for you. If you write `{ class: cls }` where `cls` is a `Signal`, the class will be set to the Signal object. Write `{ class: () => cls.get() }` to make it reactive, or `{ class: cls.get() }` to read it once at render time.
+**Auto-wrapping is host-element-only.** For host elements (`view("div", ...)`) `view()` normalises readables in props and children — a `Signal` becomes `() => signal.get()` before the element is mounted. For **component** invocations (`view(MyComp, ...)`), props are forwarded as-is. If you write `view(Counter, { count: cls })` where `cls` is a `Signal`, the component receives the `Signal` object. Write `view(Counter, { count: cls.get() })` to pass a snapshot, type the prop as `Signal<T>` and call `.get()` inside, or wrap the whole call in `() =>` to re-run the component reactively.
 
 ---
 

@@ -25,12 +25,27 @@ import { type Child, type ViewNode, view } from "./view-node.ts";
  *
  * @typeParam N - Base node type of the host.
  * @typeParam E - Element node type of the host; must extend `N`.
- * @param host - The rendering target to use (e.g. {@link domHost}).
- * @param _protocol - Optional batching protocol; reserved for v0.3.4 rAF support.
+ * @param host - The rendering target to use (e.g. `domHost`).
+ * @param protocol - Optional batching protocol. When provided, reactive updates
+ *   are deferred: the renderer queues them and calls `scheduleFlush` once,
+ *   coalescing all pending work into a single pass. Omit for synchronous
+ *   (immediate) updates — the default for most applications.
  * @returns An object with `view` (the {@link view} factory) and `mount`.
  *
- * @example
- * import { createRenderer } from "aljabr/ui";
+ * @remarks
+ * **Prop diffing.** Reactive props (e.g. `{ class: () => cls.get() }`) are
+ * diffed before being applied: `host.setProperty` is only called when the
+ * newly computed value differs from the previous one (`!==`). This avoids
+ * redundant DOM writes when a signal notifies but the derived value is
+ * unchanged.
+ *
+ * **Disposal order.** Component and reactive-region owners are disposed
+ * LIFO — the most recently mounted subtree is torn down first. This matches
+ * the guarantee provided by {@link createOwner}.
+ *
+ * @example Basic DOM usage
+ * ```ts
+ * import { createRenderer, view } from "aljabr/ui";
  * import { domHost } from "aljabr/ui/dom";
  *
  * const { mount } = createRenderer(domHost);
@@ -40,8 +55,15 @@ import { type Child, type ViewNode, view } from "./view-node.ts";
  *   document.getElementById("root")!,
  * );
  *
- * // Later:
  * unmount(); // removes all nodes and disposes reactive subscriptions
+ * ```
+ *
+ * @example rAF batching — coalesces all updates within a frame
+ * ```ts
+ * const { mount } = createRenderer(domHost, {
+ *   scheduleFlush: (flush) => requestAnimationFrame(flush),
+ * });
+ * ```
  */
 export function createRenderer<N, E extends N>(
     host: RendererHost<N, E>,

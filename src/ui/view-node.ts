@@ -292,6 +292,28 @@ export function view(
  * @param children - Zero or more children; merged into `props.children`.
  * @returns A `ComponentViewNode`.
  *
+ * @remarks
+ * **Component props are not auto-wrapped.** Unlike host element props,
+ * readables (signals, deriveds) passed as component props are forwarded
+ * as-is — the component receives the `Signal` object and decides where
+ * reactivity goes. In development builds (`NODE_ENV !== "production"`), a
+ * `console.warn` fires when a readable is detected as a component prop, to
+ * surface this common mistake early.
+ *
+ * To re-run the whole component when an external signal changes, wrap the
+ * invocation in a reactive region:
+ * ```ts
+ * () => view(Counter, { count: n.get() })
+ * ```
+ * To pass the signal through and let the component place reactivity
+ * granularly, type the prop as `Signal<T>` and call `.get()` inside:
+ * ```ts
+ * function Counter({ count }: { count: Signal<number> }) {
+ *   return view("strong", null, () => String(count.get()));
+ * }
+ * view(Counter, { count: n })
+ * ```
+ *
  * @example
  * const Button = ({ label, onClick }: { label: string; onClick: () => void }) =>
  *   view("button", { onClick }, label);
