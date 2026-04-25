@@ -7,14 +7,16 @@ export { FragmentSymbol as Fragment };
 // jsxImportSource is set to "aljabr/ui" in tsconfig.
 // ---------------------------------------------------------------------------
 
-type JsxType =
-    | string
-    | typeof FragmentSymbol
-    | ((props: Record<string, unknown>) => ViewNode);
-
 type JsxProps = Record<string, unknown> & { children?: unknown };
 
-function _jsx(type: JsxType, props: JsxProps, _key?: string): ViewNode {
+function _jsx(type: typeof FragmentSymbol, props: { children?: unknown }, _key?: string): ViewNode;
+function _jsx(type: string, props: JsxProps, _key?: string): ViewNode;
+function _jsx<P extends Record<string, unknown>>(type: (props: P) => ViewNode, props: P & { children?: unknown }, _key?: string): ViewNode;
+function _jsx(
+    type: string | typeof FragmentSymbol | ((props: Record<string, unknown>) => ViewNode),
+    props: JsxProps,
+    _key?: string,
+): ViewNode {
     const { children: rawChildren, ...ownProps } = props;
 
     if (type === FragmentSymbol) {

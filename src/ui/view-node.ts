@@ -157,6 +157,15 @@ export const Fragment: unique symbol = Symbol("aljabr.Fragment");
 export type Fragment = typeof Fragment;
 
 // ---------------------------------------------------------------------------
+// ---------------------------------------------------------------------------
+// Dev-mode flag — false in production builds (tree-shakeable)
+// ---------------------------------------------------------------------------
+
+const __DEV__ =
+    (globalThis as { process?: { env?: { NODE_ENV?: string } } })
+        .process?.env?.["NODE_ENV"] !== "production";
+
+// ---------------------------------------------------------------------------
 // Normalization helpers — called by view() before building ViewNode payloads
 // ---------------------------------------------------------------------------
 
@@ -313,6 +322,18 @@ export function view(
         if (children.length > 0) {
             mergedProps.children =
                 children.length === 1 ? children[0] : children;
+        }
+        if (__DEV__) {
+            for (const [key, value] of Object.entries(mergedProps)) {
+                if (isReadable(value)) {
+                    console.warn(
+                        `[aljabr] Signal/readable passed as component prop "${key}". ` +
+                        `Components receive the raw value — call .get() inside the component body ` +
+                        `to read it reactively, or use () => view(Component, { ${key}: signal.get() }) ` +
+                        `to make the whole component reactive.`,
+                    );
+                }
+            }
         }
         return _factory.Component({
             fn: tagOrFn as ComponentFn,

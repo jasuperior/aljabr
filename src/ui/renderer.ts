@@ -45,18 +45,19 @@ import { type Child, type ViewNode, view } from "./view-node.ts";
  */
 export function createRenderer<N, E extends N>(
     host: RendererHost<N, E>,
-    _protocol?: RendererProtocol,
+    protocol?: RendererProtocol,
 ): {
     view: typeof view;
     mount: (fn: () => ViewNode, container: E) => () => void;
 } {
+    const schedule = makeScheduler(protocol);
     return {
         view,
         mount(fn: () => ViewNode, container: E): () => void {
             const rootOwner = createOwner(null);
             runInContext(rootOwner, () => {
                 const node = fn();
-                untrack(() => reconcileViewNode(host, node, container, null, rootOwner));
+                untrack(() => reconcileViewNode(host, schedule, node, container, null, rootOwner));
             });
             return () => rootOwner.dispose();
         },
@@ -64,11 +65,38 @@ export function createRenderer<N, E extends N>(
 }
 
 // ---------------------------------------------------------------------------
+// Scheduler — immediate (no protocol) or deferred via RendererProtocol
+// ---------------------------------------------------------------------------
+
+function makeScheduler(protocol: RendererProtocol | undefined): (fn: () => void) => void {
+    if (!protocol) return (fn) => fn();
+
+    let pending = false;
+    const queue = new Set<() => void>();
+
+    return (fn: () => void): void => {
+        queue.add(fn);
+        if (!pending) {
+            pending = true;
+            protocol.scheduleFlush(() => {
+                pending = false;
+                const toRun = [...queue];
+                queue.clear();
+                for (const f of toRun) f();
+            });
+        }
+    };
+}
+
+// ---------------------------------------------------------------------------
 // Internal reconciler
 // ---------------------------------------------------------------------------
 
+type Schedule = (fn: () => void) => void;
+
 function reconcileChild<N, E extends N>(
     host: RendererHost<N, E>,
+    schedule: Schedule,
     child: Child,
     parent: E,
     anchor: N | null,
@@ -84,20 +112,21 @@ function reconcileChild<N, E extends N>(
     }
 
     if (child instanceof ReactiveArray || child instanceof RefArray) {
-        mountReactiveArray(host, child, parent, anchor, owner);
+        mountReactiveArray(host, schedule, child, parent, anchor, owner);
         return;
     }
 
     if (typeof child === "function") {
-        mountReactiveRegion(host, child as () => Child, parent, anchor, owner);
+        mountReactiveRegion(host, schedule, child as () => Child, parent, anchor, owner);
         return;
     }
 
-    reconcileViewNode(host, child as ViewNode, parent, anchor, owner);
+    reconcileViewNode(host, schedule, child as ViewNode, parent, anchor, owner);
 }
 
 function reconcileViewNode<N, E extends N>(
     host: RendererHost<N, E>,
+    schedule: Schedule,
     node: ViewNode,
     parent: E,
     anchor: N | null,
@@ -111,22 +140,27 @@ function reconcileViewNode<N, E extends N>(
                 if (typeof value === "function" && !key.startsWith("on")) {
                     // Reactive prop — track via a dedicated effect computation
                     const propComp = createOwner(owner);
-                    const update = (): void => {
+                    const UNSET = Symbol();
+                    let prevVal: unknown = UNSET;
+                    const apply = (): void => {
                         for (const src of [...propComp.sources]) src.unsubscribe(propComp);
                         propComp.sources.clear();
                         const val = trackIn(propComp, value as () => unknown);
-                        host.setProperty(el, key, val);
-                        propComp.dirty = update;
+                        if (val !== prevVal) {
+                            host.setProperty(el, key, val);
+                            prevVal = val;
+                        }
+                        propComp.dirty = () => schedule(apply);
                     };
-                    propComp.dirty = update;
-                    update();
+                    propComp.dirty = () => schedule(apply);
+                    apply();
                 } else {
                     host.setProperty(el, key, value);
                 }
             }
 
             for (const child of children) {
-                reconcileChild(host, child, el, null, owner);
+                reconcileChild(host, schedule, child, el, null, owner);
             }
 
             host.insert(parent, el as N, anchor);
@@ -148,12 +182,12 @@ function reconcileViewNode<N, E extends N>(
             // Signals / Deriveds created inside are properly owned and cleaned up.
             const compOwner = createOwner(owner);
             const result = runInContext(compOwner, () => fn(props));
-            untrack(() => reconcileViewNode(host, result, parent, anchor, compOwner));
+            untrack(() => reconcileViewNode(host, schedule, result, parent, anchor, compOwner));
         },
 
         Fragment: ({ children }) => {
             for (const child of children) {
-                reconcileChild(host, child, parent, anchor, owner);
+                reconcileChild(host, schedule, child, parent, anchor, owner);
             }
         },
     });
@@ -169,6 +203,7 @@ function reconcileViewNode<N, E extends N>(
 
 function mountReactiveRegion<N, E extends N>(
     host: RendererHost<N, E>,
+    schedule: Schedule,
     getter: () => Child,
     parent: E,
     anchor: N | null,
@@ -205,10 +240,10 @@ function mountReactiveRegion<N, E extends N>(
         // Mount result in a fresh iteration owner (untracked to prevent
         // re-tracking the outer effectOwner when nested signals are read)
         iterOwner = createOwner(effectOwner);
-        untrack(() => reconcileChild(host, result, parent, end, iterOwner!));
+        untrack(() => reconcileChild(host, schedule, result, parent, end, iterOwner!));
     };
 
-    effectOwner.dirty = rerun;
+    effectOwner.dirty = () => schedule(rerun);
     effectOwner.cleanups.add(() => {
         iterOwner?.dispose();
         iterOwner = null;
@@ -237,7 +272,8 @@ type ReactiveList<T> = { get(i: number): T | undefined; length(): number };
 
 function mountReactiveArray<N, E extends N>(
     host: RendererHost<N, E>,
-    arr: ReactiveList<ViewNode>,
+    schedule: Schedule,
+    arr: ReactiveList<Child>,
     parent: E,
     anchor: N | null,
     parentOwner: Computation,
@@ -265,7 +301,7 @@ function mountReactiveArray<N, E extends N>(
         effectOwner.sources.clear();
 
         // Snapshot the array — reads length() and get(i) to subscribe
-        const items: (ViewNode | undefined)[] = [];
+        const items: (Child | undefined)[] = [];
         trackIn(effectOwner, () => {
             const len = arr.length();
             for (let i = 0; i < len; i++) items.push(arr.get(i));
@@ -275,13 +311,13 @@ function mountReactiveArray<N, E extends N>(
         untrack(() => {
             for (const item of items) {
                 if (item !== undefined) {
-                    reconcileViewNode(host, item, parent, end, iterOwner!);
+                    reconcileChild(host, schedule, item, parent, end, iterOwner!);
                 }
             }
         });
     };
 
-    effectOwner.dirty = rerender;
+    effectOwner.dirty = () => schedule(rerender);
     effectOwner.cleanups.add(() => {
         iterOwner?.dispose();
         iterOwner = null;

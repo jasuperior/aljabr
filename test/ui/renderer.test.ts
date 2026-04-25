@@ -5,6 +5,7 @@ import type { RendererHost } from "../../src/ui/types.ts";
 import { Signal } from "../../src/prelude/signal.ts";
 import { ReactiveArray } from "../../src/prelude/reactive-array.ts";
 import { Ref } from "../../src/prelude/ref.ts";
+import { createOwner } from "../../src/prelude/context.ts";
 
 // ---------------------------------------------------------------------------
 // Minimal in-memory host for testing
@@ -418,6 +419,120 @@ describe("createRenderer", () => {
             // (exact behavior depends on whether Signal.create registers itself with the owner)
             // At minimum, the element should be removed
             expect(visibleElements(host.root)).toHaveLength(0);
+        });
+    });
+
+    describe("prop diffing", () => {
+        it("calls setProperty only when value changes", () => {
+            const host = makeHost();
+            const calls: unknown[] = [];
+            const origSet = host.setProperty.bind(host);
+            host.setProperty = (el, key, value) => {
+                if (key === "class") calls.push(value);
+                origSet(el, key, value);
+            };
+            const { mount } = createRenderer(host);
+            const cls = Signal.create("a");
+            mount(() => view("div", { class: () => cls.get() }), host.root);
+
+            expect(calls).toEqual(["a"]);
+            cls.set("a"); // same value — should not trigger setProperty
+            expect(calls).toEqual(["a"]);
+            cls.set("b");
+            expect(calls).toEqual(["a", "b"]);
+        });
+    });
+
+    describe("RendererProtocol batching", () => {
+        it("defers updates until scheduleFlush fires", () => {
+            const host = makeHost();
+            let flush: (() => void) | null = null;
+            const protocol = {
+                scheduleFlush(f: () => void) { flush = f; },
+            };
+            const { mount } = createRenderer(host, protocol);
+            const sig = Signal.create("hello");
+            mount(() => view("p", null, () => sig.get()), host.root);
+
+            const p = visibleElements(host.root)[0];
+            expect(visibleTexts(p)).toContain("hello");
+
+            sig.set("world");
+            // Not flushed yet — DOM unchanged
+            expect(visibleTexts(visibleElements(host.root)[0])).toContain("hello");
+
+            flush!();
+            expect(visibleTexts(visibleElements(host.root)[0])).toContain("world");
+        });
+
+        it("coalesces multiple updates into one flush", () => {
+            const host = makeHost();
+            let flush: (() => void) | null = null;
+            let flushCount = 0;
+            const protocol = {
+                scheduleFlush(f: () => void) { flushCount++; flush = f; },
+            };
+            const { mount } = createRenderer(host, protocol);
+            const sig = Signal.create("a");
+            mount(() => view("p", null, () => sig.get()), host.root);
+
+            sig.set("b");
+            sig.set("c");
+            expect(flushCount).toBe(1); // only one scheduleFlush call
+            flush!();
+            expect(visibleTexts(visibleElements(host.root)[0])).toContain("c");
+        });
+    });
+
+    describe("nested ReactiveArray items", () => {
+        it("renders string items from a RefArray directly", () => {
+            const host = makeHost();
+            const { mount } = createRenderer(host);
+            const arr = Ref.create({ items: ["x", "y"] });
+            mount(
+                () => view("ul", null, arr.at("items")),
+                host.root,
+            );
+            const ul = visibleElements(host.root)[0];
+            expect(visibleTexts(ul)).toContain("x");
+            expect(visibleTexts(ul)).toContain("y");
+        });
+
+        it("renders ViewNode items nested inside outer ReactiveArray", () => {
+            const host = makeHost();
+            const { mount } = createRenderer(host);
+            const ref = Ref.create({ groups: [["a", "b"], ["c"]] });
+            const rows = ref.at("groups").map((group, i) =>
+                view("li", null, String(i), ": ", group.join(","))
+            );
+            mount(() => view("ul", null, rows), host.root);
+            const ul = visibleElements(host.root)[0];
+            expect(visibleElements(ul)).toHaveLength(2);
+        });
+    });
+
+    describe("LIFO disposal order", () => {
+        it("disposes cleanups in reverse registration order", () => {
+            const order: number[] = [];
+            const root = createOwner(null);
+            root.cleanups.add(() => order.push(1));
+            root.cleanups.add(() => order.push(2));
+            root.cleanups.add(() => order.push(3));
+            root.dispose();
+            expect(order).toEqual([3, 2, 1]);
+        });
+
+        it("disposes child owners in reverse creation order", () => {
+            const order: number[] = [];
+            const root = createOwner(null);
+            const c1 = createOwner(root);
+            c1.cleanups.add(() => order.push(1));
+            const c2 = createOwner(root);
+            c2.cleanups.add(() => order.push(2));
+            const c3 = createOwner(root);
+            c3.cleanups.add(() => order.push(3));
+            root.dispose();
+            expect(order).toEqual([3, 2, 1]);
         });
     });
 
