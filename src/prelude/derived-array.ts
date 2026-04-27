@@ -1,6 +1,6 @@
 import { Signal } from "./signal.ts";
 import { Derived } from "./derived.ts";
-import { createOwner, trackIn, untrack } from "./context.ts";
+import { type Computation, createOwner, trackIn, untrack } from "./context.ts";
 
 // ---------------------------------------------------------------------------
 // IteratorOptions<T>
@@ -57,6 +57,13 @@ function isPrimitiveLike(v: unknown): boolean {
  *     .filter(x => x % 2 === 0)
  *     .map(x => x * 2);                    // DerivedArray<number>
  */
+type MapSource<T> = {
+    get(): T[];
+    get(i: number): T | undefined;
+    length(): number;
+    peek(i: number): T | undefined;
+};
+
 export class DerivedArray<T> {
     readonly #signals: Map<number, Signal<T | undefined>> = new Map();
     readonly #lengthSignal: Signal<number>;
@@ -65,7 +72,8 @@ export class DerivedArray<T> {
     readonly #keyFn: ((item: T) => unknown) | null;
     readonly #keyIsDefault: boolean;
     readonly #indexKeyFn: ((i: number) => unknown) | null;
-    readonly #computation: ReturnType<typeof createOwner>;
+    readonly #computation: Computation;
+    readonly #mapComputations: Map<number, Computation> = new Map();
     #disposed = false;
     #keyDefaultWarnEmitted = false;
     #duplicateKeyWarnEmitted = false;
@@ -80,11 +88,96 @@ export class DerivedArray<T> {
         return new DerivedArray(computeFn, keyFn, keyIsDefault, indexKeyFn);
     }
 
+    /** @internal — per-index reactive map, avoids bulk recomputation */
+    static _createMap<T, U>(
+        source: MapSource<T>,
+        fn: (item: T, i: number) => U,
+        indexKeyFn: ((i: number) => unknown) | null,
+    ): DerivedArray<U> {
+        const initialLen = untrack(() => source.length());
+        const initialItems: U[] = [];
+        for (let i = 0; i < initialLen; i++) {
+            initialItems.push(fn(source.peek(i)!, i));
+        }
+
+        const arr = new DerivedArray<U>(null, null, false, indexKeyFn, initialItems);
+        if (arr.#disposed) return arr;
+
+        const rootComp = arr.#computation;
+
+        const mountIndex = (i: number): void => {
+            const indexComp = createOwner(rootComp);
+            arr.#mapComputations.set(i, indexComp);
+            let prevSourceItem = source.peek(i);
+
+            const recompute = (): void => {
+                if (arr.#disposed) return;
+                for (const src of [...indexComp.sources]) src.unsubscribe(indexComp);
+                indexComp.sources.clear();
+                const newSourceItem = trackIn(indexComp, () => source.get(i));
+                if (newSourceItem === prevSourceItem) return;
+                prevSourceItem = newSourceItem;
+                if (newSourceItem === undefined) return;
+                const mapped = fn(newSourceItem, i);
+                arr.#items[i] = mapped;
+                const sig = arr.#signals.get(i);
+                if (sig) sig.set(mapped);
+                // rootSignal is fired by the length watcher after source.get() settles,
+                // guaranteeing rows.#items has the correct length before onUpdate runs.
+            };
+
+            indexComp.dirty = recompute;
+            trackIn(indexComp, () => source.get(i));
+        };
+
+        for (let i = 0; i < initialLen; i++) mountIndex(i);
+
+        // Watcher subscribed to source.get() (root signal) — fires last in #applyUpdate,
+        // after all per-index signals have fired and recompute() has updated arr.#items[i].
+        // This guarantees arr.#items is fully consistent before we fire arr.#rootSignal.
+        const lengthComp = createOwner(rootComp);
+        let watchedLen = initialLen;
+
+        const onLengthChange = (): void => {
+            if (arr.#disposed) return;
+            for (const src of [...lengthComp.sources]) src.unsubscribe(lengthComp);
+            lengthComp.sources.clear();
+            const sourceItems = trackIn(lengthComp, () => source.get());
+            const newLen = sourceItems.length;
+            if (newLen > watchedLen) {
+                for (let i = watchedLen; i < newLen; i++) {
+                    arr.#items.push(fn(source.peek(i)!, i));
+                    mountIndex(i);
+                }
+                arr.#lengthSignal.set(newLen);
+            } else if (newLen < watchedLen) {
+                for (let i = watchedLen - 1; i >= newLen; i--) {
+                    arr.#mapComputations.get(i)?.dispose();
+                    arr.#mapComputations.delete(i);
+                    const sig = arr.#signals.get(i);
+                    if (sig) { sig.dispose(); arr.#signals.delete(i); }
+                    arr.#items.pop();
+                }
+                arr.#lengthSignal.set(newLen);
+            }
+            watchedLen = newLen;
+            // Always fire rootSignal — triggers renderer onUpdate for reorders, adds, removes.
+            // arr.#items is consistent at this point (per-index comps already ran).
+            arr.#rootSignal.set([...arr.#items]);
+        };
+
+        lengthComp.dirty = onLengthChange;
+        trackIn(lengthComp, () => source.get());
+
+        return arr;
+    }
+
     private constructor(
-        computeFn: () => T[],
+        computeFn: (() => T[]) | null,
         keyFn: ((item: T) => unknown) | null,
         keyIsDefault: boolean,
         indexKeyFn: ((i: number) => unknown) | null,
+        initialItems: T[] = [],
     ) {
         this.#keyFn = keyFn;
         this.#keyIsDefault = keyIsDefault;
@@ -93,20 +186,22 @@ export class DerivedArray<T> {
         const comp = createOwner(null);
         this.#computation = comp;
 
-        // Initial run (tracked — subscribe to source dependencies)
-        this.#items = trackIn(comp, computeFn);
+        if (computeFn !== null) {
+            this.#items = trackIn(comp, computeFn);
+            const self = this;
+            comp.dirty = function () {
+                if (self.#disposed) return;
+                for (const source of [...comp.sources]) source.unsubscribe(comp);
+                comp.sources.clear();
+                const newItems = trackIn(comp, computeFn);
+                self.#applyUpdate(newItems);
+            };
+        } else {
+            this.#items = initialItems;
+        }
+
         this.#lengthSignal = untrack(() => Signal.create<number>(this.#items.length));
         this.#rootSignal = untrack(() => Signal.create<T[]>(this.#items));
-
-        const self = this;
-        comp.dirty = function () {
-            if (self.#disposed) return;
-            // Clear stale dependency subscriptions before re-tracking
-            for (const source of [...comp.sources]) source.unsubscribe(comp);
-            comp.sources.clear();
-            const newItems = trackIn(comp, computeFn);
-            self.#applyUpdate(newItems);
-        };
     }
 
     /**
@@ -182,15 +277,11 @@ export class DerivedArray<T> {
      * 1:1 index correspondence is maintained — no key function required.
      */
     map<U>(fn: (item: T, i: number) => U): DerivedArray<U> {
-        const self = this;
         const sourceKeyFn = !this.#keyIsDefault ? this.#keyFn : null;
         const indexKeyFn = sourceKeyFn !== null
-            ? (i: number) => sourceKeyFn(self.peek(i)!)
+            ? (i: number) => sourceKeyFn(this.peek(i)!)
             : null;
-        return DerivedArray._create<U>(() => {
-            const len = self.length();
-            return Array.from({ length: len }, (_, i) => fn(self.get(i)!, i));
-        }, null, false, indexKeyFn);
+        return DerivedArray._createMap(this, fn, indexKeyFn);
     }
 
     /**
@@ -236,7 +327,8 @@ export class DerivedArray<T> {
     dispose(): void {
         if (this.#disposed) return;
         this.#disposed = true;
-        this.#computation.dispose();
+        this.#computation.dispose(); // disposes all child computations (map index comps, length comp)
+        this.#mapComputations.clear();
         for (const sig of this.#signals.values()) sig.dispose();
         this.#signals.clear();
         this.#lengthSignal.dispose();

@@ -257,6 +257,37 @@ describe("DerivedArray.map", () => {
         expect(result.get(0)).toBe(3); // 1*2+1
         expect(result.get(4)).toBe(11); // 5*2+1
     });
+
+    it("calls fn only for the changed index, not all indices", () => {
+        const arr = makeNumbers(); // [1,2,3,4,5]
+        const calls: number[] = [];
+        arr.map((x, i) => { calls.push(i); return x * 2; });
+        calls.length = 0; // reset after initial setup
+
+        arr.splice(2, 1, 30); // only index 2 changes
+        expect(calls).toEqual([2]);
+    });
+
+    it("calls fn only for changed index on chained DerivedArray.map()", () => {
+        const arr = makeNumbers(); // [1,2,3,4,5]
+        const filtered = arr.filter(x => x > 0, { key: x => x }); // all pass, key = value
+        const calls: number[] = [];
+        filtered.map((x, i) => { calls.push(i); return x * 2; });
+        calls.length = 0;
+
+        arr.splice(2, 1, 30); // filtered[2] changes: 3 → 30
+        expect(calls).toEqual([2]);
+    });
+
+    it("does not call fn for unchanged indices when source grows", () => {
+        const arr = makeNumbers(); // [1,2,3,4,5]
+        const calls: number[] = [];
+        arr.map((x, i) => { calls.push(i); return x * 2; });
+        calls.length = 0;
+
+        arr.push(6); // only index 5 is new
+        expect(calls).toEqual([5]);
+    });
 });
 
 // ---------------------------------------------------------------------------

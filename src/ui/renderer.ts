@@ -324,15 +324,23 @@ function mountDerivedArray<N, E extends N>(
     if (typeof arr.keyAt === "function") {
         // ── Phase B: keyed scope reconciliation ──────────────────────────────
         type Entry = {
+            key: unknown;
             scope: Computation;
             iterOwner: Computation | null;
             currentIndex: number;
             start: N;
             end: N;
+            rerender: () => void;
         };
         const keyedMap = new Map<unknown, Entry>();
         let orderedKeys: unknown[] = [];
         const keyAt = arr.keyAt.bind(arr);
+        // Per-index signals fire during the source cascade, BEFORE onUpdate has
+        // a chance to update currentIndex on entries that moved. If we rerender
+        // synchronously, a moved entry would render content for its OLD index
+        // (now belonging to a different key). Defer the rerender into a queue
+        // that onUpdate drains after fixing currentIndex.
+        const pendingRerender = new Set<Entry>();
 
         const createEntry = (key: unknown, idx: number): void => {
             const eStart = host.createText("");
@@ -340,7 +348,15 @@ function mountDerivedArray<N, E extends N>(
             host.insert(parent, eStart, listEnd);
             host.insert(parent, eEnd, listEnd);
             const scope = createOwner(lengthOwner);
-            const entry: Entry = { scope, iterOwner: null, currentIndex: idx, start: eStart, end: eEnd };
+            const entry: Entry = {
+                key,
+                scope,
+                iterOwner: null,
+                currentIndex: idx,
+                start: eStart,
+                end: eEnd,
+                rerender: () => {},
+            };
 
             const rerender = (): void => {
                 entry.iterOwner?.dispose();
@@ -359,9 +375,11 @@ function mountDerivedArray<N, E extends N>(
                     untrack(() => reconcileChild(host, schedule, item, parent, eEnd, entry.iterOwner!));
                 }
             };
+            entry.rerender = rerender;
 
-            scope.dirty = () => schedule(rerender);
+            scope.dirty = () => pendingRerender.add(entry);
             scope.cleanups.add(() => {
+                pendingRerender.delete(entry);
                 let cur = host.nextSibling(eStart);
                 while (cur !== null && cur !== eEnd) {
                     const next = host.nextSibling(cur);
@@ -397,34 +415,44 @@ function mountDerivedArray<N, E extends N>(
                 if (!oldKeySet.has(newKeys[i])) createEntry(newKeys[i], i);
             }
             // Reorder: backward walk moves each entry's nodes into position.
-            // Must remove before inserting — the host may not auto-move nodes.
-            let insertBefore: N = listEnd;
-            for (let i = newLen - 1; i >= 0; i--) {
-                const entry = keyedMap.get(newKeys[i])!;
-                const nodes: N[] = [entry.start];
-                let cur: N | null = host.nextSibling(entry.start);
-                while (cur !== null && cur !== entry.end) {
-                    nodes.push(cur);
-                    cur = host.nextSibling(cur);
+            // Skip entirely when key order is unchanged — avoids DOM moves that
+            // would reset CSS animations on unaffected items.
+            const orderUnchanged = orderedKeys.length === newLen &&
+                newKeys.every((k, i) => k === orderedKeys[i]);
+            if (!orderUnchanged) {
+                let insertBefore: N = listEnd;
+                for (let i = newLen - 1; i >= 0; i--) {
+                    const entry = keyedMap.get(newKeys[i])!;
+                    const nodes: N[] = [entry.start];
+                    let cur: N | null = host.nextSibling(entry.start);
+                    while (cur !== null && cur !== entry.end) {
+                        nodes.push(cur);
+                        cur = host.nextSibling(cur);
+                    }
+                    nodes.push(entry.end);
+                    for (const node of nodes) {
+                        host.remove(node);
+                        host.insert(parent, node, insertBefore);
+                    }
+                    insertBefore = entry.start;
                 }
-                nodes.push(entry.end);
-                for (const node of nodes) {
-                    host.remove(node);
-                    host.insert(parent, node, insertBefore);
-                }
-                insertBefore = entry.start;
             }
-            // Update per-index subscriptions for entries that moved
+            // Update currentIndex for entries that moved. Moved entries must
+            // rerender to bind their DOM to the new index — the per-index
+            // signal cascade may have already enqueued them with the stale index.
             for (let i = 0; i < newLen; i++) {
                 const entry = keyedMap.get(newKeys[i])!;
                 if (entry.currentIndex !== i) {
                     entry.currentIndex = i;
-                    for (const src of [...entry.scope.sources]) src.unsubscribe(entry.scope);
-                    entry.scope.sources.clear();
-                    trackIn(entry.scope, () => arr.get(i));
+                    pendingRerender.add(entry);
                 }
             }
             orderedKeys = newKeys;
+            // Drain deferred rerenders with currentIndex now correct on every entry.
+            for (const entry of pendingRerender) {
+                if (keyedMap.get(entry.key) === entry) entry.rerender();
+            }
+            pendingRerender.clear();
         };
 
         lengthOwner.dirty = () => schedule(onUpdate);
