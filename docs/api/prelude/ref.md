@@ -26,14 +26,15 @@ Internally, `Ref<T>` maintains a flat `Map<string, Signal<unknown>>` of leaf sig
 ### `Ref.create()`
 
 ```ts
-Ref.create<T>(initial: T[]): RefArray<T>            // array → RefArray
-Ref.create<T extends object>(initial: T): Ref<T>    // object → Ref (active state)
-Ref.create<T extends object>(): Ref<T>              // no value → Ref (Unset state)
+Ref.create<T extends unknown[]>(initial: T): RefArray<T[number]>  // array (explicit type arg) → RefArray
+Ref.create<T>(initial: T[]): RefArray<T>                          // array → RefArray
+Ref.create<T extends object>(initial: T): Ref<T>                  // object → Ref (active state)
+Ref.create<T extends object>(): Ref<T>                            // no value → Ref (Unset state)
 ```
 
 Creates a new `Ref` or `RefArray` depending on the argument type.
 
-- **Array argument** → returns `RefArray<T>`. Prefer this over `Ref.create<T[]>({...})` when the root IS the array.
+- **Array argument** → returns `RefArray<T>`. The first overload (`T extends unknown[]`) is picked when an explicit type parameter is supplied (`Ref.create<Task[]>([])`), correctly resolving the element type via `T[number]` — e.g. `Ref.create<Task[]>([])` returns `RefArray<Task>`, not `RefArray<Task[]>`. The second overload covers the inferred case (`Ref.create([...tasks])`).
 - **Object argument** → returns `Ref<T>` in active state.
 - **No argument** → returns `Ref<T>` in `Unset` state; `get()` returns `undefined` until first `set()`.
 
@@ -69,20 +70,40 @@ ref.isUnset: boolean
 
 ---
 
-### `.get(path)`
+### `.get()`
 
 ```ts
+ref.get(): T | undefined
 ref.get<P extends Path<T>>(path: P): PathValue<T, P> | undefined
 ```
 
-Read the value at `path` and register it as a dependency in the active tracking context. One call = one subscription.
+Read the value at a path (or the entire object when called with no arguments) and register it as a dependency in the active tracking context. One call = one subscription.
 
 Returns `undefined` if the Ref is in `Unset` state or if the path has been deleted.
 
+**No-arg form** — coarse dependency on the root signal, notified whenever any path in the Ref changes. Use this when you need the whole object as a value. For fine-grained path-level tracking, supply a path.
+
 ```ts
+ref.get()              // { user: { name: "Alice", age: 30 }, scores: [1, 2, 3], active: true }
 ref.get("user.name")   // "Alice"
 ref.get("scores.0")    // 1
 ref.get("active")      // true
+```
+
+---
+
+### `.peek()`
+
+```ts
+ref.peek(): T | undefined
+ref.peek<P extends Path<T>>(path: P): PathValue<T, P> | undefined
+```
+
+Untracked read — same overloads as `.get()` but wrapped in `untrack()`. Does not register any reactive dependency. Consistent with `Signal.peek()`.
+
+```ts
+ref.peek()             // { user: { name: "Alice", ... }, ... } — no dependency registered
+ref.peek("user.name")  // "Alice" — no dependency registered
 ```
 
 ---
@@ -184,7 +205,7 @@ const nameD     = ref.at("user.name") // Derived<string | undefined>
 // RefArray: per-index reads + iterator methods
 scoresRef.get(0)            // 1 — tracked
 scoresRef.length()          // 3 — tracked
-const evens = scoresRef.filter(x => x % 2 === 0)  // ReactiveArray<number>
+const evens = scoresRef.filter(x => x % 2 === 0)  // DerivedArray<number>
 
 // Primitive Derived: tracked read and write
 nameD.get()           // tracked read
@@ -310,13 +331,18 @@ ref.push("scores", 5, 6)
 #### `.pop(path)`
 
 ```ts
-ref.pop<P extends ArrayPath<T>>(path: P): ArrayItem<T, P> | undefined
+ref.pop<P extends ArrayPath<T>>(path: P): Option<ArrayItem<T, P>>
 ```
 
-Remove and return the last element of the array at `path`. Returns `undefined` if the array is empty.
+Remove and return the last element of the array at `path` as an `Option`. Returns `Option.Some(value)` on success or `Option.None()` if the array is empty.
 
 ```ts
-const last = ref.pop("scores")
+import { match } from "aljabr"
+
+match(ref.pop("scores"), {
+    Some: ({ value }) => console.log("removed", value),
+    None: ()          => console.warn("array was empty"),
+})
 ```
 
 #### `.splice(path, start, deleteCount, ...items)`
@@ -529,22 +555,46 @@ items.length()  // 3
 
 ---
 
-### `.get(i)`
+### `.get()`
 
 ```ts
+refArray.get(): T[]
 refArray.get(i: number): T | undefined
 ```
 
-Read the item at index `i` and register it as a dependency in the active tracking context. Returns `undefined` for out-of-bounds indices.
+Read the entire array or a single element, registering a reactive dependency.
 
-Only subscribers to index `i` are notified when `items[i]` changes — other index subscribers are unaffected.
+**No-arg form** — subscribes to the root signal (the same signal notified by every mutation). Re-evaluates whenever any element changes or the array grows/shrinks. Returns a snapshot copy of the underlying array.
+
+**Indexed form** — fine-grained: only subscribers to index `i` are notified when `items[i]` changes.
+
+Returns `[]` (no-arg) or `undefined` (indexed) for out-of-bounds or disposed state.
 
 ```ts
 const items = Ref.create([1, 2, 3])
-const first = Derived.create(() => items.get(0))
 
+items.get()   // [1, 2, 3] — tracked; fires on any mutation
+items.get(0)  // 1 — tracked; fires only when index 0 changes
+
+const first = Derived.create(() => items.get(0))
 items.splice(0, 1, 99)
 first.get()  // 99
+```
+
+---
+
+### `.peek()`
+
+```ts
+refArray.peek(): T[]
+refArray.peek(i: number): T | undefined
+```
+
+Untracked read — same overloads as `.get()` but wrapped in `untrack()`. Does not register any reactive dependency. Consistent with `Signal.peek()`.
+
+```ts
+items.peek()   // [1, 2, 3] — no dependency registered
+items.peek(0)  // 1 — no dependency registered
 ```
 
 ---
@@ -595,10 +645,19 @@ Append one or more items to the end.
 #### `.pop()`
 
 ```ts
-refArray.pop(): T | undefined
+refArray.pop(): Option<T>
 ```
 
-Remove and return the last item. Returns `undefined` on an empty array.
+Remove and return the last item as an `Option`. Returns `Option.Some(value)` on success or `Option.None()` when the array is empty.
+
+```ts
+import { match } from "aljabr"
+
+match(items.pop(), {
+    Some: ({ value }) => console.log("removed", value),
+    None: ()          => console.warn("array was empty"),
+})
+```
 
 #### `.splice(start, deleteCount, ...items)`
 
@@ -616,22 +675,169 @@ refArray.move(from: number, to: number): void
 
 Swap the elements at indices `from` and `to`. Only signals at those two positions are notified. No-op if `from === to` or either index is out of bounds.
 
+#### `.set(index, value)`
+
+```ts
+refArray.set(index: number, value: T): Option<T>
+```
+
+Replace the element at `index` in-place. Fine-grained: dirties only the per-index signal for `index`, leaving all other indices and the length signal untouched.
+
+Returns `Option.Some(oldValue)` on success (the previous value) or `Option.None()` if the index is out of bounds. Does **not** extend the array — use `push` to append or `splice` to insert.
+
+```ts
+import { match } from "aljabr"
+
+match(items.set(2, 99), {
+    Some: ({ value: prev }) => console.log("replaced", prev, "with 99"),
+    None: ()                => console.warn("index out of bounds"),
+})
+```
+
+#### `.shift()`
+
+```ts
+refArray.shift(): Option<T>
+```
+
+Remove and return the first element. Returns `Option.Some(value)` on success or `Option.None()` when the array is empty.
+
+```ts
+match(items.shift(), {
+    Some: ({ value }) => console.log("removed", value),
+    None: ()          => console.warn("array was empty"),
+})
+```
+
+#### `.unshift(...items)`
+
+```ts
+refArray.unshift(...items: T[]): void
+```
+
+Insert one or more items at the front of the array. Notifies signals at the affected indices, the length signal, and ancestor paths.
+
+```ts
+items.unshift(0)     // prepend a single item
+items.unshift(-2, -1) // prepend multiple items
+```
+
+---
+
+### Query methods
+
+Synchronous reactive reads. Call them inside `derived()` or `effect()` to register reactive dependencies.
+
+#### `.find(predicate)`
+
+```ts
+refArray.find(predicate: (item: T, index: number) => boolean): Option<T>
+```
+
+Returns `Option.Some(item)` for the first element matching `predicate`, or `Option.None()` if no match is found.
+
+Uses **precise dependency tracking** — calls `get(i)` only for each visited index and stops at the first match. Elements beyond the match point are not tracked.
+
+```ts
+import { match } from "aljabr"
+
+const tasks = Ref.create([{ id: 1, done: false }, { id: 2, done: true }])
+
+match(tasks.find(t => t.done), {
+    Some: ({ value }) => console.log("first done:", value.id),
+    None: ()          => console.log("none done"),
+})
+```
+
+#### `.findIndex(predicate)`
+
+```ts
+refArray.findIndex(predicate: (item: T, index: number) => boolean): Option<number>
+```
+
+Returns `Option.Some(index)` for the first index whose element matches `predicate`, or `Option.None()` if no match. Uses precise dependency tracking — stops at the first match.
+
+```ts
+match(tasks.findIndex(t => t.done), {
+    Some: ({ value: idx }) => console.log("first done at index", idx),
+    None: ()               => console.log("none done"),
+})
+```
+
+#### `.findLastIndex(predicate)`
+
+```ts
+refArray.findLastIndex(predicate: (item: T, index: number) => boolean): Option<number>
+```
+
+Returns `Option.Some(index)` for the **last** index whose element matches `predicate`, or `Option.None()` if no match. Scans from the end; uses precise dependency tracking — stops at the first match found from the right.
+
+#### `.includes(value)`
+
+```ts
+refArray.includes(value: T): boolean
+```
+
+Returns `true` if the array contains `value` (by reference equality). Uses precise dependency tracking — stops at first match.
+
+```ts
+const items = Ref.create([1, 2, 3])
+items.includes(2) // true
+items.includes(5) // false
+```
+
+#### `.join(separator?)`
+
+```ts
+refArray.join(separator?: string): string
+```
+
+Joins all elements into a string, separated by `separator` (default `","`). Full-array reactive read — tracks all per-index signals and the length signal. Re-evaluates whenever any element changes or the array grows/shrinks.
+
+```ts
+const tags = Ref.create(["alpha", "beta", "gamma"])
+const label = Derived.create(() => tags.join(", "))
+// label.get() → "alpha, beta, gamma"
+```
+
+#### `.reduce(fn, initial)`
+
+```ts
+refArray.reduce<U>(fn: (acc: U, item: T, index: number) => U, initial: U): U
+```
+
+Left-to-right accumulation over all elements. Full-array reactive read — tracks all per-index signals and the length signal.
+
+```ts
+const nums = Ref.create([1, 2, 3, 4])
+const sum = Derived.create(() => nums.reduce((acc, x) => acc + x, 0))
+// sum.get() → 10
+```
+
+#### `.reduceRight(fn, initial)`
+
+```ts
+refArray.reduceRight<U>(fn: (acc: U, item: T, index: number) => U, initial: U): U
+```
+
+Right-to-left accumulation over all elements. Full-array reactive read — tracks all per-index signals and the length signal.
+
 ---
 
 ### Iterator methods
 
-All return a [`ReactiveArray<U>`](./reactive-array.md) — a read-only per-index reactive view.
+All return a [`DerivedArray<U>`](./derived-array.md) — a read-only per-index reactive view.
 
 #### `.map(fn)`
 
 ```ts
-refArray.map<U>(fn: (item: T, i: number) => U): ReactiveArray<U>
+refArray.map<U>(fn: (item: T, i: number) => U): DerivedArray<U>
 ```
 
-Returns a new `ReactiveArray<U>` where each element is transformed by `fn`. 1:1 index correspondence is maintained — no key function needed.
+Returns a new `DerivedArray<U>` where each element is transformed by `fn`. 1:1 index correspondence is maintained — no key function needed.
 
 ```ts
-const doubled = items.map(x => x * 2)  // ReactiveArray<number>
+const doubled = items.map(x => x * 2)  // DerivedArray<number>
 ```
 
 #### `.filter(fn, opts?)`
@@ -640,10 +846,10 @@ const doubled = items.map(x => x * 2)  // ReactiveArray<number>
 refArray.filter(
   fn: (item: T, i: number) => boolean,
   opts?: { key?: (item: T) => unknown },
-): ReactiveArray<T>
+): DerivedArray<T>
 ```
 
-Returns a `ReactiveArray<T>` containing only items matching `fn`. Provide a `key` function for surgical per-position invalidation when items are objects.
+Returns a `DerivedArray<T>` containing only items matching `fn`. Provide a `key` function for surgical per-position invalidation when items are objects.
 
 ```ts
 const evens = items.filter(x => x % 2 === 0)
@@ -661,10 +867,10 @@ const activeUsers = users.filter(
 refArray.sort(
   comparator: (a: T, b: T) => number,
   opts?: { key?: (item: T) => unknown },
-): ReactiveArray<T>
+): DerivedArray<T>
 ```
 
-Returns a `ReactiveArray<T>` sorted by `comparator`. Provide a `key` for surgical per-position invalidation.
+Returns a `DerivedArray<T>` sorted by `comparator`. Provide a `key` for surgical per-position invalidation.
 
 ```ts
 const sorted = items.sort((a, b) => a - b)
@@ -693,7 +899,7 @@ type IteratorOptions<T> = { key?: (item: T) => unknown }
 **Default key:** `item => item` (reference equality). Works for primitive arrays. For object arrays, this breaks under `Ref`'s immutable-update model (every `patch` produces new references). **Always provide a `key` for object arrays.**
 
 **Dev-mode warnings fire when:**
-- No key is provided and items are objects (warning emitted once per `ReactiveArray` instance)
+- No key is provided and items are objects (warning emitted once per `DerivedArray` instance)
 - Two items produce the same key (duplicate keys → ambiguous identity)
 
 ---
@@ -702,6 +908,6 @@ type IteratorOptions<T> = { key?: (item: T) => unknown }
 
 - [`Signal<T, S>`](./signal.md) — flat reactive value container; used internally by `Ref`
 - [`Derived<T>`](./derived.md) — lazy computed reactive value; returned by `.at()` for leaf paths
-- [`ReactiveArray<T>`](./reactive-array.md) — read-only per-index reactive view returned by iterator methods
+- [`DerivedArray<T>`](./derived-array.md) — read-only per-index reactive view returned by iterator methods
 - [`Option<T>`](./option.md) — present/absent container; returned by `.maybeAt()`
 - [`batch`](./context.md#batch) — coalesce multiple Ref writes into a single notification pass

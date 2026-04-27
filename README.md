@@ -50,8 +50,8 @@ aljabr ships independent entry points. Use what you need; ignore what you don't.
 - **Signal** — reactive mutable container; accepts a custom state union for domain-specific lifecycles
 - **Derived / AsyncDerived** — lazy computed values; async variant with Loading, Reloading, Ready, Failed, and Disposed states
 - **Ref** — reactive container for structured objects and arrays; per-path subscriptions, two-way signal bindings, first-class array mutations (`push`, `pop`, `splice`, `move`)
-- **RefArray** — reactive root-level array (returned by `Ref.create(T[])` and `Ref.at(arrayPath)`); pathless mutations + per-index reactive reads via `get(i)`, `at(i)`, and `length()`
-- **ReactiveArray** — read-only per-index reactive view returned by `map`, `filter`, and `sort`; key-based incremental diffing for surgical per-index invalidation; fully chainable
+- **RefArray** — reactive root-level array (returned by `Ref.create(T[])` and `Ref.at(arrayPath)`); pathless mutations (`push`, `pop`, `shift`, `unshift`, `splice`, `move`, `set`) + per-index reactive reads via `get(i)`, `at(i)`, `length()`; query methods (`find`, `findIndex`, `findLastIndex`, `includes`, `join`, `reduce`, `reduceRight`); `pop` and `shift` return `Option<T>`; whole-array reads via `get()` / `peek()`
+- **DerivedArray** — read-only per-index reactive view returned by `map`, `filter`, and `sort`; key-based incremental diffing for surgical per-index invalidation; fully chainable; `get()` / `peek()` for whole-array reactive and untracked reads
 - **Scope / Resource** — structured resource lifetime with LIFO cleanup guarantees; `Resource(acquire, release)` bracket pattern; `defer()` / `acquire()` for implicit scope stacks; `Symbol.asyncDispose` support
 - **watchEffect** — reactive async side effects with configurable retry policies (`Schedule.Fixed`, `.Linear`, `.Exponential`, `.Custom`), timeouts, `AbortSignal` cancellation, and `afterRetry` hooks
 - **Fault** — classify async failures into Fail (retryable domain error), Defect (unexpected panic), and Interrupted (abort)
@@ -75,7 +75,7 @@ aljabr ships independent entry points. Use what you need; ignore what you don't.
 - **Function components** — plain functions `(props: P) => ViewNode`; no classes, no hooks, no registration
 - **Reactive children** — wrap any child in `() => ...` to create a reactive region that re-renders in place when signal dependencies change
 - **Reactive props** — function props (non-event-handlers) are tracked reactively; only the affected attribute is updated on change
-- **Reactive lists** — pass a `ReactiveArray<ViewNode>` directly as a child; the list region re-renders when the array mutates
+- **Reactive lists** — pass a `DerivedArray<ViewNode>` directly as a child; the list region re-renders when the array mutates
 - **Pluggable renderer** — `RendererHost<N, E>` interface allows DOM, canvas, SSR, or any custom target as equal peers
 - **`domHost`** — production DOM implementation with class/style/event/IDL-property mapping
 - **Lifecycle via `Scope`** — `defer()` and `acquire()` register cleanup on the current component owner; LIFO disposal on unmount
@@ -382,18 +382,18 @@ items.at(0);              // Derived<number | undefined> handle
 items.length();           // reactive length signal
 ```
 
-**`RefArray.map / filter / sort`** return a `ReactiveArray<T>` — a read-only per-index reactive view:
+**`RefArray.map / filter / sort`** return a `DerivedArray<T>` — a read-only per-index reactive view:
 
 ```ts
 const state = Ref.create({ items: [1, 2, 3, 4, 5] });
 
 // state.at("items") returns RefArray<number>
 const evens = state.at("items")
-    .filter(x => x % 2 === 0);            // ReactiveArray<number> → [2, 4]
+    .filter(x => x % 2 === 0);            // DerivedArray<number> → [2, 4]
 
 const doubled = state.at("items")
     .filter(x => x % 2 === 0)
-    .map(x => x * 2);                     // ReactiveArray<number> → [4, 8]
+    .map(x => x * 2);                     // DerivedArray<number> → [4, 8]
 
 // Only the changed position fires — not the whole list
 evens.get(0);   // 2 — tracked; notified when this slot changes
@@ -509,7 +509,7 @@ mount(() => view(Timer, {}), document.body);
 
 ### Reactive lists
 
-Pass a `ReactiveArray<ViewNode>` (from `RefArray.map`, `.filter`, `.sort`) directly as a child:
+Pass a `DerivedArray<ViewNode>` (from `RefArray.map`, `.filter`, `.sort`) directly as a child:
 
 ```ts
 const items = Ref.create({ list: ["apple", "banana", "cherry"] });
@@ -565,7 +565,7 @@ items.push("list", "date"); // new <li> appears — rest untouched
 - [`Derived<T>` / `AsyncDerived<T, E>`](docs/api/prelude/derived.md) — lazy computed reactive values
 - [`Ref<T>`](docs/api/prelude/ref.md) — structured reactive objects and arrays
 - [`RefArray<T>`](docs/api/prelude/ref.md#refarrayt) — reactive root-level array; pathless mutations, per-index reads, iterator methods
-- [`ReactiveArray<T>`](docs/api/prelude/reactive-array.md) — read-only per-index reactive view; key-based incremental diffing; chainable `map` / `filter` / `sort`
+- [`DerivedArray<T>`](docs/api/prelude/derived-array.md) — read-only per-index reactive view; key-based incremental diffing; chainable `map` / `filter` / `sort`
 - [`Scope` / `Resource`](docs/api/prelude/scope.md) — structured resource lifetimes
 - [`Effect<T, E>` / `watchEffect`](docs/api/prelude/effect.md) — reactive async effects
 - [`Fault<E>`](docs/api/prelude/fault.md) — classify async failures
