@@ -1,5 +1,5 @@
 import { union, type Variant } from "../union.ts";
-import { ReactiveArray } from "../prelude/reactive-array.ts";
+import { DerivedArray } from "../prelude/reactive-array.ts";
 import { RefArray } from "../prelude/ref.ts";
 
 // ---------------------------------------------------------------------------
@@ -108,7 +108,7 @@ export type ViewNode =
  * | `null \| undefined \| false` | Rendered as nothing (skipped) |
  * | `ViewNode` | Mounted as-is |
  * | `() => Child` | **Reactive region** — re-evaluated when dependencies change |
- * | `ReactiveArray<any>` | **Reactive list** — re-rendered when the array mutates |
+ * | `DerivedArray<any>` | **Reactive list** — re-rendered when the array mutates |
  * | `RefArray<any>` | **Reactive list** — re-rendered when the array mutates |
  * | `{ get(): Child }` | **Readable shorthand** — normalized to `() => r.get()` by `view()` |
  *
@@ -134,7 +134,7 @@ export type Child =
     | undefined
     | ViewNode
     | (() => Child)
-    | ReactiveArray<any> // invariant — accepts any ReactiveArray regardless of item type
+    | DerivedArray<any> // invariant — accepts any DerivedArray regardless of item type
     | RefArray<any>      // invariant — accepts any RefArray regardless of item type
     | { get(): Child };  // any readable (Signal, Derived, custom) — normalized to () => r.get() in view()
 
@@ -173,7 +173,7 @@ function isReadable(v: unknown): v is { get(): unknown } {
     return (
         v !== null &&
         typeof v === "object" &&
-        !(v instanceof ReactiveArray) &&
+        !(v instanceof DerivedArray) &&
         !(v instanceof RefArray) &&
         typeof (v as Record<string, unknown>).get === "function"
     );

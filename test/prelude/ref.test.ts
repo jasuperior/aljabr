@@ -420,13 +420,13 @@ describe("ref.pop", () => {
     it("removes and returns the last element", () => {
         const ref = makeState();
         const val = ref.pop("scores");
-        expect(val).toBe(3);
+        expect(val.getOrElse(-1)).toBe(3);
         expect(ref.get("scores")).toEqual([1, 2]);
     });
 
-    it("returns undefined on an empty array", () => {
+    it("returns None on an empty array", () => {
         const ref = Ref.create({ items: [] as number[] });
-        expect(ref.pop("items")).toBeUndefined();
+        expect(ref.pop("items").getOrElse(-1)).toBe(-1);
     });
 
     it("notifies the array path signal", () => {

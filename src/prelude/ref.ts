@@ -2,7 +2,7 @@ import { Signal } from "./signal.ts";
 import { Derived } from "./derived.ts";
 import { Option } from "./option.ts";
 import { getCurrentComputation, untrack } from "./context.ts";
-import { ReactiveArray, type IteratorOptions } from "./reactive-array.ts";
+import { DerivedArray, type IteratorOptions } from "./reactive-array.ts";
 
 // ---------------------------------------------------------------------------
 // Path type machinery
@@ -267,7 +267,7 @@ function applyArrayMutation(
  * they register fine-grained dependencies so that subscribers are notified
  * only when the specific index (or length) they read actually changes.
  *
- * Iterator methods (`map`, `filter`, `sort`) return a `ReactiveArray<U>` —
+ * Iterator methods (`map`, `filter`, `sort`) return a `DerivedArray<U>` —
  * a read-only derived view that maintains per-index reactivity across
  * structural mutations.
  *
@@ -278,8 +278,8 @@ function applyArrayMutation(
  * items.pop();                                    // [1, 2, 3, 4, 5]
  * items.splice(1, 2, 10, 20);                     // [1, 10, 20, 4, 5]
  *
- * const evens = items.filter(x => x % 2 === 0);  // ReactiveArray<number>
- * const doubled = evens.map(x => x * 2);          // ReactiveArray<number>
+ * const evens = items.filter(x => x % 2 === 0);  // DerivedArray<number>
+ * const doubled = evens.map(x => x * 2);          // DerivedArray<number>
  */
 export class RefArray<T> {
     readonly #holder: RefHolder;
@@ -334,15 +334,53 @@ export class RefArray<T> {
 
     /**
      * Remove and return the last element of the array.
-     * Returns `undefined` if the array is empty.
+     * Returns `Option.Some(value)` on success, `Option.None()` if the array is empty.
      */
-    pop(): T | undefined {
-        if (this.#holder.disposed) return undefined;
+    pop(): Option<T> {
+        if (this.#holder.disposed) return Option.None();
         const arr = this.#getArr() ?? [];
-        if (arr.length === 0) return undefined;
+        if (arr.length === 0) return Option.None();
         const last = arr[arr.length - 1] as T;
         applyArrayMutation(this.#holder, this.#prefix, arr, arr.slice(0, -1));
-        return last;
+        return Option.Some(last);
+    }
+
+    /**
+     * Remove and return the first element of the array.
+     * Returns `Option.Some(value)` on success, `Option.None()` if the array is empty.
+     */
+    shift(): Option<T> {
+        if (this.#holder.disposed) return Option.None();
+        const arr = this.#getArr() ?? [];
+        if (arr.length === 0) return Option.None();
+        const first = arr[0] as T;
+        applyArrayMutation(this.#holder, this.#prefix, arr, arr.slice(1));
+        return Option.Some(first);
+    }
+
+    /** Prepend one or more items to the beginning of the array. */
+    unshift(...items: T[]): void {
+        if (this.#holder.disposed) return;
+        const arr = this.#getArr() ?? [];
+        applyArrayMutation(this.#holder, this.#prefix, arr, [...items, ...arr]);
+    }
+
+    /**
+     * Replace the element at `index` in place.
+     * Fine-grained: only the per-index signal for `index` is dirtied.
+     * Returns `Option.Some(oldValue)` on success, `Option.None()` if `index` is out of bounds.
+     * Does not extend the array — use `push` or `splice` to append.
+     */
+    set(index: number, value: T): Option<T> {
+        if (this.#holder.disposed) return Option.None();
+        const arr = this.#getArr() ?? [];
+        if (index < 0 || index >= arr.length) return Option.None();
+        const old = arr[index] as T;
+        if (old === value) return Option.Some(old);
+        const newArr = [...arr];
+        newArr[index] = value;
+        applyArrayMutation(this.#holder, this.#prefix, arr, newArr);
+        return Option.Some(old);
     }
 
     /** Remove and/or insert elements starting at `start`. */
@@ -400,32 +438,125 @@ export class RefArray<T> {
     }
 
     // -------------------------------------------------------------------------
-    // Iterator methods → ReactiveArray
+    // Precise-tracking query methods
     // -------------------------------------------------------------------------
 
     /**
-     * Returns a `ReactiveArray<U>` where each element is transformed by `fn`.
+     * Returns `Option.Some(item)` for the first element matching `predicate`,
+     * `Option.None()` if none match.
+     * Precise tracking: registers per-index dependencies only for visited elements.
+     */
+    find(predicate: (item: T, i: number) => boolean): Option<T> {
+        const len = this.length();
+        for (let i = 0; i < len; i++) {
+            const item = this.get(i)!;
+            if (predicate(item, i)) return Option.Some(item);
+        }
+        return Option.None();
+    }
+
+    /**
+     * Returns `Option.Some(index)` for the first element matching `predicate`,
+     * `Option.None()` if none match.
+     * Precise tracking: registers per-index dependencies only for visited elements.
+     */
+    findIndex(predicate: (item: T, i: number) => boolean): Option<number> {
+        const len = this.length();
+        for (let i = 0; i < len; i++) {
+            if (predicate(this.get(i)!, i)) return Option.Some(i);
+        }
+        return Option.None();
+    }
+
+    /**
+     * Returns `Option.Some(index)` for the last element matching `predicate`,
+     * `Option.None()` if none match.
+     * Precise tracking: registers per-index dependencies only for visited elements (scans from end).
+     */
+    findLastIndex(predicate: (item: T, i: number) => boolean): Option<number> {
+        const len = this.length();
+        for (let i = len - 1; i >= 0; i--) {
+            if (predicate(this.get(i)!, i)) return Option.Some(i);
+        }
+        return Option.None();
+    }
+
+    /**
+     * Returns `true` if `value` is present in the array (using `===`).
+     * Precise tracking: stops at the first match.
+     */
+    includes(value: T): boolean {
+        const len = this.length();
+        for (let i = 0; i < len; i++) {
+            if (this.get(i) === value) return true;
+        }
+        return false;
+    }
+
+    // -------------------------------------------------------------------------
+    // Full-tracking query methods
+    // -------------------------------------------------------------------------
+
+    /**
+     * Joins all elements into a string separated by `separator`.
+     * Full tracking: reads every index — re-evaluates when any element or length changes.
+     */
+    join(separator = ","): string {
+        const len = this.length();
+        const parts: string[] = [];
+        for (let i = 0; i < len; i++) parts.push(String(this.get(i) ?? ""));
+        return parts.join(separator);
+    }
+
+    /**
+     * Applies `fn` left-to-right, accumulating a result.
+     * Full tracking: reads every index — re-evaluates when any element or length changes.
+     */
+    reduce<U>(fn: (acc: U, item: T, i: number) => U, initial: U): U {
+        const len = this.length();
+        let acc = initial;
+        for (let i = 0; i < len; i++) acc = fn(acc, this.get(i)!, i);
+        return acc;
+    }
+
+    /**
+     * Applies `fn` right-to-left, accumulating a result.
+     * Full tracking: reads every index — re-evaluates when any element or length changes.
+     */
+    reduceRight<U>(fn: (acc: U, item: T, i: number) => U, initial: U): U {
+        const len = this.length();
+        let acc = initial;
+        for (let i = len - 1; i >= 0; i--) acc = fn(acc, this.get(i)!, i);
+        return acc;
+    }
+
+    // -------------------------------------------------------------------------
+    // Iterator methods → DerivedArray
+    // -------------------------------------------------------------------------
+
+    /**
+     * Returns a `DerivedArray<U>` where each element is transformed by `fn`.
      * 1:1 index mapping is maintained — no key function required.
      */
-    map<U>(fn: (item: T, i: number) => U): ReactiveArray<U> {
+    map<U>(fn: (item: T, i: number) => U): DerivedArray<U> {
         const self = this;
-        return ReactiveArray._create<U>(() => {
+        return DerivedArray._create<U>(() => {
             const len = self.length();
             return Array.from({ length: len }, (_, i) => fn(self.get(i)!, i));
         }, null);
     }
 
     /**
-     * Returns a `ReactiveArray<T>` containing only items for which `fn` returns `true`.
+     * Returns a `DerivedArray<T>` containing only items for which `fn` returns `true`.
      *
      * Provide a `key` function via `opts` for surgical per-index invalidation
      * when items are objects.
      */
-    filter(fn: (item: T, i: number) => boolean, opts?: IteratorOptions<T>): ReactiveArray<T> {
+    filter(fn: (item: T, i: number) => boolean, opts?: IteratorOptions<T>): DerivedArray<T> {
         const keyFn = opts?.key ?? ((item: T) => item);
         const keyIsDefault = !opts?.key;
         const self = this;
-        return ReactiveArray._create<T>(() => {
+        return DerivedArray._create<T>(() => {
             const len = self.length();
             const items: T[] = Array.from({ length: len }, (_, i) => self.get(i)!);
             return items.filter(fn);
@@ -433,15 +564,15 @@ export class RefArray<T> {
     }
 
     /**
-     * Returns a `ReactiveArray<T>` sorted by `comparator`.
+     * Returns a `DerivedArray<T>` sorted by `comparator`.
      *
      * Provide a `key` function via `opts` for surgical per-index invalidation.
      */
-    sort(comparator: (a: T, b: T) => number, opts?: IteratorOptions<T>): ReactiveArray<T> {
+    sort(comparator: (a: T, b: T) => number, opts?: IteratorOptions<T>): DerivedArray<T> {
         const keyFn = opts?.key ?? ((item: T) => item);
         const keyIsDefault = !opts?.key;
         const self = this;
-        return ReactiveArray._create<T>(() => {
+        return DerivedArray._create<T>(() => {
             const len = self.length();
             const items: T[] = Array.from({ length: len }, (_, i) => self.get(i)!);
             return [...items].sort(comparator);
@@ -547,6 +678,8 @@ export class Ref<T extends object> {
         this.#prefix = prefix;
     }
 
+    /** Create a `RefArray<E>` from a typed array literal — unwraps `T[]` to `RefArray<T>`. */
+    static create<T extends unknown[]>(initial: T): RefArray<T[number]>;
     /** Create a `RefArray<T>` from a root array. */
     static create<T>(initial: T[]): RefArray<T>;
     /** Create a Ref with an initial value (active state). */
@@ -735,15 +868,15 @@ export class Ref<T extends object> {
     /**
      * Remove and return the last element of the array at `path`.
      * Notifies signals at the removed index and ancestor paths.
-     * Returns `undefined` if the array is empty.
+     * Returns `Option.Some(value)` on success, `Option.None()` if the array is empty.
      */
-    pop<P extends ArrayPath<T>>(path: P): ArrayItem<T, P> | undefined {
-        if (this.#holder.disposed) return undefined;
+    pop<P extends ArrayPath<T>>(path: P): Option<ArrayItem<T, P>> {
+        if (this.#holder.disposed) return Option.None();
         const fullPath = resolveFullPath(this.#prefix, path as string);
         const arr = (getAtPath(this.#holder.state, fullPath) as unknown[]) ?? [];
-        if (arr.length === 0) return undefined;
+        if (arr.length === 0) return Option.None();
         applyArrayMutation(this.#holder, fullPath, arr, arr.slice(0, -1));
-        return arr[arr.length - 1] as ArrayItem<T, P>;
+        return Option.Some(arr[arr.length - 1] as ArrayItem<T, P>);
     }
 
     /**

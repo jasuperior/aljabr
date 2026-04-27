@@ -8,7 +8,7 @@ import { createOwner, trackIn, untrack } from "./context.ts";
 
 /**
  * Options for reactive iterator methods (`filter`, `sort`) on `RefArray` and
- * `ReactiveArray`.
+ * `DerivedArray`.
  *
  * Providing a `key` function enables surgical per-index invalidation: only
  * the output positions whose keyed item changed are notified. Without a key,
@@ -32,12 +32,12 @@ function isPrimitiveLike(v: unknown): boolean {
 }
 
 // ---------------------------------------------------------------------------
-// ReactiveArray<T>
+// DerivedArray<T>
 // ---------------------------------------------------------------------------
 
 /**
  * A read-only, per-index reactive view of an array. Returned by `map`,
- * `filter`, and `sort` on `RefArray` and `ReactiveArray`.
+ * `filter`, and `sort` on `RefArray` and `DerivedArray`.
  *
  * Each index is backed by a dedicated `Signal<T | undefined>`. When the
  * underlying source changes, only the positions whose values actually changed
@@ -45,19 +45,19 @@ function isPrimitiveLike(v: unknown): boolean {
  *
  * `length()` is a dedicated signal that fires only when the output size changes.
  *
- * Iterator methods are chainable — each call returns a new `ReactiveArray`.
+ * Iterator methods are chainable — each call returns a new `DerivedArray`.
  *
  * @example
  * const state = Ref.create({ items: [1, 2, 3, 4, 5] });
  *
  * const evens = state.at("items")          // RefArray<number>
- *     .filter(x => x % 2 === 0);           // ReactiveArray<number>
+ *     .filter(x => x % 2 === 0);           // DerivedArray<number>
  *
  * const doubled = state.at("items")
  *     .filter(x => x % 2 === 0)
- *     .map(x => x * 2);                    // ReactiveArray<number>
+ *     .map(x => x * 2);                    // DerivedArray<number>
  */
-export class ReactiveArray<T> {
+export class DerivedArray<T> {
     readonly #signals: Map<number, Signal<T | undefined>> = new Map();
     readonly #lengthSignal: Signal<number>;
     #items: T[];
@@ -73,8 +73,8 @@ export class ReactiveArray<T> {
         computeFn: () => T[],
         keyFn: ((item: T) => unknown) | null,
         keyIsDefault = false,
-    ): ReactiveArray<T> {
-        return new ReactiveArray(computeFn, keyFn, keyIsDefault);
+    ): DerivedArray<T> {
+        return new DerivedArray(computeFn, keyFn, keyIsDefault);
     }
 
     private constructor(
@@ -135,9 +135,9 @@ export class ReactiveArray<T> {
      * Returns a new `ReactiveArray<U>` where each element is transformed by `fn`.
      * 1:1 index correspondence is maintained — no key function required.
      */
-    map<U>(fn: (item: T, i: number) => U): ReactiveArray<U> {
+    map<U>(fn: (item: T, i: number) => U): DerivedArray<U> {
         const self = this;
-        return ReactiveArray._create<U>(() => {
+        return DerivedArray._create<U>(() => {
             const len = self.length();
             return Array.from({ length: len }, (_, i) => fn(self.get(i)!, i));
         }, null);
@@ -150,11 +150,11 @@ export class ReactiveArray<T> {
      * when items are objects. Without a key, reference equality is used, which
      * breaks under `Ref`'s immutable-update model.
      */
-    filter(fn: (item: T, i: number) => boolean, opts?: IteratorOptions<T>): ReactiveArray<T> {
+    filter(fn: (item: T, i: number) => boolean, opts?: IteratorOptions<T>): DerivedArray<T> {
         const keyFn = opts?.key ?? ((item: T) => item);
         const keyIsDefault = !opts?.key;
         const self = this;
-        return ReactiveArray._create<T>(() => {
+        return DerivedArray._create<T>(() => {
             const len = self.length();
             const items: T[] = Array.from({ length: len }, (_, i) => self.get(i)!);
             return items.filter(fn);
@@ -166,11 +166,11 @@ export class ReactiveArray<T> {
      *
      * Provide a `key` function via `opts` for surgical per-index invalidation.
      */
-    sort(comparator: (a: T, b: T) => number, opts?: IteratorOptions<T>): ReactiveArray<T> {
+    sort(comparator: (a: T, b: T) => number, opts?: IteratorOptions<T>): DerivedArray<T> {
         const keyFn = opts?.key ?? ((item: T) => item);
         const keyIsDefault = !opts?.key;
         const self = this;
-        return ReactiveArray._create<T>(() => {
+        return DerivedArray._create<T>(() => {
             const len = self.length();
             const items: T[] = Array.from({ length: len }, (_, i) => self.get(i)!);
             return [...items].sort(comparator);
@@ -232,7 +232,7 @@ export class ReactiveArray<T> {
                 const hasObjects = newItems.some(item => !isPrimitiveLike(item));
                 if (hasObjects) {
                     console.warn(
-                        "[aljabr] ReactiveArray: no key function provided for an object array. " +
+                        "[aljabr] DerivedArray: no key function provided for an object array. " +
                         "Reference equality is unreliable under Ref's immutable-update model. " +
                         "Provide a key via { key: (item) => item.id }.",
                     );
@@ -272,7 +272,7 @@ export class ReactiveArray<T> {
             const key = keyFn(item);
             if (seen.has(key)) {
                 console.warn(
-                    "[aljabr] ReactiveArray: duplicate key detected. " +
+                    "[aljabr] DerivedArray: duplicate key detected. " +
                     "Ensure key function returns unique values per item.",
                 );
                 this.#duplicateKeyWarnEmitted = true;

@@ -1,6 +1,6 @@
 import { describe, expect, it, expectTypeOf, vi } from "vitest";
 import { Ref, RefArray } from "../../src/prelude/ref";
-import { ReactiveArray } from "../../src/prelude/reactive-array";
+import { DerivedArray } from "../../src/prelude/reactive-array.ts";
 import { Derived } from "../../src/prelude/derived";
 import { batch, createOwner, trackIn } from "../../src/prelude/context";
 
@@ -249,13 +249,13 @@ describe("refArray.pop", () => {
     it("removes and returns the last item", () => {
         const arr = makeNumberArray();
         const last = arr.pop();
-        expect(last).toBe(5);
+        expect(last.getOrElse(-1)).toBe(5);
         expect(arr.length()).toBe(4);
     });
 
-    it("returns undefined on empty array", () => {
+    it("returns None on empty array", () => {
         const arr = RefArray.create<number>([]);
-        expect(arr.pop()).toBeUndefined();
+        expect(arr.pop().getOrElse(-1)).toBe(-1);
     });
 
     it("notifies subscribers at the removed index", () => {
@@ -505,24 +505,24 @@ describe("RefArray.dispose", () => {
 // ---------------------------------------------------------------------------
 
 describe("RefArray iterator methods", () => {
-    it("map returns ReactiveArray with transformed items", () => {
+    it("map returns DerivedArray with transformed items", () => {
         const arr = makeNumberArray();
         const doubled = arr.map(x => x * 2);
-        expect(doubled).toBeInstanceOf(ReactiveArray);
+        expect(doubled).toBeInstanceOf(DerivedArray);
         expect(doubled.get(0)).toBe(2);
         expect(doubled.get(4)).toBe(10);
     });
 
-    it("filter returns ReactiveArray with matching items", () => {
+    it("filter returns DerivedArray with matching items", () => {
         const arr = makeNumberArray();
         const evens = arr.filter(x => x % 2 === 0);
-        expect(evens).toBeInstanceOf(ReactiveArray);
+        expect(evens).toBeInstanceOf(DerivedArray);
         expect(evens.get(0)).toBe(2);
         expect(evens.get(1)).toBe(4);
         expect(evens.length()).toBe(2);
     });
 
-    it("sort returns a sorted ReactiveArray", () => {
+    it("sort returns a sorted DerivedArray", () => {
         const arr = RefArray.create([3, 1, 4, 1, 5, 9]);
         const sorted = arr.sort((a, b) => a - b);
         expect(sorted.get(0)).toBe(1);
