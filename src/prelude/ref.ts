@@ -576,14 +576,18 @@ export class RefArray<T> {
 
     /**
      * Returns a `DerivedArray<U>` where each element is transformed by `fn`.
-     * 1:1 index mapping is maintained — no key function required.
+     * 1:1 index mapping is maintained. Provide `opts.key` to enable keyed DOM
+     * reconciliation when the result is rendered.
      */
-    map<U>(fn: (item: T, i: number) => U): DerivedArray<U> {
+    map<U>(fn: (item: T, i: number) => U, opts?: IteratorOptions<T>): DerivedArray<U> {
         const self = this;
+        const indexKeyFn = opts?.key
+            ? (i: number) => opts.key!(self.get(i)!)
+            : null;
         return DerivedArray._create<U>(() => {
             const len = self.length();
             return Array.from({ length: len }, (_, i) => fn(self.get(i)!, i));
-        }, null);
+        }, null, false, indexKeyFn);
     }
 
     /**

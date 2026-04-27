@@ -64,6 +64,7 @@ export class DerivedArray<T> {
     #items: T[];
     readonly #keyFn: ((item: T) => unknown) | null;
     readonly #keyIsDefault: boolean;
+    readonly #indexKeyFn: ((i: number) => unknown) | null;
     readonly #computation: ReturnType<typeof createOwner>;
     #disposed = false;
     #keyDefaultWarnEmitted = false;
@@ -74,17 +75,20 @@ export class DerivedArray<T> {
         computeFn: () => T[],
         keyFn: ((item: T) => unknown) | null,
         keyIsDefault = false,
+        indexKeyFn: ((i: number) => unknown) | null = null,
     ): DerivedArray<T> {
-        return new DerivedArray(computeFn, keyFn, keyIsDefault);
+        return new DerivedArray(computeFn, keyFn, keyIsDefault, indexKeyFn);
     }
 
     private constructor(
         computeFn: () => T[],
         keyFn: ((item: T) => unknown) | null,
         keyIsDefault: boolean,
+        indexKeyFn: ((i: number) => unknown) | null,
     ) {
         this.#keyFn = keyFn;
         this.#keyIsDefault = keyIsDefault;
+        this.#indexKeyFn = indexKeyFn;
 
         const comp = createOwner(null);
         this.#computation = comp;
@@ -159,15 +163,34 @@ export class DerivedArray<T> {
     }
 
     /**
+     * Returns the reconciliation key for index `i`, or `null` if this array
+     * has no key function. Used by the renderer to choose keyed vs
+     * position-based DOM reconciliation.
+     */
+    keyAt(i: number): unknown | null {
+        if (this.#keyFn !== null && !this.#keyIsDefault) {
+            return this.#keyFn(this.#items[i]);
+        }
+        if (this.#indexKeyFn !== null) {
+            return this.#indexKeyFn(i);
+        }
+        return null;
+    }
+
+    /**
      * Returns a new `ReactiveArray<U>` where each element is transformed by `fn`.
      * 1:1 index correspondence is maintained — no key function required.
      */
     map<U>(fn: (item: T, i: number) => U): DerivedArray<U> {
         const self = this;
+        const sourceKeyFn = !this.#keyIsDefault ? this.#keyFn : null;
+        const indexKeyFn = sourceKeyFn !== null
+            ? (i: number) => sourceKeyFn(self.peek(i)!)
+            : null;
         return DerivedArray._create<U>(() => {
             const len = self.length();
             return Array.from({ length: len }, (_, i) => fn(self.get(i)!, i));
-        }, null);
+        }, null, false, indexKeyFn);
     }
 
     /**
@@ -178,8 +201,9 @@ export class DerivedArray<T> {
      * breaks under `Ref`'s immutable-update model.
      */
     filter(fn: (item: T, i: number) => boolean, opts?: IteratorOptions<T>): DerivedArray<T> {
-        const keyFn = opts?.key ?? ((item: T) => item);
-        const keyIsDefault = !opts?.key;
+        const sourceKey = !this.#keyIsDefault ? this.#keyFn : null;
+        const keyFn = opts?.key ?? sourceKey ?? ((item: T) => item);
+        const keyIsDefault = !opts?.key && sourceKey === null;
         const self = this;
         return DerivedArray._create<T>(() => {
             const len = self.length();
@@ -194,8 +218,9 @@ export class DerivedArray<T> {
      * Provide a `key` function via `opts` for surgical per-index invalidation.
      */
     sort(comparator: (a: T, b: T) => number, opts?: IteratorOptions<T>): DerivedArray<T> {
-        const keyFn = opts?.key ?? ((item: T) => item);
-        const keyIsDefault = !opts?.key;
+        const sourceKey = !this.#keyIsDefault ? this.#keyFn : null;
+        const keyFn = opts?.key ?? sourceKey ?? ((item: T) => item);
+        const keyIsDefault = !opts?.key && sourceKey === null;
         const self = this;
         return DerivedArray._create<T>(() => {
             const len = self.length();

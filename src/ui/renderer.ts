@@ -283,14 +283,24 @@ function mountReactiveRegion<N, E extends N>(
 }
 
 // ---------------------------------------------------------------------------
-// Reactive array reconciliation — DerivedArray<ViewNode> child
+// Reactive array reconciliation — DerivedArray<Child> / RefArray<Child>
 //
-// The renderer tracks length() and each get(i) signal together. Any change
-// (structural or per-item) re-renders the whole list region. Fine-grained
-// per-index updates are left for v0.3.4.
+// Phase A (positional): each index gets its own owner scope subscribing only
+// to arr.get(i). The outer lengthOwner subscribes to arr.length() and
+// adds/removes trailing scopes when the list grows or shrinks.
+//
+// Phase B (keyed): used when arr.keyAt is defined. The lengthOwner subscribes
+// to arr.get() (root signal) so it fires on reorders as well as structural
+// changes. Per-key scopes move in the DOM without re-running when items
+// reorder; subscriptions are updated to the item's new index position.
 // ---------------------------------------------------------------------------
 
-type ReactiveList<T> = { get(i: number): T | undefined; length(): number };
+type ReactiveList<T> = {
+    get(): T[];
+    get(i: number): T | undefined;
+    length(): number;
+    keyAt?: (i: number) => unknown | null;
+};
 
 function mountDerivedArray<N, E extends N>(
     host: RendererHost<N, E>,
@@ -300,60 +310,189 @@ function mountDerivedArray<N, E extends N>(
     anchor: N | null,
     parentOwner: Computation,
 ): void {
-    const start = host.createText("");
-    const end = host.createText("");
-    host.insert(parent, start, anchor);
-    host.insert(parent, end, anchor);
+    const listStart = host.createText("");
+    const listEnd = host.createText("");
+    host.insert(parent, listStart, anchor);
+    host.insert(parent, listEnd, anchor);
 
-    let iterOwner: Computation | null = null;
-    const effectOwner = createOwner(parentOwner);
-
-    const rerender = (): void => {
-        iterOwner?.dispose();
-        iterOwner = null;
-
-        let cur = host.nextSibling(start);
-        while (cur !== null && cur !== end) {
-            const next = host.nextSibling(cur);
-            host.remove(cur);
-            cur = next;
-        }
-
-        for (const src of [...effectOwner.sources]) src.unsubscribe(effectOwner);
-        effectOwner.sources.clear();
-
-        // Snapshot the array — reads length() and get(i) to subscribe
-        const items: (Child | undefined)[] = [];
-        trackIn(effectOwner, () => {
-            const len = arr.length();
-            for (let i = 0; i < len; i++) items.push(arr.get(i));
-        });
-
-        iterOwner = createOwner(effectOwner);
-        untrack(() => {
-            for (const item of items) {
-                if (item !== undefined) {
-                    reconcileChild(host, schedule, item, parent, end, iterOwner!);
-                }
-            }
-        });
-    };
-
-    effectOwner.dirty = () => schedule(rerender);
-    effectOwner.cleanups.add(() => {
-        iterOwner?.dispose();
-        iterOwner = null;
-        let cur = host.nextSibling(start);
-        while (cur !== null && cur !== end) {
-            const next = host.nextSibling(cur);
-            host.remove(cur);
-            cur = next;
-        }
-        host.remove(start);
-        host.remove(end);
+    const lengthOwner = createOwner(parentOwner);
+    lengthOwner.cleanups.add(() => {
+        host.remove(listStart);
+        host.remove(listEnd);
     });
 
-    rerender();
+    if (typeof arr.keyAt === "function") {
+        // ── Phase B: keyed scope reconciliation ──────────────────────────────
+        type Entry = {
+            scope: Computation;
+            iterOwner: Computation | null;
+            currentIndex: number;
+            start: N;
+            end: N;
+        };
+        const keyedMap = new Map<unknown, Entry>();
+        let orderedKeys: unknown[] = [];
+        const keyAt = arr.keyAt.bind(arr);
+
+        const createEntry = (key: unknown, idx: number): void => {
+            const eStart = host.createText("");
+            const eEnd = host.createText("");
+            host.insert(parent, eStart, listEnd);
+            host.insert(parent, eEnd, listEnd);
+            const scope = createOwner(lengthOwner);
+            const entry: Entry = { scope, iterOwner: null, currentIndex: idx, start: eStart, end: eEnd };
+
+            const rerender = (): void => {
+                entry.iterOwner?.dispose();
+                entry.iterOwner = null;
+                let cur = host.nextSibling(eStart);
+                while (cur !== null && cur !== eEnd) {
+                    const next = host.nextSibling(cur);
+                    host.remove(cur);
+                    cur = next;
+                }
+                for (const src of [...scope.sources]) src.unsubscribe(scope);
+                scope.sources.clear();
+                const item = trackIn(scope, () => arr.get(entry.currentIndex));
+                if (item !== undefined) {
+                    entry.iterOwner = createOwner(scope);
+                    untrack(() => reconcileChild(host, schedule, item, parent, eEnd, entry.iterOwner!));
+                }
+            };
+
+            scope.dirty = () => schedule(rerender);
+            scope.cleanups.add(() => {
+                let cur = host.nextSibling(eStart);
+                while (cur !== null && cur !== eEnd) {
+                    const next = host.nextSibling(cur);
+                    host.remove(cur);
+                    cur = next;
+                }
+                host.remove(eStart);
+                host.remove(eEnd);
+            });
+            keyedMap.set(key, entry);
+            rerender();
+        };
+
+        const onUpdate = (): void => {
+            for (const src of [...lengthOwner.sources]) src.unsubscribe(lengthOwner);
+            lengthOwner.sources.clear();
+            // Subscribe to root signal — fires on reorder, add, remove, or value change
+            const items = trackIn(lengthOwner, () => arr.get());
+            const newLen = items.length;
+            const newKeys: unknown[] = Array.from({ length: newLen }, (_, i) => keyAt(i) ?? i);
+            const oldKeySet = new Set(orderedKeys);
+            const newKeySet = new Set(newKeys);
+
+            // Remove entries for keys no longer present
+            for (const key of orderedKeys) {
+                if (!newKeySet.has(key)) {
+                    keyedMap.get(key)!.scope.dispose();
+                    keyedMap.delete(key);
+                }
+            }
+            // Create entries for new keys (inserted before listEnd temporarily)
+            for (let i = 0; i < newLen; i++) {
+                if (!oldKeySet.has(newKeys[i])) createEntry(newKeys[i], i);
+            }
+            // Reorder: backward walk moves each entry's nodes into position.
+            // Must remove before inserting — the host may not auto-move nodes.
+            let insertBefore: N = listEnd;
+            for (let i = newLen - 1; i >= 0; i--) {
+                const entry = keyedMap.get(newKeys[i])!;
+                const nodes: N[] = [entry.start];
+                let cur: N | null = host.nextSibling(entry.start);
+                while (cur !== null && cur !== entry.end) {
+                    nodes.push(cur);
+                    cur = host.nextSibling(cur);
+                }
+                nodes.push(entry.end);
+                for (const node of nodes) {
+                    host.remove(node);
+                    host.insert(parent, node, insertBefore);
+                }
+                insertBefore = entry.start;
+            }
+            // Update per-index subscriptions for entries that moved
+            for (let i = 0; i < newLen; i++) {
+                const entry = keyedMap.get(newKeys[i])!;
+                if (entry.currentIndex !== i) {
+                    entry.currentIndex = i;
+                    for (const src of [...entry.scope.sources]) src.unsubscribe(entry.scope);
+                    entry.scope.sources.clear();
+                    trackIn(entry.scope, () => arr.get(i));
+                }
+            }
+            orderedKeys = newKeys;
+        };
+
+        lengthOwner.dirty = () => schedule(onUpdate);
+        onUpdate();
+    } else {
+        // ── Phase A: positional per-index scopes ─────────────────────────────
+        type IndexScope = { scope: Computation; start: N; end: N };
+        const indexScopes: IndexScope[] = [];
+
+        const mountIndex = (i: number): void => {
+            const iStart = host.createText("");
+            const iEnd = host.createText("");
+            host.insert(parent, iStart, listEnd);
+            host.insert(parent, iEnd, listEnd);
+            const scope = createOwner(lengthOwner);
+            let iterOwner: Computation | null = null;
+
+            const rerender = (): void => {
+                iterOwner?.dispose();
+                iterOwner = null;
+                let cur = host.nextSibling(iStart);
+                while (cur !== null && cur !== iEnd) {
+                    const next = host.nextSibling(cur);
+                    host.remove(cur);
+                    cur = next;
+                }
+                for (const src of [...scope.sources]) src.unsubscribe(scope);
+                scope.sources.clear();
+                const item = trackIn(scope, () => arr.get(i));
+                if (item !== undefined) {
+                    iterOwner = createOwner(scope);
+                    untrack(() => reconcileChild(host, schedule, item, parent, iEnd, iterOwner!));
+                }
+            };
+
+            scope.dirty = () => schedule(rerender);
+            scope.cleanups.add(() => {
+                let cur = host.nextSibling(iStart);
+                while (cur !== null && cur !== iEnd) {
+                    const next = host.nextSibling(cur);
+                    host.remove(cur);
+                    cur = next;
+                }
+                host.remove(iStart);
+                host.remove(iEnd);
+            });
+            indexScopes.push({ scope, start: iStart, end: iEnd });
+            rerender();
+        };
+
+        const onLengthChange = (): void => {
+            for (const src of [...lengthOwner.sources]) src.unsubscribe(lengthOwner);
+            lengthOwner.sources.clear();
+            const newLen = trackIn(lengthOwner, () => arr.length());
+            const oldLen = indexScopes.length;
+            if (newLen > oldLen) {
+                for (let i = oldLen; i < newLen; i++) mountIndex(i);
+            } else if (newLen < oldLen) {
+                for (let i = oldLen - 1; i >= newLen; i--) {
+                    indexScopes[i].scope.dispose();
+                    indexScopes.pop();
+                }
+            }
+        };
+
+        lengthOwner.dirty = () => schedule(onLengthChange);
+        onLengthChange();
+    }
 }
 
 // ---------------------------------------------------------------------------
