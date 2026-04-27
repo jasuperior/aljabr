@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { DerivedArray } from "../../src/prelude/reactive-array.ts";
+import { DerivedArray } from "../../src/prelude/derived-array.ts";
 import { Ref, RefArray } from "../../src/prelude/ref";
 import { Derived } from "../../src/prelude/derived";
 import { batch, createOwner, trackIn } from "../../src/prelude/context";

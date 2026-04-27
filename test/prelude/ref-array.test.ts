@@ -1,6 +1,6 @@
 import { describe, expect, it, expectTypeOf, vi } from "vitest";
 import { Ref, RefArray } from "../../src/prelude/ref";
-import { DerivedArray } from "../../src/prelude/reactive-array.ts";
+import { DerivedArray } from "../../src/prelude/derived-array.ts";
 import { Derived } from "../../src/prelude/derived";
 import { batch, createOwner, trackIn } from "../../src/prelude/context";
 
@@ -501,7 +501,7 @@ describe("RefArray.dispose", () => {
 });
 
 // ---------------------------------------------------------------------------
-// iterator methods on RefArray (smoke tests — deep tests in reactive-array suite)
+// iterator methods on RefArray (smoke tests — deep tests in derived-array suite)
 // ---------------------------------------------------------------------------
 
 describe("RefArray iterator methods", () => {

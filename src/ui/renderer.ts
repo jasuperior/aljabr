@@ -7,7 +7,7 @@ import {
     untrack,
     runInContext,
 } from "../prelude/context.ts";
-import { DerivedArray } from "../prelude/reactive-array.ts";
+import { DerivedArray } from "../prelude/derived-array.ts";
 import { RefArray } from "../prelude/ref.ts";
 import type { RendererHost, RendererProtocol } from "./types.ts";
 import { type Child, type ViewNode, view } from "./view-node.ts";

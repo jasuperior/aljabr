@@ -1,5 +1,5 @@
 import { union, type Variant } from "../union.ts";
-import { DerivedArray } from "../prelude/reactive-array.ts";
+import { DerivedArray } from "../prelude/derived-array.ts";
 import { RefArray } from "../prelude/ref.ts";
 
 // ---------------------------------------------------------------------------

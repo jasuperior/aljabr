@@ -2,7 +2,7 @@ import { Signal } from "./signal.ts";
 import { Derived } from "./derived.ts";
 import { Option } from "./option.ts";
 import { getCurrentComputation, untrack } from "./context.ts";
-import { DerivedArray, type IteratorOptions } from "./reactive-array.ts";
+import { DerivedArray, type IteratorOptions } from "./derived-array.ts";
 
 // ---------------------------------------------------------------------------
 // Path type machinery
