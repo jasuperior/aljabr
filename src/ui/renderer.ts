@@ -7,7 +7,7 @@ import {
     untrack,
     runInContext,
 } from "../prelude/context.ts";
-import { ReactiveArray } from "../prelude/reactive-array.ts";
+import { DerivedArray } from "../prelude/derived-array.ts";
 import { RefArray } from "../prelude/ref.ts";
 import type { RendererHost, RendererProtocol } from "./types.ts";
 import { type Child, type ViewNode, view } from "./view-node.ts";
@@ -133,8 +133,8 @@ function reconcileChild<N, E extends N>(
         return;
     }
 
-    if (child instanceof ReactiveArray || child instanceof RefArray) {
-        mountReactiveArray(host, schedule, child, parent, anchor, owner);
+    if (child instanceof DerivedArray || child instanceof RefArray) {
+        mountDerivedArray(host, schedule, child, parent, anchor, owner);
         return;
     }
 
@@ -283,7 +283,7 @@ function mountReactiveRegion<N, E extends N>(
 }
 
 // ---------------------------------------------------------------------------
-// Reactive array reconciliation — ReactiveArray<ViewNode> child
+// Reactive array reconciliation — DerivedArray<ViewNode> child
 //
 // The renderer tracks length() and each get(i) signal together. Any change
 // (structural or per-item) re-renders the whole list region. Fine-grained
@@ -292,7 +292,7 @@ function mountReactiveRegion<N, E extends N>(
 
 type ReactiveList<T> = { get(i: number): T | undefined; length(): number };
 
-function mountReactiveArray<N, E extends N>(
+function mountDerivedArray<N, E extends N>(
     host: RendererHost<N, E>,
     schedule: Schedule,
     arr: ReactiveList<Child>,

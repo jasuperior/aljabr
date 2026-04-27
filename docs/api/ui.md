@@ -106,7 +106,7 @@ Everything `view()` accepts as a child:
 | `null \| undefined \| false` | Skipped — renders nothing |
 | `ViewNode` | Mounted as-is |
 | `() => Child` | **Reactive region** — re-evaluated when signal dependencies change |
-| `ReactiveArray<Child>` | **Reactive list** — re-rendered when the array mutates |
+| `DerivedArray<Child>` | **Reactive list** — re-rendered when the array mutates |
 | `RefArray<Child>` | **Reactive list** — re-rendered when the array mutates |
 | `{ get(): Child }` | **Readable shorthand** — normalised to `() => r.get()` by `view()` |
 
@@ -135,7 +135,7 @@ view("div", null, () =>
 
 ### Reactive lists
 
-Pass a `ReactiveArray<Child>` (from `RefArray.map`, `.filter`, or `.sort`) directly as a child. Items can be `ViewNode` values, primitives, or nested `ReactiveArray` instances — the full `Child` type is supported:
+Pass a `DerivedArray<Child>` (from `RefArray.map`, `.filter`, or `.sort`) directly as a child. Items can be `ViewNode` values, primitives, or nested `DerivedArray` instances — the full `Child` type is supported:
 
 ```ts
 const items = ref.at("list").map(item =>
@@ -499,6 +499,6 @@ view(Fragment, null, ...items.map(i => view("li", null, i.name)))
 
 - [Guide: Building UI with aljabr](../guides/ui.md) — walkthrough from a static tree to a fully reactive component
 - [Prelude: `Signal` / `Derived`](./prelude/signal.md) — reactive primitives used in components
-- [Prelude: `Ref` / `RefArray` / `ReactiveArray`](./prelude/ref.md) — structured state and reactive lists
+- [Prelude: `Ref` / `RefArray` / `DerivedArray`](./prelude/ref.md) — structured state and reactive lists
 - [Prelude: `Scope` / `defer`](./prelude/scope.md) — component lifecycle and resource cleanup
 - [Prelude: `context`](./prelude/context.md) — cross-component context threading

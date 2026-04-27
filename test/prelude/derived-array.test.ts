@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { ReactiveArray } from "../../src/prelude/reactive-array";
+import { DerivedArray } from "../../src/prelude/derived-array.ts";
 import { Ref, RefArray } from "../../src/prelude/ref";
 import { Derived } from "../../src/prelude/derived";
 import { batch, createOwner, trackIn } from "../../src/prelude/context";
@@ -15,10 +15,10 @@ function makeNumbers(): RefArray<number> {
 }
 
 // ---------------------------------------------------------------------------
-// ReactiveArray.get / at / length — basic reactive reads
+// DerivedArray.get / at / length — basic reactive reads
 // ---------------------------------------------------------------------------
 
-describe("ReactiveArray.get", () => {
+describe("DerivedArray.get", () => {
     it("reads a mapped element", () => {
         const arr = makeNumbers();
         const doubled = arr.map(x => x * 2);
@@ -61,7 +61,85 @@ describe("ReactiveArray.get", () => {
     });
 });
 
-describe("ReactiveArray.at", () => {
+describe("DerivedArray.get() — no-arg whole-array", () => {
+    it("returns the full derived array", () => {
+        const arr = makeNumbers();
+        const doubled = arr.map(x => x * 2);
+        expect(doubled.get()).toEqual([2, 4, 6, 8, 10]);
+    });
+
+    it("reflects source mutations", () => {
+        const arr = makeNumbers();
+        const doubled = arr.map(x => x * 2);
+        arr.push(6);
+        expect(doubled.get()).toEqual([2, 4, 6, 8, 10, 12]);
+    });
+
+    it("registers a dependency that fires on any element change", () => {
+        const arr = makeNumbers();
+        const doubled = arr.map(x => x * 2);
+        const comp = createOwner(null);
+        const dirty = vi.fn();
+        comp.dirty = dirty;
+
+        trackIn(comp, () => doubled.get());
+
+        arr.splice(2, 1, 99);
+        expect(dirty).toHaveBeenCalledTimes(1);
+    });
+
+    it("fires when the derived array grows", () => {
+        const arr = makeNumbers();
+        const doubled = arr.map(x => x * 2);
+        const comp = createOwner(null);
+        const dirty = vi.fn();
+        comp.dirty = dirty;
+
+        trackIn(comp, () => doubled.get());
+
+        arr.push(6);
+        expect(dirty).toHaveBeenCalledTimes(1);
+    });
+
+    it("returns [] after disposal", () => {
+        const arr = makeNumbers();
+        const doubled = arr.map(x => x * 2);
+        doubled.dispose();
+        expect(doubled.get()).toEqual([]);
+    });
+});
+
+describe("DerivedArray.peek() — untracked", () => {
+    it("peek() returns the full array without tracking", () => {
+        const arr = makeNumbers();
+        const doubled = arr.map(x => x * 2);
+        const comp = createOwner(null);
+        const dirty = vi.fn();
+        comp.dirty = dirty;
+
+        trackIn(comp, () => doubled.peek());
+
+        arr.push(6);
+        expect(dirty).not.toHaveBeenCalled();
+        expect(doubled.peek()).toEqual([2, 4, 6, 8, 10, 12]);
+    });
+
+    it("peek(i) returns the element at index without tracking", () => {
+        const arr = makeNumbers();
+        const doubled = arr.map(x => x * 2);
+        const comp = createOwner(null);
+        const dirty = vi.fn();
+        comp.dirty = dirty;
+
+        trackIn(comp, () => doubled.peek(0));
+
+        arr.splice(0, 1, 10);
+        expect(dirty).not.toHaveBeenCalled();
+        expect(doubled.peek(0)).toBe(20);
+    });
+});
+
+describe("DerivedArray.at", () => {
     it("returns a Derived", () => {
         const arr = makeNumbers();
         const mapped = arr.map(x => x);
@@ -79,7 +157,7 @@ describe("ReactiveArray.at", () => {
     });
 });
 
-describe("ReactiveArray.length", () => {
+describe("DerivedArray.length", () => {
     it("reflects the correct length", () => {
         const arr = makeNumbers();
         const mapped = arr.map(x => x);
@@ -119,7 +197,7 @@ describe("ReactiveArray.length", () => {
 // map — 1:1 transformation, no key required
 // ---------------------------------------------------------------------------
 
-describe("ReactiveArray.map", () => {
+describe("DerivedArray.map", () => {
     it("transforms all elements initially", () => {
         const arr = makeNumbers();
         const mapped = arr.map(x => x * 10);
@@ -185,7 +263,7 @@ describe("ReactiveArray.map", () => {
 // filter — key-based incremental diffing
 // ---------------------------------------------------------------------------
 
-describe("ReactiveArray.filter", () => {
+describe("DerivedArray.filter", () => {
     it("filters elements initially", () => {
         const arr = makeNumbers(); // [1,2,3,4,5]
         const evens = arr.filter(x => x % 2 === 0);
@@ -282,7 +360,7 @@ describe("ReactiveArray.filter", () => {
 // sort — key-based incremental diffing
 // ---------------------------------------------------------------------------
 
-describe("ReactiveArray.sort", () => {
+describe("DerivedArray.sort", () => {
     it("sorts elements initially", () => {
         const arr = RefArray.create([3, 1, 4, 1, 5, 9, 2, 6]);
         const sorted = arr.sort((a, b) => a - b);
@@ -343,7 +421,7 @@ describe("ReactiveArray.sort", () => {
 // Chaining — filter + sort + map
 // ---------------------------------------------------------------------------
 
-describe("ReactiveArray chaining", () => {
+describe("DerivedArray chaining", () => {
     it("filter → sort → map reflects all mutations", () => {
         const arr = makeNumbers(); // [1,2,3,4,5]
         const result = arr
@@ -379,7 +457,7 @@ describe("ReactiveArray chaining", () => {
 // dispose
 // ---------------------------------------------------------------------------
 
-describe("ReactiveArray.dispose", () => {
+describe("DerivedArray.dispose", () => {
     it("stops reacting after dispose", () => {
         const arr = makeNumbers();
         const doubled = arr.map(x => x * 2);
@@ -394,7 +472,7 @@ describe("ReactiveArray.dispose", () => {
         expect(val0).toBe(2);
     });
 
-    it("does not throw when source mutates after child ReactiveArray is disposed", () => {
+    it("does not throw when source mutates after child DerivedArray is disposed", () => {
         const arr = makeNumbers();
         const mapped = arr.map(x => x);
         mapped.dispose();
@@ -407,7 +485,7 @@ describe("ReactiveArray.dispose", () => {
 // batch interactions
 // ---------------------------------------------------------------------------
 
-describe("ReactiveArray + batch", () => {
+describe("DerivedArray + batch", () => {
     it("batches source changes into one computation pass", () => {
         const arr = makeNumbers();
         const doubled = arr.map(x => x * 2);
@@ -440,7 +518,7 @@ describe("ReactiveArray + batch", () => {
 // Dev warnings (console.warn)
 // ---------------------------------------------------------------------------
 
-describe("ReactiveArray dev warnings", () => {
+describe("DerivedArray dev warnings", () => {
     it("emits a warning when no key is provided for an object array filter", () => {
         const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
 

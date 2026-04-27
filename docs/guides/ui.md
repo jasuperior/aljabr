@@ -101,7 +101,7 @@ isLoggedIn.set(true);
 
 ## Part 3: Reactive props
 
-For **host elements**, any prop value that is a `Signal`, `Derived`, or other readable (anything with a `.get()` method that is not a `ReactiveArray` or `RefArray`) is automatically normalised into a reactive getter before the element is mounted. You can also pass an explicit function — both are equivalent.
+For **host elements**, any prop value that is a `Signal`, `Derived`, or other readable (anything with a `.get()` method that is not a `DerivedArray` or `RefArray`) is automatically normalised into a reactive getter before the element is mounted. You can also pass an explicit function — both are equivalent.
 
 ```ts
 const theme = Signal.create<"light" | "dark">("light");
@@ -279,7 +279,7 @@ function DataStream({ url }: { url: string }) {
 
 ## Part 6: Reactive lists
 
-Pass a `ReactiveArray<ViewNode>` directly as a child to render a reactive list. `ReactiveArray` is the read-only view returned by `RefArray.map`, `.filter`, or `.sort`.
+Pass a `DerivedArray<ViewNode>` directly as a child to render a reactive list. `DerivedArray` is the read-only view returned by `RefArray.map`, `.filter`, or `.sort`.
 
 ```ts
 import { Ref, Signal } from "aljabr/prelude";
@@ -489,5 +489,5 @@ A few implementation details worth knowing as a consumer:
 - [API Reference: `aljabr/ui`](../api/ui.md) — full reference for `view`, `createRenderer`, `RendererHost`, `domHost`, JSX
 - [Reactive UI patterns](./advanced/reactive-ui.md) — deep dive into `Ref`, `Derived`, `AsyncDerived` composition for complex state
 - [Resource Lifetime](./advanced/resource-lifetime.md) — `Scope`, `Resource`, and bracket patterns for cleanup
-- [API Reference: `Ref` / `RefArray` / `ReactiveArray`](../api/prelude/ref.md)
+- [API Reference: `Ref` / `RefArray` / `DerivedArray`](../api/prelude/ref.md)
 - [API Reference: `Signal` / `Derived`](../api/prelude/signal.md)

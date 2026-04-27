@@ -3,7 +3,6 @@ import { createRenderer } from "../../src/ui/renderer.ts";
 import { view, Fragment } from "../../src/ui/view-node.ts";
 import type { RendererHost } from "../../src/ui/types.ts";
 import { Signal } from "../../src/prelude/signal.ts";
-import { ReactiveArray } from "../../src/prelude/reactive-array.ts";
 import { Ref } from "../../src/prelude/ref.ts";
 import { createOwner } from "../../src/prelude/context.ts";
 
@@ -301,7 +300,7 @@ describe("createRenderer", () => {
         });
     });
 
-    describe("ReactiveArray children", () => {
+    describe("DerivedArray children", () => {
         it("renders initial array", () => {
             const host = makeHost();
             const { mount } = createRenderer(host);
@@ -484,7 +483,7 @@ describe("createRenderer", () => {
         });
     });
 
-    describe("nested ReactiveArray items", () => {
+    describe("nested DerivedArray items", () => {
         it("renders string items from a RefArray directly", () => {
             const host = makeHost();
             const { mount } = createRenderer(host);
@@ -498,7 +497,7 @@ describe("createRenderer", () => {
             expect(visibleTexts(ul)).toContain("y");
         });
 
-        it("renders ViewNode items nested inside outer ReactiveArray", () => {
+        it("renders ViewNode items nested inside outer DerivedArray", () => {
             const host = makeHost();
             const { mount } = createRenderer(host);
             const ref = Ref.create({ groups: [["a", "b"], ["c"]] });

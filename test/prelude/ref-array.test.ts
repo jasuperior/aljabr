@@ -1,6 +1,6 @@
 import { describe, expect, it, expectTypeOf, vi } from "vitest";
 import { Ref, RefArray } from "../../src/prelude/ref";
-import { ReactiveArray } from "../../src/prelude/reactive-array";
+import { DerivedArray } from "../../src/prelude/derived-array.ts";
 import { Derived } from "../../src/prelude/derived";
 import { batch, createOwner, trackIn } from "../../src/prelude/context";
 
@@ -117,6 +117,84 @@ describe("refArray.get(i)", () => {
         const arr = makeNumberArray();
         arr.splice(0, 5); // remove all
         expect(arr.get(0)).toBeUndefined();
+    });
+});
+
+// ---------------------------------------------------------------------------
+// get() — whole-array reactive read
+// ---------------------------------------------------------------------------
+
+describe("refArray.get() — no-arg whole-array", () => {
+    it("returns the full array", () => {
+        const arr = makeNumberArray();
+        expect(arr.get()).toEqual([1, 2, 3, 4, 5]);
+    });
+
+    it("reflects mutations", () => {
+        const arr = makeNumberArray();
+        arr.push(6);
+        expect(arr.get()).toEqual([1, 2, 3, 4, 5, 6]);
+    });
+
+    it("registers a reactive dependency that fires on any mutation", () => {
+        const arr = makeNumberArray();
+        const comp = createOwner(null);
+        const dirty = vi.fn();
+        comp.dirty = dirty;
+
+        trackIn(comp, () => arr.get());
+
+        arr.splice(2, 1, 99); // change one element
+        expect(dirty).toHaveBeenCalledTimes(1);
+    });
+
+    it("fires when an element is pushed", () => {
+        const arr = makeNumberArray();
+        const comp = createOwner(null);
+        const dirty = vi.fn();
+        comp.dirty = dirty;
+
+        trackIn(comp, () => arr.get());
+
+        arr.push(6);
+        expect(dirty).toHaveBeenCalledTimes(1);
+    });
+
+    it("returns [] for an empty array", () => {
+        const arr = RefArray.create<number>([]);
+        expect(arr.get()).toEqual([]);
+    });
+});
+
+// ---------------------------------------------------------------------------
+// peek() — whole-array untracked read
+// ---------------------------------------------------------------------------
+
+describe("refArray.peek() — untracked", () => {
+    it("peek() returns the full array without tracking", () => {
+        const arr = makeNumberArray();
+        const comp = createOwner(null);
+        const dirty = vi.fn();
+        comp.dirty = dirty;
+
+        trackIn(comp, () => arr.peek());
+
+        arr.push(6);
+        expect(dirty).not.toHaveBeenCalled();
+        expect(arr.peek()).toEqual([1, 2, 3, 4, 5, 6]);
+    });
+
+    it("peek(i) returns the element at index without tracking", () => {
+        const arr = makeNumberArray();
+        const comp = createOwner(null);
+        const dirty = vi.fn();
+        comp.dirty = dirty;
+
+        trackIn(comp, () => arr.peek(0));
+
+        arr.splice(0, 1, 99);
+        expect(dirty).not.toHaveBeenCalled();
+        expect(arr.peek(0)).toBe(99);
     });
 });
 
@@ -249,13 +327,13 @@ describe("refArray.pop", () => {
     it("removes and returns the last item", () => {
         const arr = makeNumberArray();
         const last = arr.pop();
-        expect(last).toBe(5);
+        expect(last.getOrElse(-1)).toBe(5);
         expect(arr.length()).toBe(4);
     });
 
-    it("returns undefined on empty array", () => {
+    it("returns None on empty array", () => {
         const arr = RefArray.create<number>([]);
-        expect(arr.pop()).toBeUndefined();
+        expect(arr.pop().getOrElse(-1)).toBe(-1);
     });
 
     it("notifies subscribers at the removed index", () => {
@@ -501,28 +579,28 @@ describe("RefArray.dispose", () => {
 });
 
 // ---------------------------------------------------------------------------
-// iterator methods on RefArray (smoke tests — deep tests in reactive-array suite)
+// iterator methods on RefArray (smoke tests — deep tests in derived-array suite)
 // ---------------------------------------------------------------------------
 
 describe("RefArray iterator methods", () => {
-    it("map returns ReactiveArray with transformed items", () => {
+    it("map returns DerivedArray with transformed items", () => {
         const arr = makeNumberArray();
         const doubled = arr.map(x => x * 2);
-        expect(doubled).toBeInstanceOf(ReactiveArray);
+        expect(doubled).toBeInstanceOf(DerivedArray);
         expect(doubled.get(0)).toBe(2);
         expect(doubled.get(4)).toBe(10);
     });
 
-    it("filter returns ReactiveArray with matching items", () => {
+    it("filter returns DerivedArray with matching items", () => {
         const arr = makeNumberArray();
         const evens = arr.filter(x => x % 2 === 0);
-        expect(evens).toBeInstanceOf(ReactiveArray);
+        expect(evens).toBeInstanceOf(DerivedArray);
         expect(evens.get(0)).toBe(2);
         expect(evens.get(1)).toBe(4);
         expect(evens.length()).toBe(2);
     });
 
-    it("sort returns a sorted ReactiveArray", () => {
+    it("sort returns a sorted DerivedArray", () => {
         const arr = RefArray.create([3, 1, 4, 1, 5, 9]);
         const sorted = arr.sort((a, b) => a - b);
         expect(sorted.get(0)).toBe(1);
