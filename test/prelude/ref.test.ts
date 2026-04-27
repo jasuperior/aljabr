@@ -125,6 +125,74 @@ describe("ref.get", () => {
 });
 
 // ---------------------------------------------------------------------------
+// get() — whole-object reactive read
+// ---------------------------------------------------------------------------
+
+describe("ref.get() — no-arg whole-object", () => {
+    it("returns the full object", () => {
+        const ref = makeState();
+        const val = ref.get();
+        expect(val?.user.name).toBe("Alice");
+        expect(val?.scores).toEqual([1, 2, 3]);
+    });
+
+    it("reflects any mutation", () => {
+        const ref = makeState();
+        ref.set("user.name", "Bob");
+        expect(ref.get()?.user.name).toBe("Bob");
+    });
+
+    it("registers a dependency that fires on any path change", () => {
+        const ref = makeState();
+        const comp = createOwner(null);
+        const dirty = vi.fn();
+        comp.dirty = dirty;
+
+        trackIn(comp, () => ref.get());
+
+        ref.set("user.age", 99);
+        expect(dirty).toHaveBeenCalledTimes(1);
+    });
+
+    it("returns undefined when Ref is unset", () => {
+        const ref = Ref.create<{ x: number }>();
+        expect(ref.get()).toBeUndefined();
+    });
+});
+
+// ---------------------------------------------------------------------------
+// peek() — whole-object untracked read
+// ---------------------------------------------------------------------------
+
+describe("ref.peek() — untracked", () => {
+    it("peek() returns the full object without tracking", () => {
+        const ref = makeState();
+        const comp = createOwner(null);
+        const dirty = vi.fn();
+        comp.dirty = dirty;
+
+        trackIn(comp, () => ref.peek());
+
+        ref.set("user.name", "Bob");
+        expect(dirty).not.toHaveBeenCalled();
+        expect(ref.peek()?.user.name).toBe("Bob");
+    });
+
+    it("peek(path) returns the value at path without tracking", () => {
+        const ref = makeState();
+        const comp = createOwner(null);
+        const dirty = vi.fn();
+        comp.dirty = dirty;
+
+        trackIn(comp, () => ref.peek("user.name"));
+
+        ref.set("user.name", "Bob");
+        expect(dirty).not.toHaveBeenCalled();
+        expect(ref.peek("user.name")).toBe("Bob");
+    });
+});
+
+// ---------------------------------------------------------------------------
 // set
 // ---------------------------------------------------------------------------
 

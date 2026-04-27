@@ -60,6 +60,7 @@ function isPrimitiveLike(v: unknown): boolean {
 export class DerivedArray<T> {
     readonly #signals: Map<number, Signal<T | undefined>> = new Map();
     readonly #lengthSignal: Signal<number>;
+    #rootSignal!: Signal<T[]>;
     #items: T[];
     readonly #keyFn: ((item: T) => unknown) | null;
     readonly #keyIsDefault: boolean;
@@ -91,6 +92,7 @@ export class DerivedArray<T> {
         // Initial run (tracked — subscribe to source dependencies)
         this.#items = trackIn(comp, computeFn);
         this.#lengthSignal = untrack(() => Signal.create<number>(this.#items.length));
+        this.#rootSignal = untrack(() => Signal.create<T[]>(this.#items));
 
         const self = this;
         comp.dirty = function () {
@@ -104,13 +106,38 @@ export class DerivedArray<T> {
     }
 
     /**
+     * Read the entire array and register it as a dependency. Re-evaluates whenever
+     * any element changes or the array grows/shrinks.
+     */
+    get(): T[]
+    /**
      * Read the item at index `i` and register it as a dependency in the active
      * tracking context. Returns `undefined` for out-of-bounds indices or after disposal.
      */
-    get(i: number): T | undefined {
+    get(i: number): T | undefined
+    get(i?: number): T[] | T | undefined {
+        if (i === undefined) {
+            if (this.#disposed) return [];
+            this.#rootSignal.get();
+            return [...this.#items];
+        }
         if (this.#disposed) return undefined;
         this.#getOrCreateSignal(i).get();
         return this.#items[i];
+    }
+
+    /**
+     * Read the entire array without registering a reactive dependency.
+     */
+    peek(): T[]
+    /**
+     * Read the item at index `i` without registering a reactive dependency.
+     */
+    peek(i: number): T | undefined
+    peek(i?: number): T[] | T | undefined {
+        return i === undefined
+            ? untrack(() => this.get())
+            : untrack(() => this.get(i));
     }
 
     /**
@@ -188,6 +215,7 @@ export class DerivedArray<T> {
         for (const sig of this.#signals.values()) sig.dispose();
         this.#signals.clear();
         this.#lengthSignal.dispose();
+        this.#rootSignal.dispose();
     }
 
     // -------------------------------------------------------------------------
@@ -263,6 +291,8 @@ export class DerivedArray<T> {
         if (newItems.length !== oldItems.length) {
             this.#lengthSignal.set(newItems.length);
         }
+
+        this.#rootSignal.set(newItems);
     }
 
     #checkDuplicateKeys(items: T[], keyFn: (item: T) => unknown): void {

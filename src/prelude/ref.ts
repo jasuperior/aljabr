@@ -407,15 +407,38 @@ export class RefArray<T> {
     // -------------------------------------------------------------------------
 
     /**
+     * Read the entire array and register it as a dependency. Re-evaluates on any mutation.
+     */
+    get(): T[]
+    /**
      * Read the item at index `i` and register it as a tracked dependency.
      * Returns `undefined` for out-of-bounds indices or when unset.
      */
-    get(i: number): T | undefined {
+    get(i: number): T | undefined
+    get(i?: number): T[] | T | undefined {
+        if (i === undefined) {
+            getOrCreateSignal(this.#holder, this.#prefix).get();
+            return this.#getArr() ?? [];
+        }
         const fullPath = this.#prefix ? `${this.#prefix}.${i}` : `${i}`;
         getOrCreateSignal(this.#holder, fullPath).get();
         if (this.#holder.unset) return undefined;
         const arr = this.#getArr();
         return arr ? (arr[i] as T) : undefined;
+    }
+
+    /**
+     * Read the entire array without registering a reactive dependency.
+     */
+    peek(): T[]
+    /**
+     * Read the item at index `i` without registering a reactive dependency.
+     */
+    peek(i: number): T | undefined
+    peek(i?: number): T[] | T | undefined {
+        return i === undefined
+            ? untrack(() => this.get())
+            : untrack(() => this.get(i));
     }
 
     /**
@@ -715,15 +738,41 @@ export class Ref<T extends object> {
     }
 
     /**
+     * Read the entire object and register it as a dependency. Re-evaluates on any mutation.
+     * Returns `undefined` if the Ref is in Unset state.
+     */
+    get(): T | undefined
+    /**
      * Read the value at `path` and register it as a dependency in the active
      * tracking context. Returns `undefined` if the Ref is in Unset state or
      * if the path does not resolve to a value.
      */
-    get<P extends Path<T>>(path: P): PathValue<T, P> | undefined {
+    get<P extends Path<T>>(path: P): PathValue<T, P> | undefined
+    get<P extends Path<T>>(path?: P): T | PathValue<T, P> | undefined {
+        if (path === undefined) {
+            getOrCreateSignal(this.#holder, this.#prefix).get();
+            if (this.#holder.unset) return undefined;
+            return getAtPath(this.#holder.state, this.#prefix) as T;
+        }
         const fullPath = resolveFullPath(this.#prefix, path as string);
-        getOrCreateSignal(this.#holder, fullPath).get(); // tracked — registers dependency
+        getOrCreateSignal(this.#holder, fullPath).get();
         if (this.#holder.unset) return undefined;
         return getAtPath(this.#holder.state, fullPath) as PathValue<T, P>;
+    }
+
+    /**
+     * Read the entire object without registering a reactive dependency.
+     * Returns `undefined` if the Ref is in Unset state.
+     */
+    peek(): T | undefined
+    /**
+     * Read the value at `path` without registering a reactive dependency.
+     */
+    peek<P extends Path<T>>(path: P): PathValue<T, P> | undefined
+    peek<P extends Path<T>>(path?: P): T | PathValue<T, P> | undefined {
+        return path === undefined
+            ? untrack(() => this.get())
+            : untrack(() => this.get(path));
     }
 
     /**

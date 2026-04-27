@@ -61,6 +61,84 @@ describe("DerivedArray.get", () => {
     });
 });
 
+describe("DerivedArray.get() — no-arg whole-array", () => {
+    it("returns the full derived array", () => {
+        const arr = makeNumbers();
+        const doubled = arr.map(x => x * 2);
+        expect(doubled.get()).toEqual([2, 4, 6, 8, 10]);
+    });
+
+    it("reflects source mutations", () => {
+        const arr = makeNumbers();
+        const doubled = arr.map(x => x * 2);
+        arr.push(6);
+        expect(doubled.get()).toEqual([2, 4, 6, 8, 10, 12]);
+    });
+
+    it("registers a dependency that fires on any element change", () => {
+        const arr = makeNumbers();
+        const doubled = arr.map(x => x * 2);
+        const comp = createOwner(null);
+        const dirty = vi.fn();
+        comp.dirty = dirty;
+
+        trackIn(comp, () => doubled.get());
+
+        arr.splice(2, 1, 99);
+        expect(dirty).toHaveBeenCalledTimes(1);
+    });
+
+    it("fires when the derived array grows", () => {
+        const arr = makeNumbers();
+        const doubled = arr.map(x => x * 2);
+        const comp = createOwner(null);
+        const dirty = vi.fn();
+        comp.dirty = dirty;
+
+        trackIn(comp, () => doubled.get());
+
+        arr.push(6);
+        expect(dirty).toHaveBeenCalledTimes(1);
+    });
+
+    it("returns [] after disposal", () => {
+        const arr = makeNumbers();
+        const doubled = arr.map(x => x * 2);
+        doubled.dispose();
+        expect(doubled.get()).toEqual([]);
+    });
+});
+
+describe("DerivedArray.peek() — untracked", () => {
+    it("peek() returns the full array without tracking", () => {
+        const arr = makeNumbers();
+        const doubled = arr.map(x => x * 2);
+        const comp = createOwner(null);
+        const dirty = vi.fn();
+        comp.dirty = dirty;
+
+        trackIn(comp, () => doubled.peek());
+
+        arr.push(6);
+        expect(dirty).not.toHaveBeenCalled();
+        expect(doubled.peek()).toEqual([2, 4, 6, 8, 10, 12]);
+    });
+
+    it("peek(i) returns the element at index without tracking", () => {
+        const arr = makeNumbers();
+        const doubled = arr.map(x => x * 2);
+        const comp = createOwner(null);
+        const dirty = vi.fn();
+        comp.dirty = dirty;
+
+        trackIn(comp, () => doubled.peek(0));
+
+        arr.splice(0, 1, 10);
+        expect(dirty).not.toHaveBeenCalled();
+        expect(doubled.peek(0)).toBe(20);
+    });
+});
+
 describe("DerivedArray.at", () => {
     it("returns a Derived", () => {
         const arr = makeNumbers();

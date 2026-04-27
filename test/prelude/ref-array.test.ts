@@ -121,6 +121,84 @@ describe("refArray.get(i)", () => {
 });
 
 // ---------------------------------------------------------------------------
+// get() — whole-array reactive read
+// ---------------------------------------------------------------------------
+
+describe("refArray.get() — no-arg whole-array", () => {
+    it("returns the full array", () => {
+        const arr = makeNumberArray();
+        expect(arr.get()).toEqual([1, 2, 3, 4, 5]);
+    });
+
+    it("reflects mutations", () => {
+        const arr = makeNumberArray();
+        arr.push(6);
+        expect(arr.get()).toEqual([1, 2, 3, 4, 5, 6]);
+    });
+
+    it("registers a reactive dependency that fires on any mutation", () => {
+        const arr = makeNumberArray();
+        const comp = createOwner(null);
+        const dirty = vi.fn();
+        comp.dirty = dirty;
+
+        trackIn(comp, () => arr.get());
+
+        arr.splice(2, 1, 99); // change one element
+        expect(dirty).toHaveBeenCalledTimes(1);
+    });
+
+    it("fires when an element is pushed", () => {
+        const arr = makeNumberArray();
+        const comp = createOwner(null);
+        const dirty = vi.fn();
+        comp.dirty = dirty;
+
+        trackIn(comp, () => arr.get());
+
+        arr.push(6);
+        expect(dirty).toHaveBeenCalledTimes(1);
+    });
+
+    it("returns [] for an empty array", () => {
+        const arr = RefArray.create<number>([]);
+        expect(arr.get()).toEqual([]);
+    });
+});
+
+// ---------------------------------------------------------------------------
+// peek() — whole-array untracked read
+// ---------------------------------------------------------------------------
+
+describe("refArray.peek() — untracked", () => {
+    it("peek() returns the full array without tracking", () => {
+        const arr = makeNumberArray();
+        const comp = createOwner(null);
+        const dirty = vi.fn();
+        comp.dirty = dirty;
+
+        trackIn(comp, () => arr.peek());
+
+        arr.push(6);
+        expect(dirty).not.toHaveBeenCalled();
+        expect(arr.peek()).toEqual([1, 2, 3, 4, 5, 6]);
+    });
+
+    it("peek(i) returns the element at index without tracking", () => {
+        const arr = makeNumberArray();
+        const comp = createOwner(null);
+        const dirty = vi.fn();
+        comp.dirty = dirty;
+
+        trackIn(comp, () => arr.peek(0));
+
+        arr.splice(0, 1, 99);
+        expect(dirty).not.toHaveBeenCalled();
+        expect(arr.peek(0)).toBe(99);
+    });
+});
+
+// ---------------------------------------------------------------------------
 // at(i) → Derived<T | undefined>
 // ---------------------------------------------------------------------------
 
