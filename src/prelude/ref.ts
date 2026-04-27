@@ -3,6 +3,7 @@ import { Derived } from "./derived.ts";
 import { Option } from "./option.ts";
 import { getCurrentComputation, untrack } from "./context.ts";
 import { DerivedArray, type IteratorOptions } from "./derived-array.ts";
+import { tag } from "../union.ts";
 
 // ---------------------------------------------------------------------------
 // Path type machinery
@@ -163,6 +164,22 @@ function collectLeafChanges(
             return;
         }
         if (!Array.isArray(oldVal) && !Array.isArray(newVal)) {
+            const oldIsVariant = tag in (oldVal as object);
+            const newIsVariant = tag in (newVal as object);
+            if (oldIsVariant || newIsVariant) {
+                // At least one side is a union variant. If the tags differ (or only
+                // one side is a variant), the whole value changed atomically.
+                // If tags match, fall through to key recursion for payload diff.
+                const tagMismatch =
+                    !oldIsVariant ||
+                    !newIsVariant ||
+                    (oldVal as any)[tag] !== (newVal as any)[tag];
+                if (tagMismatch) {
+                    out.push([path, newVal]);
+                    return;
+                }
+            }
+
             const oldObj = oldVal as Record<string, unknown>;
             const newObj = newVal as Record<string, unknown>;
             const keys = new Set([

@@ -39,6 +39,17 @@ type FallbackMatchers<Enum extends { [tag]: string }, R> = {
     [__]: (val: Enum) => R;
 };
 
+// TypeScript cannot infer R through a non-homomorphic mapped type (keys derived
+// from Enum[typeof tag] rather than keyof T), so we infer the matchers object
+// as M and extract the result type from M's values after the fact.
+type InferVariantResult<VM> =
+    VM extends (val: any) => infer R ? R :
+    VM extends WhenArm<any, infer R, any> ? R :
+    VM extends Array<WhenArm<any, infer R, any>> ? R :
+    never;
+
+type InferMatchResult<M> = { [K in keyof M]: InferVariantResult<M[K]> }[keyof M];
+
 // ==========================================
 // Pattern evaluation helpers
 // ==========================================
@@ -176,18 +187,18 @@ function hasConditionalPattern(pattern: object): boolean {
  * @see {@link when} for constructing pattern arms
  * @see {@link __} for the catch-all symbol
  */
-export function match<E extends { [tag]: string }, R>(
+export function match<E extends { [tag]: string }, M extends ExactMatchers<E, any>>(
     value: E,
-    matchers: ExactMatchers<E, R>,
-): R;
-export function match<E extends { [tag]: string }, R>(
+    matchers: M,
+): InferMatchResult<M>;
+export function match<E extends { [tag]: string }, M extends FallbackMatchers<E, any>>(
     value: E,
-    matchers: FallbackMatchers<E, R>,
-): R;
-export function match<E extends { [tag]: string }, R>(
+    matchers: M,
+): InferMatchResult<M>;
+export function match<E extends { [tag]: string }>(
     value: E,
     matchers: any,
-): R {
+): unknown {
     const matcher = matchers[value[tag]];
 
     if (!matcher) {
@@ -201,7 +212,7 @@ export function match<E extends { [tag]: string }, R>(
 
     // Single when() arm
     if (typeof matcher === "object" && whenTag in matcher) {
-        const { pattern, guard, handler } = matcher as WhenArm<any, R, any>;
+        const { pattern, guard, handler } = matcher as WhenArm<any, any, any>;
 
         if (pattern === __) return handler(value, {} as any);
 
@@ -220,7 +231,7 @@ export function match<E extends { [tag]: string }, R>(
     if (Array.isArray(matcher)) {
         let hasConditionalArm = false;
 
-        for (const arm of matcher as Array<WhenArm<any, R, any>>) {
+        for (const arm of matcher as Array<WhenArm<any, any, any>>) {
             const { pattern, guard, handler } = arm;
 
             if (pattern === __) return handler(value, {} as any);

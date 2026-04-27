@@ -48,7 +48,10 @@ describe("Ref.create(T[])", () => {
         trackIn(owner, () => {
             const arr = Ref.create([1, 2, 3]);
             const orig = arr.dispose.bind(arr);
-            arr.dispose = () => { disposed = true; orig(); };
+            arr.dispose = () => {
+                disposed = true;
+                orig();
+            };
         });
         owner.dispose();
         expect(disposed).toBe(true);
@@ -585,7 +588,7 @@ describe("RefArray.dispose", () => {
 describe("RefArray iterator methods", () => {
     it("map returns DerivedArray with transformed items", () => {
         const arr = makeNumberArray();
-        const doubled = arr.map(x => x * 2);
+        const doubled = arr.map((x) => x * 2);
         expect(doubled).toBeInstanceOf(DerivedArray);
         expect(doubled.get(0)).toBe(2);
         expect(doubled.get(4)).toBe(10);
@@ -593,7 +596,7 @@ describe("RefArray iterator methods", () => {
 
     it("filter returns DerivedArray with matching items", () => {
         const arr = makeNumberArray();
-        const evens = arr.filter(x => x % 2 === 0);
+        const evens = arr.filter((x) => x % 2 === 0);
         expect(evens).toBeInstanceOf(DerivedArray);
         expect(evens.get(0)).toBe(2);
         expect(evens.get(1)).toBe(4);
@@ -609,7 +612,7 @@ describe("RefArray iterator methods", () => {
 
     it("filter updates when source changes", () => {
         const arr = makeNumberArray(); // [1,2,3,4,5]
-        const evens = arr.filter(x => x % 2 === 0); // [2,4]
+        const evens = arr.filter((x) => x % 2 === 0); // [2,4]
         expect(evens.length()).toBe(2);
 
         arr.push(6); // [1,2,3,4,5,6]
@@ -619,7 +622,7 @@ describe("RefArray iterator methods", () => {
 
     it("map updates when source element changes", () => {
         const arr = makeNumberArray();
-        const doubled = arr.map(x => x * 2);
+        const doubled = arr.map((x) => x * 2);
 
         arr.splice(0, 1, 10); // replace first element
         expect(doubled.get(0)).toBe(20);
@@ -628,11 +631,18 @@ describe("RefArray iterator methods", () => {
     it("chained filter + map", () => {
         const arr = makeNumberArray(); // [1,2,3,4,5]
         const result = arr
-            .filter(x => x % 2 === 0)  // [2,4]
-            .map(x => x * 10);          // [20,40]
+            .filter((x) => x % 2 === 0) // [2,4]
+            .map((x) => x * 10); // [20,40]
 
         expect(result.length()).toBe(2);
         expect(result.get(0)).toBe(20);
         expect(result.get(1)).toBe(40);
+    });
+    it("map updates the target signal when source elemnt changes", () => {
+        const arr = makeNumberArray();
+        const doubled = arr.map((x) => x * 2);
+
+        arr.splice(0, 1, 10); // replace first element
+        expect(doubled.get(0)).toBe(20);
     });
 });
