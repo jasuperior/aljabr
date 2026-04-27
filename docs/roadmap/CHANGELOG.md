@@ -4,6 +4,22 @@ All notable changes to aljabr are documented here. This project uses a rolling c
 
 ---
 
+## v0.3.6 — Bug Fixes: match() Inference & Ref.patch() Variant Diffing
+
+_Patch release following v0.3.5. Two correctness fixes surfaced by first-party application code using union variants inside reactive Ref state._
+
+### Fixes
+
+**`match()` return type inference**
+
+TypeScript could not propagate the result type `R` through the non-homomorphic mapped matcher types (`ExactMatchers`, `FallbackMatchers`), causing the return type of `match()` to collapse to `unknown` in some inference contexts. The overloads now infer the matchers object as `M` and extract the result type via `InferMatchResult<M>` — a mapped type over `M`'s values. No change to runtime behavior or call-site syntax.
+
+**`Ref.patch()` treating union variants as plain objects**
+
+`collectLeafChanges` (the deep-diff engine powering `Ref.patch()`) would recurse into a union variant's payload by key when it encountered a variant on either side of a diff. This caused incorrect fine-grained notifications — only changed payload keys were notified, rather than the whole-variant path — and could silently drop tag-level changes when tags differed. The fix detects union variants via the internal `tag` symbol before recursing: if the tags differ (or only one side is a variant), the whole path is treated as an atomic replacement.
+
+---
+
 ## v0.3.5 — RefArray Hardening & DerivedArray Rename
 
 _Patch release following v0.3.4. Motivated by first-party application code (a todo app built against the published package) that exposed type-system gaps and a missing method surface on `RefArray`._
