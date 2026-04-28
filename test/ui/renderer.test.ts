@@ -510,6 +510,180 @@ describe("createRenderer", () => {
         });
     });
 
+    describe("keyed DerivedArray reconciliation", () => {
+        it("removes only the changed item's element, not all items, when toggling one", () => {
+            const host = makeHost();
+            const removedElements: string[] = [];
+            const origRemove = host.remove.bind(host);
+            host.remove = (node) => {
+                if (node.type === "element") removedElements.push(node.tag ?? "?");
+                origRemove(node);
+            };
+
+            const { mount } = createRenderer(host);
+            const tasks = Ref.create([
+                { id: 1, done: false },
+                { id: 2, done: false },
+                { id: 3, done: false },
+            ]);
+            const rows = tasks.filter(_t => true, { key: t => t.id })
+                .map(t => view("li", { id: t.id, done: t.done }));
+
+            mount(() => view("ul", null, rows), host.root);
+            removedElements.length = 0;
+
+            // Toggle item at index 1 — only that item's li is removed+replaced
+            tasks.splice(1, 1, { id: 2, done: true });
+            const liRemovals = removedElements.filter(tag => tag === "li");
+            expect(liRemovals).toHaveLength(1); // exactly the changed item, not all 3
+        });
+
+        it("re-renders only the toggled item's scope, not all items", () => {
+            const host = makeHost();
+            const { mount } = createRenderer(host);
+            const renderCounts = [0, 0, 0];
+
+            const tasks = Ref.create([
+                { id: 1, done: false },
+                { id: 2, done: false },
+                { id: 3, done: false },
+            ]);
+            const rows = tasks.filter(_t => true, { key: t => t.id })
+                .map((t, i) => {
+                    renderCounts[i]++;
+                    return view("li", { id: t.id });
+                });
+
+            mount(() => view("ul", null, rows), host.root);
+            renderCounts.fill(0);
+
+            tasks.splice(1, 1, { id: 2, done: true });
+            expect(renderCounts[0]).toBe(0);
+            expect(renderCounts[1]).toBe(1);
+            expect(renderCounts[2]).toBe(0);
+        });
+
+        it("preserves item identity when filter widens to re-insert an excluded key", () => {
+            const host = makeHost();
+            const { mount } = createRenderer(host);
+
+            type T = { id: string; done: boolean };
+            const tasks = Ref.create<T[]>([
+                { id: "a", done: false },
+                { id: "b", done: true },
+                { id: "c", done: false },
+            ]);
+            const filter = Signal.create<"all" | "active" | "done">("all");
+
+            const visible = tasks.filter(
+                t => {
+                    const f = filter.get();
+                    return f === "all" || (f === "active" ? !t.done : t.done);
+                },
+                { key: t => t.id },
+            );
+            const TaskItem = (props: { task: T }) =>
+                view("li", { id: props.task.id }, props.task.id);
+            const rows = visible.map(t => view(TaskItem, { task: t }));
+
+            mount(() => view("ul", null, rows), host.root);
+
+            const liInfo = (): { id: string; text: string }[] => {
+                const ul = visibleElements(host.root)[0];
+                return visibleElements(ul).map(li => ({
+                    id: String(li.props.id),
+                    text: visibleTexts(li).join(""),
+                }));
+            };
+
+            // 1) filter to active — only a, c visible
+            filter.set("active");
+            expect(liInfo()).toEqual([
+                { id: "a", text: "a" },
+                { id: "c", text: "c" },
+            ]);
+
+            // 2) navigate active → all. b re-inserts between a and c.
+            // BUG (without fix): c.entry.scope was at idx 1 subscribed to rows.signal[1].
+            // When b takes idx 1, rows.signal[1].set(vnode_b) fires and corrupts c.entry
+            // to render b before onUpdate moves c.entry to idx 2. Result: ["a", "b", "b"].
+            filter.set("all");
+            expect(liInfo()).toEqual([
+                { id: "a", text: "a" },
+                { id: "b", text: "b" },
+                { id: "c", text: "c" },
+            ]);
+
+            // 3) navigate all → done — only b visible
+            filter.set("done");
+            expect(liInfo()).toEqual([{ id: "b", text: "b" }]);
+
+            // 4) navigate done → all again. a, c re-insert.
+            filter.set("all");
+            expect(liInfo()).toEqual([
+                { id: "a", text: "a" },
+                { id: "b", text: "b" },
+                { id: "c", text: "c" },
+            ]);
+        });
+
+        it("preserves item identity when filter narrows then widens (toggle + navigate)", () => {
+            const host = makeHost();
+            const { mount } = createRenderer(host);
+
+            type T = { id: string; done: boolean };
+            const tasks = Ref.create<T[]>([
+                { id: "a", done: false },
+                { id: "b", done: true },
+                { id: "c", done: false },
+            ]);
+            const filter = Signal.create<"all" | "active" | "done">("all");
+
+            const visible = tasks.filter(
+                t => {
+                    const f = filter.get();
+                    return f === "all" || (f === "active" ? !t.done : t.done);
+                },
+                { key: t => t.id },
+            );
+            // Mirror demo: row produces a Component-bearing ViewNode whose
+            // textContent depends on the task — so a wrong-task render is visible.
+            const TaskItem = (props: { task: T }) =>
+                view("li", { id: props.task.id }, props.task.id);
+            const rows = visible.map(t => view(TaskItem, { task: t }));
+
+            mount(() => view("ul", null, rows), host.root);
+
+            const liIds = (): string[] => {
+                const ul = visibleElements(host.root)[0];
+                return visibleElements(ul).map(li => String(li.props.id));
+            };
+            const liTexts = (): string[] => {
+                const ul = visibleElements(host.root)[0];
+                return visibleElements(ul).map(li => visibleTexts(li).join(""));
+            };
+
+            // 1) filter to done — only b visible
+            filter.set("done");
+            expect(liIds()).toEqual(["b"]);
+
+            // 2) toggle b → active. visibleTasks becomes []
+            tasks.splice(1, 1, { id: "b", done: false });
+            expect(liIds()).toEqual([]);
+
+            // 3) navigate done → all. visibleTasks = [a, b, c]
+            filter.set("all");
+            expect(liIds()).toEqual(["a", "b", "c"]);
+            expect(liTexts()).toEqual(["a", "b", "c"]);
+
+            // 4) navigate all → active → all (the "a, b, b" pattern)
+            filter.set("active");
+            filter.set("all");
+            expect(liIds()).toEqual(["a", "b", "c"]);
+            expect(liTexts()).toEqual(["a", "b", "c"]);
+        });
+    });
+
     describe("LIFO disposal order", () => {
         it("disposes cleanups in reverse registration order", () => {
             const order: number[] = [];

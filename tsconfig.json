@@ -7,12 +7,29 @@
     "types": ["vite/client"],
     "skipLibCheck": true,
 
+    /* JSX */
+    "jsx": "react-jsx",
+    "jsxImportSource": "aljabr/ui",
+
     /* Bundler mode */
     "moduleResolution": "bundler",
     "allowImportingTsExtensions": true,
     "verbatimModuleSyntax": true,
     "moduleDetection": "force",
     "noEmit": true,
+
+    /* Self-referencing aliases — mirrors vite.config.ts resolve.alias for dev */
+    "baseUrl": ".",
+    "paths": {
+      "aljabr":                   ["src/main.ts"],
+      "aljabr/prelude":           ["src/prelude/index.ts"],
+      "aljabr/schema":            ["src/schema/index.ts"],
+      "aljabr/signals":           ["src/signals/index.ts"],
+      "aljabr/ui":                ["src/ui/index.ts"],
+      "aljabr/ui/dom":            ["src/ui/dom/index.ts"],
+      "aljabr/ui/jsx-runtime":    ["src/ui/jsx-runtime.ts"],
+      "aljabr/ui/jsx-dev-runtime":["src/ui/jsx-dev-runtime.ts"]
+    },
 
     /* Linting */
     "strict": true,
@@ -22,6 +39,6 @@
     "noFallthroughCasesInSwitch": true,
     "noUncheckedSideEffectImports": true
   },
-  "include": ["src"],
+  "include": ["src", "public"],
   "exclude": ["src/example.ts"]
 }
