@@ -1,7 +1,7 @@
 {
     "name": "aljabr",
     "author": "ja.superior",
-    "version": "0.3.6",
+    "version": "0.3.7",
     "description": "A TypeScript library for modeling data with tagged union types (algebraic sum types), consuming them with exhaustive pattern matching, and composing reactive computations with signals",
     "license": "Apache-2.0",
     "keywords": [
