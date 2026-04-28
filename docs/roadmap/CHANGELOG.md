@@ -4,6 +4,105 @@ All notable changes to aljabr are documented here. This project uses a rolling c
 
 ---
 
+## v0.3.7 — Runnable Demo, Iterator Reactivity & List Reconciliation
+
+_Patch release following v0.3.6. Ships the first runnable in-repo demo (`public/`) — a small todo app exercising unions, `Ref`, `RefArray`, the iterator chain, and the DOM renderer end-to-end. Building it surfaced the renderer and iterator-key gaps that the rest of this release closes: list mutations were tearing down and re-mounting the entire list, and key information was being lost across `map`/`filter`/`sort` chains. The renderer now reconciles surgically and keys survive the full iterator chain._
+
+### New — Runnable demo app at `public/`
+
+`npm run dev` now serves a working todo app from `public/` against the local source build. It is the first end-to-end consumer of the package living in the repo and doubles as a smoke test for the JSX runtime, the DOM renderer, and the reactive primitives. The Vite config was wired up to serve `public/` as a real dev root (previously the project shipped only the library build). The demo uses `Task = union({ Active, Done })`, a `Ref.create<Task[]>([])` for the list, and `tasks.filter(...).map(...)` to render rows — exactly the iterator-chain shape that motivates the reconciliation work below.
+
+To run it:
+
+```bash
+npm install
+npm run dev
+```
+
+> One typo blocked this from working as shipped: `public/index.html` referenced `./main.tsx` but the file was named `maint.tsx`. The file is now `public/main.tsx` and the dev server boots cleanly.
+
+---
+
+### Fixes
+
+**`mountDerivedArray` — per-index owner scopes (Phase A)**
+
+Carried a deferral since v0.3.4. The previous renderer subscribed to all of a `DerivedArray`'s signals inside a single `effectOwner` and tore down the entire mounted list on any change — toggling one item re-rendered every row. Each index now gets its own `Computation` subscribed only to `arr.get(i)`, and the outer `effectOwner` subscribes only to `arr.length()`:
+
+- Length increases → create new per-index scopes for the appended indices.
+- Length decreases → dispose trailing scopes; their cleanups remove the corresponding DOM nodes.
+- `arr.get(i)` changes → only the scope at index `i` re-runs.
+
+This eliminates full-list re-renders for the common cases: in-place mutation, append, and tail removal.
+
+**`mountDerivedArray` — keyed scope reconciliation (Phase B)**
+
+Per-index scopes still re-render shifted items when something is removed from the middle of a list — every later index's signal fires because its value changed, even though the underlying item is the same. Keyed scopes bind a scope's lifetime to item identity instead of position. The renderer checks `arr.keyAt(i)` (see below) on first render and after each length change: non-null values activate keyed mode, `null` falls back to Phase A.
+
+In keyed mode the renderer maintains `Map<unknown, { scope: Computation; start: Node; end: Node }>` — one entry per live item — and on each update reconciles old vs. new key lists:
+
+- **Removed keys**: dispose the scope; remove all DOM nodes between its `start` and `end` anchors.
+- **New keys**: create a scope, insert anchors, reconcile the child at the correct position.
+- **Moved keys** (same key, new position): re-insert the existing anchors and the nodes between them at the new position — without disposing or re-running the scope.
+- **Same key, changed value**: the per-index signal fires and the scope re-runs at its current position.
+
+In the demo app: toggling a task from Active to Done now re-renders only that one row, and switching the filter from "all" to "active" moves the surviving rows' DOM nodes without re-rendering them.
+
+**`DerivedArray.filter()` and `DerivedArray.sort()` — inherit source key**
+
+When no `opts.key` is provided and the source `DerivedArray` already has a `#keyFn`, the derived array now inherits it instead of falling back to reference identity. The items produced by filter and sort are a subset or reorder of the source items, so the source key function remains valid. `keyIsDefault` is cleared when a key is inherited; no warning is emitted.
+
+```ts
+// before — key lost on chained filter, renderer falls back to position-based
+const done = visibleTasks.filter(t => isDone(t));        // keyFn = identity
+
+// after — key inherited from visibleTasks, renderer uses keyed reconciliation
+const done = visibleTasks.filter(t => isDone(t));        // keyFn = taskId (inherited)
+```
+
+**`DerivedArray.map()` — index-based key inheritance**
+
+`map` changes the element type (`T → U`), so the source key function cannot operate on mapped items directly. `map` now inherits the source key as an index-based closure that resolves `sourceKeyFn(source.peek(i))` for index `i`. The resulting `DerivedArray<U>` carries this index key and exposes it via `keyAt(i)` so the renderer can reconcile mapped rows by source identity.
+
+```ts
+// visibleTasks: DerivedArray<Task> with keyFn = taskId
+const rows = visibleTasks.map(task => <TaskItem task={task} />);
+rows.keyAt(0); // → taskId(visibleTasks.peek(0))
+```
+
+---
+
+### New — `RefArray.map(fn, opts?)`
+
+`RefArray` is the mutable root of the iterator chain and has no key to inherit. Authors mapping directly off a `RefArray` (without a prior `filter` or `sort`) previously had no way to inject a key for the renderer. `map` now accepts a second argument matching the shape used elsewhere in the iterator chain:
+
+```ts
+const tasks = Ref.create<Task[]>([]);
+const rows = tasks.map(task => <TaskItem task={task} />, { key: taskId });
+```
+
+Non-breaking: callers that omit `opts` get the previous behavior — no key, position-based reconciliation in the renderer.
+
+---
+
+### New — `DerivedArray.keyAt(i): unknown | null`
+
+A single public method the renderer uses to retrieve the key for any index:
+
+- For `filter`/`sort` arrays: `#keyFn(#items[i])`.
+- For `map` arrays with an inherited source key: delegates to the stored index-based closure.
+- For `map` arrays with no key (e.g. mapping off an unkeyed `RefArray` without `opts.key`): returns `null`.
+
+`null` signals the renderer to fall back to position-based reconciliation for that array.
+
+---
+
+### Future Work
+
+Keyed reconciliation within a single renderer is complete after this release. Composition across renderers (e.g. a DOM list item containing a canvas sub-renderer) remains a userland pattern — spawn a new renderer root, tie its cleanup to the parent owner. A first-class `createPortal` primitive for `aljabr/ui` will be considered in a future version if the pattern proves common in application code.
+
+---
+
 ## v0.3.6 — Bug Fixes: match() Inference & Ref.patch() Variant Diffing
 
 _Patch release following v0.3.5. Two correctness fixes surfaced by first-party application code using union variants inside reactive Ref state._
