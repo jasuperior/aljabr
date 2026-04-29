@@ -22,16 +22,63 @@ import {
     zeroBounds,
 } from "./node.ts";
 
+const __DEV__ =
+    (globalThis as { process?: { env?: { NODE_ENV?: string } } })
+        .process?.env?.["NODE_ENV"] !== "production";
+
 // ---------------------------------------------------------------------------
-// Parent tracking for Text nodes
+// Implicit `<text>` wrapping (Phase 5.3)
 //
-// The `CanvasTextNode` variant intentionally carries no `parent` field — only
-// `content`. To make `remove(textNode)` and `nextSibling(textNode)` work, the
-// host keeps a side WeakMap from text nodes to their containing element. The
-// map is updated by `insert` and `remove` and is invisible to authors.
+// When the reconciler inserts a `CanvasTextNode` into a non-`text`
+// `CanvasElementNode`, the host wraps the text in a synthetic
+// `<text>` element and stores *that* in the parent's `children` array. The
+// reconciler keeps holding the original Text reference; the host translates
+// every subsequent operation (`remove`, `setText`, `nextSibling`) through
+// the maps below so the synthetic wrapper stays an internal detail.
+//
+// `textWrappers` — Text → its synthetic `<text>` wrapper.
+// `wrapperToText` — wrapper → original Text. Lets `nextSibling` return the
+//   reference the reconciler already holds, instead of a wrapper Element it
+//   never authored. Without this, mountReactiveRegion's `cur !== end`
+//   anchor walk would silently fail to terminate.
 // ---------------------------------------------------------------------------
 
-const textParents = new WeakMap<CanvasTextNode, CanvasElementNode>();
+const textWrappers = new WeakMap<CanvasTextNode, CanvasElementNode>();
+const wrapperToText = new WeakMap<CanvasElementNode, CanvasTextNode>();
+
+function isWrapper(el: CanvasElementNode): boolean {
+    return wrapperToText.has(el);
+}
+
+/** What's actually stored in `parent.children` for the given reconciler node. */
+function actualNode(node: CanvasNodeT): CanvasNodeT {
+    return match(node, {
+        Element: () => node,
+        Text: (t) => textWrappers.get(t) ?? node,
+    });
+}
+
+/** What reference the reconciler should see — re-collapsing wrappers. */
+function unwrap(node: CanvasNodeT): CanvasNodeT {
+    return match(node, {
+        Element: (e) => wrapperToText.get(e) ?? node,
+        Text: () => node,
+    });
+}
+
+function wrapText(textNode: CanvasTextNode): CanvasElementNode {
+    const wrapper = CanvasNode.Element({
+        tag: "text",
+        props: { content: textNode.content },
+        children: [],
+        parent: null,
+        bounds: zeroBounds(),
+        zIndex: 0,
+    });
+    textWrappers.set(textNode, wrapper);
+    wrapperToText.set(wrapper, textNode);
+    return wrapper;
+}
 
 // ---------------------------------------------------------------------------
 // Geometry props that trigger eager bounds recomputation in setProperty
@@ -49,11 +96,10 @@ function num(v: unknown, fallback = 0): number {
 }
 
 // Eager bounds recompute for Element primitives. Path (SVG path-string
-// parsing) and group (union of descendants) bounds land in Phase 4 alongside
-// viewport culling — until then those tags fall through the `when(__)` arm
-// to `zeroBounds()`. The reconciler never calls `recomputeBounds` on a `Text`
-// variant (it has no geometry props to set), but the union-level `match`
-// keeps the dispatch exhaustive.
+// parsing) and group (union of descendants) bounds remain deferred — those
+// tags fall through the `when(__)` arm to `zeroBounds()`. The reconciler
+// never calls `recomputeBounds` on a `Text` variant (it has no geometry
+// props to set), but the union-level `match` keeps the dispatch exhaustive.
 function recomputeBounds(node: CanvasNodeT): CanvasBounds {
     return match(node, {
         Element: [
@@ -133,32 +179,67 @@ export const canvasHost: RendererHost<CanvasNodeT, CanvasElementNode> = {
         // reconciler-driven moves (e.g. keyed list reorders).
         canvasHost.remove(child);
 
-        const idx = anchor != null ? parent.children.indexOf(anchor) : -1;
+        // Phase 5.3: wrap a Text variant into a synthetic `<text>` element
+        // when its parent isn't already a `<text>`. The wrapper is what
+        // physically lives in `parent.children` from now on; the original
+        // Text reference is held only as the reconciler's handle.
+        const inserted: CanvasNodeT = match(child, {
+            Element: () => child,
+            Text: (textNode) => {
+                if (parent.tag === "text") return child;
+                if (__DEV__ && (parent.tag === "path" || parent.tag === "line")) {
+                    console.warn(
+                        `[aljabr/canvas] Text inserted into <${parent.tag}> — ` +
+                        `no meaningful layout bounds, position will fall back to (0, 0).`,
+                    );
+                }
+                return wrapText(textNode);
+            },
+        });
+
+        const anchorActual = anchor != null ? actualNode(anchor) : null;
+        const idx = anchorActual !== null ? parent.children.indexOf(anchorActual) : -1;
         if (idx === -1) {
-            parent.children.push(child);
+            parent.children.push(inserted);
         } else {
-            parent.children.splice(idx, 0, child);
+            parent.children.splice(idx, 0, inserted);
         }
 
-        match(child, {
+        match(inserted, {
             Element: (n) => { n.parent = parent; },
-            Text: (n) => { textParents.set(n, parent); },
+            // A bare Text (parent was `<text>`, no wrap) gets no parent
+            // tracking — the spec keeps `parentNode(textNode)` returning
+            // null and that branch never participates in scene-graph walks.
+            Text: () => undefined,
         });
     },
 
     remove(child: CanvasNodeT): void {
-        const parent = match(child, {
+        const target = actualNode(child);
+        const parent = match(target, {
             Element: (n) => n.parent,
-            Text: (n) => textParents.get(n) ?? null,
+            Text: () => null,
         });
         if (parent === null) return;
 
-        const idx = parent.children.indexOf(child);
+        const idx = parent.children.indexOf(target);
         if (idx !== -1) parent.children.splice(idx, 1);
 
-        match(child, {
+        match(target, {
             Element: (n) => { n.parent = null; },
-            Text: (n) => { textParents.delete(n); },
+            Text: () => undefined,
+        });
+
+        // For wrapped Text, drop both map entries.
+        match(child, {
+            Text: (t) => {
+                const wrapper = textWrappers.get(t);
+                if (wrapper !== undefined) {
+                    textWrappers.delete(t);
+                    wrapperToText.delete(wrapper);
+                }
+            },
+            Element: () => undefined,
         });
     },
 
@@ -177,26 +258,31 @@ export const canvasHost: RendererHost<CanvasNodeT, CanvasElementNode> = {
 
     setText(node: CanvasNodeT, text: string): void {
         match(node, {
-            Text: (n) => { n.content = text; },
+            Text: (n) => {
+                n.content = text;
+                const wrapper = textWrappers.get(n);
+                if (wrapper !== undefined) wrapper.props.content = text;
+            },
             Element: () => { /* no-op — element nodes have no text content */ },
         });
     },
 
     parentNode(node: CanvasNodeT): CanvasElementNode | null {
         return match(node, {
-            Element: (n) => n.parent,
+            Element: (n) => (isWrapper(n) ? null : n.parent),
             Text: () => null,
         });
     },
 
     nextSibling(node: CanvasNodeT): CanvasNodeT | null {
-        const parent = match(node, {
+        const target = actualNode(node);
+        const parent = match(target, {
             Element: (n) => n.parent,
-            Text: (n) => textParents.get(n) ?? null,
+            Text: () => null,
         });
         if (parent === null) return null;
-        const idx = parent.children.indexOf(node);
+        const idx = parent.children.indexOf(target);
         if (idx === -1 || idx === parent.children.length - 1) return null;
-        return parent.children[idx + 1];
+        return unwrap(parent.children[idx + 1]);
     },
 };

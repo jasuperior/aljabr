@@ -12,15 +12,26 @@
  * the matched payload and let new primitives slot in with one `when` arm
  * rather than a new switch case.
  *
+ * Inheritable paint props (font, color, stroke) are threaded as a
+ * `PaintContext` parameter — only `<group>` boundaries derive a new context;
+ * other elements pass it through unchanged. Per-call prop resolution is
+ * `el.props[key] ?? context[key] ?? hardcoded default`.
+ *
  * @module
  */
 
 import { match } from "../../match.ts";
 import { __, when } from "../../union.ts";
-import type { CanvasBounds, CanvasElementNode, CanvasNode } from "./node.ts";
+import type { CanvasBounds, CanvasElementNode, CanvasNode, CanvasTag } from "./node.ts";
+import {
+    deriveContext,
+    normalizePadding,
+    rootPaintContext,
+    type PaintContext,
+} from "./paint-context.ts";
 
 // ---------------------------------------------------------------------------
-// Helpers
+// Coercion helpers
 // ---------------------------------------------------------------------------
 
 function num(v: unknown, fallback = 0): number {
@@ -31,71 +42,118 @@ function str(v: unknown, fallback = ""): string {
     return typeof v === "string" ? v : fallback;
 }
 
-function shouldFill(props: Record<string, unknown>): boolean {
-    const fill = props.fill;
-    return typeof fill === "string" && fill !== "none";
+// ---------------------------------------------------------------------------
+// Resolution — `props[key] ?? context[key]`
+// ---------------------------------------------------------------------------
+
+function resolveFill(props: Record<string, unknown>, ctx: PaintContext): string {
+    return typeof props.fill === "string" ? props.fill : ctx.fill;
 }
 
-function shouldStroke(props: Record<string, unknown>): boolean {
-    const stroke = props.stroke;
-    return typeof stroke === "string" && stroke !== "none";
+function resolveStroke(props: Record<string, unknown>, ctx: PaintContext): string {
+    return typeof props.stroke === "string" ? props.stroke : ctx.stroke;
 }
 
-function applyPaintStyle(ctx: CanvasRenderingContext2D, props: Record<string, unknown>): void {
-    if (shouldFill(props)) ctx.fillStyle = str(props.fill);
-    if (shouldStroke(props)) {
-        ctx.strokeStyle = str(props.stroke);
-        ctx.lineWidth = num(props.strokeWidth, 1);
-        const lineCap = props.lineCap;
-        if (lineCap === "butt" || lineCap === "round" || lineCap === "square") {
-            ctx.lineCap = lineCap;
+function resolveStrokeWidth(props: Record<string, unknown>, ctx: PaintContext): number {
+    return num(props.strokeWidth, ctx.strokeWidth);
+}
+
+function resolveFontFamily(props: Record<string, unknown>, ctx: PaintContext): string {
+    return typeof props.fontFamily === "string" ? props.fontFamily : ctx.fontFamily;
+}
+
+function resolveFontSize(props: Record<string, unknown>, ctx: PaintContext): number {
+    return num(props.fontSize, ctx.fontSize);
+}
+
+function resolveFontWeight(props: Record<string, unknown>, ctx: PaintContext): string {
+    return typeof props.fontWeight === "string" ? props.fontWeight : ctx.fontWeight;
+}
+
+/**
+ * Layout props on `<text>` resolve through one extra fallback step — the
+ * shape parent's own props — before reaching the paint context. This is what
+ * makes `<rect textAlign="center">label</rect>` Just Work without needing
+ * the rect to be wrapped in a group: the wrapped synthetic `<text>` reaches
+ * up through `el.parent.props` to find the layout intent.
+ */
+function resolveLayoutProp<T extends "textAlign" | "verticalAlign">(
+    props: Record<string, unknown>,
+    parent: CanvasElementNode | null,
+    ctx: PaintContext,
+    key: T,
+    accept: ReadonlySet<string>,
+): PaintContext[T] {
+    const own = props[key];
+    if (typeof own === "string" && accept.has(own)) return own as PaintContext[T];
+    if (parent !== null && isShapeTag(parent.tag)) {
+        const inherited = parent.props[key];
+        if (typeof inherited === "string" && accept.has(inherited)) {
+            return inherited as PaintContext[T];
         }
     }
+    return ctx[key] as PaintContext[T];
 }
 
-/**
- * Stable in-place sort by `zIndex` ascending. `Text` variants (which have no
- * `zIndex`) sort as 0. JavaScript's `Array.prototype.sort` is stable per
- * ECMAScript 2019, so insertion order serves as the tiebreaker for equal
- * `zIndex` values without an auxiliary index.
- */
+function resolvePadding(
+    props: Record<string, unknown>,
+    parent: CanvasElementNode | null,
+    ctx: PaintContext,
+): PaintContext["padding"] {
+    if (props.padding !== undefined) return normalizePadding(props.padding);
+    if (parent !== null && isShapeTag(parent.tag) && parent.props.padding !== undefined) {
+        return normalizePadding(parent.props.padding);
+    }
+    return ctx.padding;
+}
+
+const SHAPE_TAGS: ReadonlySet<CanvasTag> = new Set([
+    "rect", "circle", "ellipse", "line", "path",
+]);
+
+function isShapeTag(tag: CanvasTag): boolean {
+    return SHAPE_TAGS.has(tag);
+}
+
+const TEXT_ALIGN_VALUES: ReadonlySet<string> = new Set(["left", "center", "right"]);
+const VERTICAL_ALIGN_VALUES: ReadonlySet<string> = new Set(["top", "middle", "bottom"]);
+
+// ---------------------------------------------------------------------------
+// Style application
+// ---------------------------------------------------------------------------
+
+function shouldFill(value: string): boolean {
+    return value !== "none";
+}
+function shouldStroke(value: string): boolean {
+    return value !== "none";
+}
+
+function applyPaintStyle(
+    canvasCtx: CanvasRenderingContext2D,
+    props: Record<string, unknown>,
+    paintCtx: PaintContext,
+): { fill: string; stroke: string } {
+    const fill = resolveFill(props, paintCtx);
+    const stroke = resolveStroke(props, paintCtx);
+    if (shouldFill(fill)) canvasCtx.fillStyle = fill;
+    if (shouldStroke(stroke)) {
+        canvasCtx.strokeStyle = stroke;
+        canvasCtx.lineWidth = resolveStrokeWidth(props, paintCtx);
+        const lineCap = props.lineCap;
+        if (lineCap === "butt" || lineCap === "round" || lineCap === "square") {
+            canvasCtx.lineCap = lineCap;
+        }
+    }
+    return { fill, stroke };
+}
+
+// ---------------------------------------------------------------------------
+// zIndex sort + culling helpers (carried over from Phase 3 / 4)
+// ---------------------------------------------------------------------------
+
 function sortChildrenByZIndex(children: CanvasNode[]): void {
     children.sort((a, b) => zIndexOf(a) - zIndexOf(b));
-}
-
-/**
- * Axis-aligned rectangle overlap test.
- *
- * Returns `true` for touching edges (`a.x + a.width === b.x`) — overpainting
- * a one-pixel seam is harmless and lets us avoid the floating-point edge
- * cases that strict-inequality intersection introduces.
- */
-function intersects(a: CanvasBounds, b: CanvasBounds): boolean {
-    return (
-        a.x <= b.x + b.width &&
-        a.x + a.width >= b.x &&
-        a.y <= b.y + b.height &&
-        a.y + a.height >= b.y
-    );
-}
-
-/**
- * `true` when the node's own `bounds` cannot drive a culling decision and the
- * paint pass should err on the side of painting it.
- *
- * Empty bounds appear on:
- * - **groups** — group bounds are not yet computed as the union of
- *   descendants (deferred from Phase 4); culling has to recurse into them
- *   regardless so children get a chance to be tested individually.
- * - **paths** — a real path bounding-box parser is out of scope for v0.3.8;
- *   reporting empty bounds for a non-empty path would silently hide it.
- * - **text** — bounds arrive in Phase 5 with the layout pass.
- *
- * Once any of those tags grow real bounds the existing `intersects` check
- * starts culling them automatically with no other code change.
- */
-function hasCullableBounds(b: CanvasBounds): boolean {
-    return b.width > 0 && b.height > 0;
 }
 
 function zIndexOf(node: CanvasNode): number {
@@ -105,13 +163,21 @@ function zIndexOf(node: CanvasNode): number {
     });
 }
 
+function intersects(a: CanvasBounds, b: CanvasBounds): boolean {
+    return (
+        a.x <= b.x + b.width &&
+        a.x + a.width >= b.x &&
+        a.y <= b.y + b.height &&
+        a.y + a.height >= b.y
+    );
+}
+
+function hasCullableBounds(b: CanvasBounds): boolean {
+    return b.width > 0 && b.height > 0;
+}
+
 // ---------------------------------------------------------------------------
 // applyTransform — group-only transform composition
-//
-// Per the v0.3.8 roadmap, structured transform props (`x`, `y`, `scale`,
-// `rotate`) only take effect on `<group>` elements; primitive shapes encode
-// position in their own geometry props (e.g. rect's `x`/`y`). Other tags fall
-// through `when(__)` and emit no transform.
 // ---------------------------------------------------------------------------
 
 function applyTransform(ctx: CanvasRenderingContext2D, el: CanvasElementNode): void {
@@ -129,13 +195,66 @@ function applyTransform(ctx: CanvasRenderingContext2D, el: CanvasElementNode): v
 }
 
 // ---------------------------------------------------------------------------
-// paintShape — emit the geometry-specific ctx calls for a single Element
+// Text layout — when a <text> element's parent is a shape, x/y are computed
+// from the parent's bounds + (textAlign, verticalAlign, padding) instead of
+// taken from the text's own props.
 // ---------------------------------------------------------------------------
 
-function paintShape(ctx: CanvasRenderingContext2D, el: CanvasElementNode): void {
+function textLayoutPosition(
+    el: CanvasElementNode,
+    paintCtx: PaintContext,
+    fontSize: number,
+): { x: number; y: number; baseline: CanvasTextBaseline; align: CanvasTextAlign } {
+    const parent = el.parent;
+    const usingLayout = parent !== null && isShapeTag(parent.tag);
+
+    const align = resolveLayoutProp(el.props, parent, paintCtx, "textAlign", TEXT_ALIGN_VALUES);
+    const vAlign = resolveLayoutProp(el.props, parent, paintCtx, "verticalAlign", VERTICAL_ALIGN_VALUES);
+    const padding = resolvePadding(el.props, parent, paintCtx);
+
+    const baseline: CanvasTextBaseline = vAlign === "middle" ? "middle" : "alphabetic";
+    const canvasAlign: CanvasTextAlign = align;
+
+    if (!usingLayout) {
+        return {
+            x: num(el.props.x),
+            y: num(el.props.y),
+            baseline,
+            align: canvasAlign,
+        };
+    }
+
+    const b = parent.bounds;
+    let x: number;
+    switch (align) {
+        case "left":   x = b.x + padding.left; break;
+        case "center": x = b.x + b.width / 2; break;
+        case "right":  x = b.x + b.width - padding.right; break;
+    }
+
+    let y: number;
+    switch (vAlign) {
+        case "top":    y = b.y + padding.top + fontSize; break;
+        case "middle": y = b.y + b.height / 2; break;
+        case "bottom": y = b.y + b.height - padding.bottom; break;
+    }
+
+    return { x, y, baseline, align: canvasAlign };
+}
+
+// ---------------------------------------------------------------------------
+// paintShape — per-primitive ctx calls
+// ---------------------------------------------------------------------------
+
+function paintShape(
+    ctx: CanvasRenderingContext2D,
+    el: CanvasElementNode,
+    paintCtx: PaintContext,
+): void {
     match(el, {
         Element: [
             when({ tag: "rect" }, ({ props }) => {
+                const { fill, stroke } = applyPaintStyle(ctx, props, paintCtx);
                 const x = num(props.x);
                 const y = num(props.y);
                 const w = num(props.width);
@@ -143,29 +262,26 @@ function paintShape(ctx: CanvasRenderingContext2D, el: CanvasElementNode): void 
                 const rx = num(props.rx);
 
                 if (rx > 0 && typeof ctx.roundRect === "function") {
-                    applyPaintStyle(ctx, props);
                     ctx.beginPath();
                     ctx.roundRect(x, y, w, h, rx);
-                    if (shouldFill(props)) ctx.fill();
-                    if (shouldStroke(props)) ctx.stroke();
+                    if (shouldFill(fill)) ctx.fill();
+                    if (shouldStroke(stroke)) ctx.stroke();
                     return;
                 }
-
-                applyPaintStyle(ctx, props);
-                if (shouldFill(props)) ctx.fillRect(x, y, w, h);
-                if (shouldStroke(props)) ctx.strokeRect(x, y, w, h);
+                if (shouldFill(fill)) ctx.fillRect(x, y, w, h);
+                if (shouldStroke(stroke)) ctx.strokeRect(x, y, w, h);
             }),
 
             when({ tag: "circle" }, ({ props }) => {
-                applyPaintStyle(ctx, props);
+                const { fill, stroke } = applyPaintStyle(ctx, props, paintCtx);
                 ctx.beginPath();
                 ctx.arc(num(props.cx), num(props.cy), num(props.r), 0, Math.PI * 2);
-                if (shouldFill(props)) ctx.fill();
-                if (shouldStroke(props)) ctx.stroke();
+                if (shouldFill(fill)) ctx.fill();
+                if (shouldStroke(stroke)) ctx.stroke();
             }),
 
             when({ tag: "ellipse" }, ({ props }) => {
-                applyPaintStyle(ctx, props);
+                const { fill, stroke } = applyPaintStyle(ctx, props, paintCtx);
                 ctx.beginPath();
                 ctx.ellipse(
                     num(props.cx),
@@ -176,57 +292,42 @@ function paintShape(ctx: CanvasRenderingContext2D, el: CanvasElementNode): void 
                     0,
                     Math.PI * 2,
                 );
-                if (shouldFill(props)) ctx.fill();
-                if (shouldStroke(props)) ctx.stroke();
+                if (shouldFill(fill)) ctx.fill();
+                if (shouldStroke(stroke)) ctx.stroke();
             }),
 
             when({ tag: "line" }, ({ props }) => {
-                applyPaintStyle(ctx, props);
+                const { stroke } = applyPaintStyle(ctx, props, paintCtx);
                 ctx.beginPath();
                 ctx.moveTo(num(props.x1), num(props.y1));
                 ctx.lineTo(num(props.x2), num(props.y2));
-                if (shouldStroke(props)) ctx.stroke();
+                if (shouldStroke(stroke)) ctx.stroke();
             }),
 
             when({ tag: "path" }, ({ props }) => {
-                applyPaintStyle(ctx, props);
-                const d = str(props.d);
-                const path = new Path2D(d);
-                if (shouldFill(props)) ctx.fill(path);
-                if (shouldStroke(props)) ctx.stroke(path);
+                const { fill, stroke } = applyPaintStyle(ctx, props, paintCtx);
+                const path = new Path2D(str(props.d));
+                if (shouldFill(fill)) ctx.fill(path);
+                if (shouldStroke(stroke)) ctx.stroke(path);
             }),
 
-            when({ tag: "text" }, ({ props }) => {
-                applyPaintStyle(ctx, props);
-                const family = str(props.fontFamily, "sans-serif");
-                const size = num(props.fontSize, 14);
-                const weight = str(props.fontWeight, "normal");
+            when({ tag: "text" }, (textEl) => {
+                const { props } = textEl;
+                const { fill, stroke } = applyPaintStyle(ctx, props, paintCtx);
+                const family = resolveFontFamily(props, paintCtx);
+                const size = resolveFontSize(props, paintCtx);
+                const weight = resolveFontWeight(props, paintCtx);
                 ctx.font = `${weight} ${size}px ${family}`;
-                const align = props.textAlign;
-                if (
-                    align === "start" || align === "end" ||
-                    align === "left" || align === "right" || align === "center"
-                ) {
-                    ctx.textAlign = align;
-                }
-                const baseline = props.textBaseline;
-                if (
-                    baseline === "alphabetic" || baseline === "top" ||
-                    baseline === "middle" || baseline === "bottom" ||
-                    baseline === "hanging" || baseline === "ideographic"
-                ) {
-                    ctx.textBaseline = baseline;
-                }
-                if (shouldFill(props)) {
-                    ctx.fillText(str(props.content), num(props.x), num(props.y));
-                }
-                if (shouldStroke(props)) {
-                    ctx.strokeText(str(props.content), num(props.x), num(props.y));
-                }
+                const layout = textLayoutPosition(textEl, paintCtx, size);
+                ctx.textAlign = layout.align;
+                ctx.textBaseline = layout.baseline;
+                const content = str(props.content);
+                if (shouldFill(fill)) ctx.fillText(content, layout.x, layout.y);
+                if (shouldStroke(stroke)) ctx.strokeText(content, layout.x, layout.y);
             }),
 
-            // group: transform-only — handled by `applyTransform`, no shape paint.
-            // Anything unrecognised falls through to a paint no-op as well.
+            // group: transform-only, no shape paint. Catch-all for anything
+            // unrecognised collapses here too.
             when(__, () => undefined),
         ],
     });
@@ -243,18 +344,23 @@ function paintShape(ctx: CanvasRenderingContext2D, el: CanvasElementNode): void 
  *
  * Each `Element` is wrapped in a `save`/`restore` pair so that group
  * transforms compose with the parent's accumulated transform without leaking.
- * `Text` variants are not painted directly — Phase 5's implicit wrapping
- * promotes them into synthetic `<text>` elements at insert time.
+ * `Text` variants are not painted directly — the canvas host's implicit
+ * wrapping promotes them into synthetic `<text>` elements at insert time.
  *
  * When `viewportBounds` is provided, every Element with non-empty bounds is
  * intersection-tested against it in world space; misses skip the entire
  * subtree. Tags whose bounds are not yet computed (`group`, `path`, `text`)
  * fall through and always paint — see {@link hasCullableBounds} for why.
+ *
+ * `parentContext` defaults to the root paint context. Only `<group>`
+ * boundaries derive a new context; non-group elements forward the parent's
+ * context unchanged.
  */
 export function paintNode(
     ctx: CanvasRenderingContext2D,
     node: CanvasNode,
     viewportBounds?: CanvasBounds,
+    parentContext: PaintContext = rootPaintContext(),
 ): void {
     match(node, {
         Element: (el) => {
@@ -267,10 +373,17 @@ export function paintNode(
             }
             ctx.save();
             applyTransform(ctx, el);
+
+            // Inherited paint props update only at <group> boundaries —
+            // non-group elements forward the parent's context unchanged.
+            const childContext = el.tag === "group"
+                ? deriveContext(parentContext, el.props)
+                : parentContext;
+
             sortChildrenByZIndex(el.children);
-            paintShape(ctx, el);
+            paintShape(ctx, el, parentContext);
             for (const child of el.children) {
-                paintNode(ctx, child, viewportBounds);
+                paintNode(ctx, child, viewportBounds, childContext);
             }
             ctx.restore();
         },

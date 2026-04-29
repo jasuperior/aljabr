@@ -263,14 +263,16 @@ describe("paintNode", () => {
     });
 
     describe("text primitive", () => {
-        it("sets font/align/baseline and emits fillText", () => {
+        it("sets font/align/baseline and emits fillText (verticalAlign drives baseline)", () => {
             const ctx = paint(el("text", {
                 x: 1, y: 2, content: "hi",
                 fontFamily: "Arial", fontSize: 16, fontWeight: "bold",
-                fill: "black", textAlign: "center", textBaseline: "middle",
+                fill: "black", textAlign: "center", verticalAlign: "middle",
             }));
             expect(ctx.font).toBe("bold 16px Arial");
             expect(ctx.textAlign).toBe("center");
+            // Per the v0.3.8 spec, ctx.textBaseline is derived from
+            // verticalAlign — "middle" → "middle", everything else → "alphabetic".
             expect(ctx.textBaseline).toBe("middle");
             expect(ctx.calls).toContainEqual({ fn: "fillText", args: ["hi", 1, 2] });
         });
