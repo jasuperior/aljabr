@@ -22,12 +22,12 @@ To write JSX/TSX, add the following to your `tsconfig.json`:
 {
   "compilerOptions": {
     "jsx": "react-jsx",
-    "jsxImportSource": "aljabr/ui"
+    "jsxImportSource": "aljabr/ui/dom"
   }
 }
 ```
 
-TypeScript will automatically import `jsx` and `Fragment` from `aljabr/ui/jsx-runtime`. No additional runtime configuration is needed.
+TypeScript will automatically import `jsx` and `Fragment` from `aljabr/ui/dom/jsx-runtime`. No additional runtime configuration is needed.
 
 ---
 

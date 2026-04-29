@@ -1,13 +1,13 @@
 /**
- * JSX runtime for aljabr/ui.
+ * JSX runtime for aljabr/ui/dom.
  *
- * Set `jsxImportSource: "aljabr/ui"` in your `tsconfig.json` to have
+ * Set `jsxImportSource: "aljabr/ui/dom"` in your `tsconfig.json` to have
  * TypeScript automatically import `jsx` and `Fragment` from this module.
  * You do not need to import anything from here directly in application code.
  *
  * @module
  */
-import { type ViewNode, type Child, Fragment as FragmentSymbol, view } from "./view-node.ts";
+import { type ViewNode, type Child, Fragment as FragmentSymbol, view } from "../view-node.ts";
 
 export { FragmentSymbol as Fragment };
 
@@ -80,7 +80,7 @@ export const jsxDEV = _jsx;
 type HTMLProps = Record<string, unknown>;
 
 /**
- * TypeScript JSX type namespace for aljabr/ui.
+ * TypeScript JSX type namespace for aljabr/ui/dom.
  *
  * Declares the JSX element type (`ViewNode`), the children attribute name
  * (`children`), and the full set of intrinsic HTML element names. All
@@ -88,7 +88,7 @@ type HTMLProps = Record<string, unknown>;
  * flexibility — aljabr does not enforce per-element prop types.
  *
  * This namespace is consumed automatically by TypeScript when
- * `jsxImportSource: "aljabr/ui"` is set in `tsconfig.json`.
+ * `jsxImportSource: "aljabr/ui/dom"` is set in `tsconfig.json`.
  */
 export namespace JSX {
     /** The type returned by every JSX expression. */

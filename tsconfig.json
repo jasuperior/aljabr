@@ -9,7 +9,7 @@
 
     /* JSX */
     "jsx": "react-jsx",
-    "jsxImportSource": "aljabr/ui",
+    "jsxImportSource": "aljabr/ui/dom",
 
     /* Bundler mode */
     "moduleResolution": "bundler",
@@ -21,14 +21,17 @@
     /* Self-referencing aliases — mirrors vite.config.ts resolve.alias for dev */
     "baseUrl": ".",
     "paths": {
-      "aljabr":                   ["src/main.ts"],
-      "aljabr/prelude":           ["src/prelude/index.ts"],
-      "aljabr/schema":            ["src/schema/index.ts"],
-      "aljabr/signals":           ["src/signals/index.ts"],
-      "aljabr/ui":                ["src/ui/index.ts"],
-      "aljabr/ui/dom":            ["src/ui/dom/index.ts"],
-      "aljabr/ui/jsx-runtime":    ["src/ui/jsx-runtime.ts"],
-      "aljabr/ui/jsx-dev-runtime":["src/ui/jsx-dev-runtime.ts"]
+      "aljabr":                          ["src/main.ts"],
+      "aljabr/prelude":                  ["src/prelude/index.ts"],
+      "aljabr/schema":                   ["src/schema/index.ts"],
+      "aljabr/signals":                  ["src/signals/index.ts"],
+      "aljabr/ui":                       ["src/ui/index.ts"],
+      "aljabr/ui/dom":                   ["src/ui/dom/index.ts"],
+      "aljabr/ui/dom/jsx-runtime":       ["src/ui/dom/jsx-runtime.ts"],
+      "aljabr/ui/dom/jsx-dev-runtime":   ["src/ui/dom/jsx-dev-runtime.ts"],
+      "aljabr/ui/canvas":                ["src/ui/canvas/index.ts"],
+      "aljabr/ui/canvas/jsx-runtime":    ["src/ui/canvas/jsx-runtime.ts"],
+      "aljabr/ui/canvas/jsx-dev-runtime":["src/ui/canvas/jsx-dev-runtime.ts"]
     },
 
     /* Linting */

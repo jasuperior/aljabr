@@ -1,4 +1,4 @@
-/** @jsxImportSource aljabr/ui */
+/** @jsxImportSource aljabr/ui/dom */
 import { union, match, type Union, Ref, watchEffect } from "aljabr";
 import { createRenderer } from "aljabr/ui";
 import { domHost } from "aljabr/ui/dom";
