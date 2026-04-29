@@ -109,15 +109,28 @@ Option.None<string>().getOrElse("anonymous") // "anonymous"
 
 ### `.toResult<E>(error)`
 
-Convert to a [`Result`](./result.md): `Some` → `Accept`, `None` → `Reject`.
+Convert to a [`Result`](./result.md): `Some` → `Accept`, `None` → `Reject`. Three overloads accept the error in different shapes — direct value, lazy thunk, or async thunk:
 
 ```ts
-.toResult<E>(error: E): Result<T, E>
+.toResult<E>(error: () => Promise<E>): Result<T, E>
+.toResult<E>(error: () => E):          Result<T, E>
+.toResult<E>(error: E):                Result<T, E>
 ```
 
+The thunk overloads are useful when constructing the error is expensive (e.g. allocating an `Error` with a stack trace) — the thunk only fires on `None`. The async-thunk overload lifts `None` into an `Expect` whose pending promise rejects with the constructed error, allowing `await` or `.catch()` to recover.
+
 ```ts
-Option.Some(42).toResult("missing")         // Accepted<number>
-Option.None<number>().toResult("missing")   // Rejected<string>
+// Direct value
+Option.Some(42).toResult("missing")          // Accepted<number>
+Option.None<number>().toResult("missing")    // Rejected<string>
+
+// Lazy thunk — error only constructed on None
+Option.None<number>().toResult(() => new Error("missing"))
+// → Rejected<Error>
+
+// Async thunk — error construction is itself async
+const r = Option.None<number>().toResult(async () => await buildError())
+// → Expected<number, Error>; awaits to a rejection of the constructed error
 ```
 
 ---

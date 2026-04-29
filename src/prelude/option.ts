@@ -24,10 +24,27 @@ export abstract class Mappable<T> extends Trait<{ value: unknown }> {
         });
     }
 
-    toResult<E>(error: E): Result<T, E> {
+    toResult<E>(error: () => Promise<E>): Result<T, E>;
+    toResult<E>(error: () => E): Result<T, E>;
+    toResult<E>(error: E): Result<T, E>;
+    toResult<E>(error: E | (() => E) | (() => Promise<E>)): Result<T, E> {
         return match(this as unknown as Option<T>, {
             Some: ({ value }) => Result.Accept(value),
-            None: () => Result.Reject(error),
+            None: () => {
+                const e =
+                    typeof error === "function"
+                        ? (error as () => E | Promise<E>)()
+                        : (error as E);
+                return e != null &&
+                    typeof e === "object" &&
+                    "then" in (e as object)
+                    ? Result.Expect<T, E>(
+                          (e as PromiseLike<E>).then<T>((v) => {
+                              throw v;
+                          }),
+                      )
+                    : Result.Reject(e as E);
+            },
         });
     }
 }
