@@ -251,6 +251,19 @@ export const canvasHost: RendererHost<CanvasNodeT, CanvasElementNode> = {
             return;
         }
 
+        // Hoist the pixel-perfect hit-test override onto the variant payload
+        // so the hit-test walker can find it without dipping into props.
+        // Authors write `onHitTest={(x, y) => ...}` rather than `hitTest`
+        // so the reconciler's `on*` rule treats the function as a non-
+        // reactive callback (otherwise it would call it as a getter and
+        // store the result on the element instead).
+        if (key === "onHitTest") {
+            el.hitTest = typeof value === "function"
+                ? (value as (x: number, y: number) => boolean)
+                : undefined;
+            return;
+        }
+
         if (GEOMETRY_KEYS.has(key)) {
             el.bounds = recomputeBounds(el);
         }

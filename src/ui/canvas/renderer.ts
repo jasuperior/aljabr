@@ -15,6 +15,7 @@ import { createRenderer } from "../renderer.ts";
 import type { RendererProtocol } from "../types.ts";
 import { type ViewNode, view } from "../view-node.ts";
 import { canvasHost } from "./host.ts";
+import { EVENT_HANDLER_MAP, bubbleEvent, hitTest } from "./hit-test.ts";
 import {
     CanvasNode,
     zeroBounds,
@@ -105,12 +106,31 @@ export function createCanvasRenderer(
         view,
         mount(component: () => ViewNode): () => void {
             const unmount = inner.mount(component, root);
+
+            // Phase 6.1 — attach a single set of pointer/wheel listeners on
+            // the canvas DOM element. Each listener runs a hit test in
+            // canvas-space and, if it finds a target, bubbles a synthetic
+            // event up the scene graph through `parent` pointers.
+            const dispatch = (native: Event): void => {
+                const m = native as MouseEvent;
+                const target = hitTest(root, m.offsetX ?? 0, m.offsetY ?? 0);
+                if (target === null) return;
+                bubbleEvent(target, native);
+            };
+
+            const listenerCleanups: Array<() => void> = [];
+            for (const eventName of Object.keys(EVENT_HANDLER_MAP)) {
+                canvas.addEventListener(eventName, dispatch);
+                listenerCleanups.push(() => canvas.removeEventListener(eventName, dispatch));
+            }
+
             // Initial paint — the reconciler mounts synchronously, so by the
             // time we reach this line the scene graph reflects the first
             // render. Subsequent reactive updates flow through the rAF
             // protocol above.
             repaint();
             return () => {
+                for (const cleanup of listenerCleanups) cleanup();
                 unmount();
                 ctx.clearRect(0, 0, canvas.width, canvas.height);
             };

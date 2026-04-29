@@ -63,10 +63,19 @@ function makeCtx(): { calls: Call[] } & Record<string, any> {
 
 function makeCanvas(width = 800, height = 600): { canvas: HTMLCanvasElement; ctx: ReturnType<typeof makeCtx> } {
     const ctx = makeCtx();
+    const listeners = new Map<string, Set<(ev: Event) => void>>();
     const canvas = {
         width,
         height,
         getContext: (kind: string) => (kind === "2d" ? ctx : null),
+        addEventListener(type: string, listener: (ev: Event) => void) {
+            let set = listeners.get(type);
+            if (!set) listeners.set(type, set = new Set());
+            set.add(listener);
+        },
+        removeEventListener(type: string, listener: (ev: Event) => void) {
+            listeners.get(type)?.delete(listener);
+        },
     } as unknown as HTMLCanvasElement;
     return { canvas, ctx };
 }

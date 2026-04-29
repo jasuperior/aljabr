@@ -32,3 +32,4 @@ export { Viewport } from "./viewport.ts";
 export type { ViewportHandle } from "./viewport.ts";
 export { createCanvasRenderer } from "./renderer.ts";
 export type { CanvasRendererOptions } from "./renderer.ts";
+export type { CanvasSyntheticEvent } from "./hit-test.ts";
