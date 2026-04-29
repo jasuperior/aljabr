@@ -31,12 +31,12 @@ const ok = Result.Accept(42)
 ok.value // 42
 ```
 
-### `Result.Expect<T>`
+### `Result.Expect<T, E>`
 
-An async computation currently in flight.
+An async computation currently in flight. The second type parameter `E` records the rejection type that the pending promise will produce if it fails — it defaults to `never` for callers that don't track it.
 
 ```ts
-Result.Expect<T>(pending: PromiseLike<T>): Expected<T>
+Result.Expect<T, E = never>(pending: PromiseLike<T>): Expected<T, E>
 ```
 
 | Property | Type | Description |
@@ -47,6 +47,9 @@ Result.Expect<T>(pending: PromiseLike<T>): Expected<T>
 ```ts
 const loading = Result.Expect(fetch("/api/data").then(r => r.json()))
 loading.pending // PromiseLike<Data>
+
+// Track the rejection type explicitly:
+const typed = Result.Expect<Data, ApiError>(fetchData())
 ```
 
 ### `Result.Reject<E>`
@@ -72,25 +75,31 @@ err.error // Error
 ## Type definitions
 
 ```ts
-type Accepted<T> = Variant<"Accept", { value: T },                             Thenable<T>>
-type Expected<T> = Variant<"Expect", { pending: PromiseLike<T>; value: null }, Thenable<T>>
-type Rejected<E> = Variant<"Reject", { error: E; value: null },                Thenable<never>>
+type Accepted<T>       = Variant<"Accept", { value: T },                             Thenable<T>>
+type Expected<T, E = never> = Variant<"Expect", { pending: PromiseLike<T>; value: null }, Thenable<T, E>>
+type Rejected<E>       = Variant<"Reject", { error: E; value: null },                Thenable<never, E>>
 
-type Result<T = unknown, E = never> = Accepted<T> | Expected<T> | Rejected<E>
+type Result<T = unknown, E = never> = Accepted<T> | Expected<T, E> | Rejected<E>
 ```
 
 ---
 
-## `Thenable<T>` — shared behavior
+## `Thenable<T, E>` — shared behavior
 
-Every `Result` variant implements `.then()`, mirroring the `Promise` contract. This means you can `await` a `Result` directly or chain `.then()` calls:
+Every `Result` variant implements `.then()` and `.catch()`, mirroring the `Promise` contract. This means you can `await` a `Result` directly or chain `.then()` / `.catch()` calls:
 
 ```ts
-.then<TResult1 = T, TResult2 = never>(
+.then<TResult1 = T, TResult2 = E>(
     onAccepted?: ((value: T) => TResult1 | PromiseLike<TResult1>) | null,
-    onRejected?:  ((reason: any) => TResult2 | PromiseLike<TResult2>) | null,
+    onRejected?: ((reason: E) => TResult2 | PromiseLike<TResult2>) | null,
 ): Result<TResult1, TResult2>
+
+.catch<TResult = never>(
+    onRejected?: ((reason: E) => TResult | PromiseLike<TResult>) | null,
+): Result<T | TResult, never>
 ```
+
+`onRejected`'s `reason` parameter is now narrowed to `E` (rather than `any`). When `onRejected` is omitted, `TResult2` defaults to the source `E` — so the rejection type propagates through chains. When provided, `TResult2` is inferred from the recovery handler's return type.
 
 ### Chaining rules
 
@@ -113,6 +122,10 @@ const loaded = Result.Expect(fetchUser(1)).then(u => u.name)
 
 // Error recovery
 const recovered = Result.Reject("oops").then(null, (e) => `handled: ${e}`)
+// → Accepted<string> { value: "handled: oops" }
+
+// `.catch` is shorthand for `.then(undefined, onRejected)`
+const safe = Result.Reject("oops").catch((e) => `handled: ${e}`)
 // → Accepted<string> { value: "handled: oops" }
 ```
 
