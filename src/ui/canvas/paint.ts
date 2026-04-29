@@ -17,7 +17,7 @@
 
 import { match } from "../../match.ts";
 import { __, when } from "../../union.ts";
-import type { CanvasElementNode, CanvasNode } from "./node.ts";
+import type { CanvasBounds, CanvasElementNode, CanvasNode } from "./node.ts";
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -61,6 +61,41 @@ function applyPaintStyle(ctx: CanvasRenderingContext2D, props: Record<string, un
  */
 function sortChildrenByZIndex(children: CanvasNode[]): void {
     children.sort((a, b) => zIndexOf(a) - zIndexOf(b));
+}
+
+/**
+ * Axis-aligned rectangle overlap test.
+ *
+ * Returns `true` for touching edges (`a.x + a.width === b.x`) — overpainting
+ * a one-pixel seam is harmless and lets us avoid the floating-point edge
+ * cases that strict-inequality intersection introduces.
+ */
+function intersects(a: CanvasBounds, b: CanvasBounds): boolean {
+    return (
+        a.x <= b.x + b.width &&
+        a.x + a.width >= b.x &&
+        a.y <= b.y + b.height &&
+        a.y + a.height >= b.y
+    );
+}
+
+/**
+ * `true` when the node's own `bounds` cannot drive a culling decision and the
+ * paint pass should err on the side of painting it.
+ *
+ * Empty bounds appear on:
+ * - **groups** — group bounds are not yet computed as the union of
+ *   descendants (deferred from Phase 4); culling has to recurse into them
+ *   regardless so children get a chance to be tested individually.
+ * - **paths** — a real path bounding-box parser is out of scope for v0.3.8;
+ *   reporting empty bounds for a non-empty path would silently hide it.
+ * - **text** — bounds arrive in Phase 5 with the layout pass.
+ *
+ * Once any of those tags grow real bounds the existing `intersects` check
+ * starts culling them automatically with no other code change.
+ */
+function hasCullableBounds(b: CanvasBounds): boolean {
+    return b.width > 0 && b.height > 0;
 }
 
 function zIndexOf(node: CanvasNode): number {
@@ -210,16 +245,32 @@ function paintShape(ctx: CanvasRenderingContext2D, el: CanvasElementNode): void 
  * transforms compose with the parent's accumulated transform without leaking.
  * `Text` variants are not painted directly — Phase 5's implicit wrapping
  * promotes them into synthetic `<text>` elements at insert time.
+ *
+ * When `viewportBounds` is provided, every Element with non-empty bounds is
+ * intersection-tested against it in world space; misses skip the entire
+ * subtree. Tags whose bounds are not yet computed (`group`, `path`, `text`)
+ * fall through and always paint — see {@link hasCullableBounds} for why.
  */
-export function paintNode(ctx: CanvasRenderingContext2D, node: CanvasNode): void {
+export function paintNode(
+    ctx: CanvasRenderingContext2D,
+    node: CanvasNode,
+    viewportBounds?: CanvasBounds,
+): void {
     match(node, {
         Element: (el) => {
+            if (
+                viewportBounds !== undefined &&
+                hasCullableBounds(el.bounds) &&
+                !intersects(el.bounds, viewportBounds)
+            ) {
+                return;
+            }
             ctx.save();
             applyTransform(ctx, el);
             sortChildrenByZIndex(el.children);
             paintShape(ctx, el);
             for (const child of el.children) {
-                paintNode(ctx, child);
+                paintNode(ctx, child, viewportBounds);
             }
             ctx.restore();
         },
