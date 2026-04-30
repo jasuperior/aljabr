@@ -19,7 +19,7 @@ npm install aljabr
 {
   "compilerOptions": {
     "jsx": "react-jsx",
-    "jsxImportSource": "aljabr/ui"
+    "jsxImportSource": "aljabr/ui/dom"
   }
 }
 ```
@@ -466,7 +466,7 @@ Multiple `scheduleFlush` calls for the same pending batch are coalesced: if ten 
 | Test environments | Default (synchronous) — no async required |
 | Canvas / WebGL rendering targets | Custom protocol tied to the render loop |
 
-See the [Renderer Protocol guide](./advanced/renderer-protocol.md) for a full walkthrough including custom schedulers and testing patterns.
+See the [Renderer Protocol guide](../advanced/renderer-protocol.md) for a full walkthrough including custom schedulers and testing patterns.
 
 ---
 
@@ -486,8 +486,9 @@ A few implementation details worth knowing as a consumer:
 
 ## See also
 
-- [API Reference: `aljabr/ui`](../api/ui.md) — full reference for `view`, `createRenderer`, `RendererHost`, `domHost`, JSX
-- [Reactive UI patterns](./advanced/reactive-ui.md) — deep dive into `Ref`, `Derived`, `AsyncDerived` composition for complex state
-- [Resource Lifetime](./advanced/resource-lifetime.md) — `Scope`, `Resource`, and bracket patterns for cleanup
-- [API Reference: `Ref` / `RefArray` / `DerivedArray`](../api/prelude/ref.md)
-- [API Reference: `Signal` / `Derived`](../api/prelude/signal.md)
+- [API Reference: `aljabr/ui` (DOM renderer)](../../api/ui/dom.md) — full reference for `view`, `createRenderer`, `RendererHost`, `domHost`, JSX
+- [Guide: Canvas renderer](./canvas.md) — sibling guide for retained-mode 2D canvas authoring
+- [Reactive UI patterns](../advanced/reactive-ui.md) — deep dive into `Ref`, `Derived`, `AsyncDerived` composition for complex state
+- [Resource Lifetime](../advanced/resource-lifetime.md) — `Scope`, `Resource`, and bracket patterns for cleanup
+- [API Reference: `Ref` / `RefArray` / `DerivedArray`](../../api/prelude/ref.md)
+- [API Reference: `Signal` / `Derived`](../../api/prelude/signal.md)

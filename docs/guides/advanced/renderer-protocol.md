@@ -152,7 +152,9 @@ This pattern gives you deterministic control over when the DOM is updated in tes
 
 ## See also
 
-- [API Reference: `RendererProtocol`](../../api/ui.md#rendererprotocol)
-- [API Reference: `createRenderer`](../../api/ui.md#createrenderhost-protocol)
-- [Guide: Building UI with aljabr](../ui.md) — Part 8 overview of batching
+- [API Reference: `RendererProtocol`](../../api/ui/dom.md#rendererprotocol)
+- [API Reference: `createRenderer`](../../api/ui/dom.md#createrenderhost-protocol)
+- [API Reference: Canvas renderer](../../api/ui/canvas.md) — `createCanvasRenderer` ships its own pre-wired rAF protocol
+- [Guide: Building UI with aljabr (DOM)](../ui/dom.md) — Part 8 overview of batching
+- [Guide: Building UI with aljabr (Canvas)](../ui/canvas.md) — sibling renderer authoring guide
 - [Prelude: `batch`](../../api/prelude/context.md) — signal-level batching (orthogonal to the renderer protocol)

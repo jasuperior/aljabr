@@ -320,7 +320,7 @@ const { mount } = createRenderer(domHost, {
 
 Defers the flush to the end of the current microtask queue — finer-grained than rAF but still avoids multiple synchronous DOM writes from a single event handler.
 
-See the [Renderer Protocol guide](../guides/advanced/renderer-protocol.md) for a deeper walkthrough.
+See the [Renderer Protocol guide](../../guides/advanced/renderer-protocol.md) for a deeper walkthrough.
 
 ---
 
@@ -497,8 +497,9 @@ view(Fragment, null, ...items.map(i => view("li", null, i.name)))
 
 ## See also
 
-- [Guide: Building UI with aljabr](../guides/ui.md) — walkthrough from a static tree to a fully reactive component
-- [Prelude: `Signal` / `Derived`](./prelude/signal.md) — reactive primitives used in components
-- [Prelude: `Ref` / `RefArray` / `DerivedArray`](./prelude/ref.md) — structured state and reactive lists
-- [Prelude: `Scope` / `defer`](./prelude/scope.md) — component lifecycle and resource cleanup
-- [Prelude: `context`](./prelude/context.md) — cross-component context threading
+- [Guide: Building UI with aljabr (DOM)](../../guides/ui/dom.md) — walkthrough from a static tree to a fully reactive component
+- [API: Canvas renderer](./canvas.md) — sibling renderer for retained-mode 2D canvas scene graphs
+- [Prelude: `Signal` / `Derived`](../prelude/signal.md) — reactive primitives used in components
+- [Prelude: `Ref` / `RefArray` / `DerivedArray`](../prelude/ref.md) — structured state and reactive lists
+- [Prelude: `Scope` / `defer`](../prelude/scope.md) — component lifecycle and resource cleanup
+- [Prelude: `context`](../prelude/context.md) — cross-component context threading

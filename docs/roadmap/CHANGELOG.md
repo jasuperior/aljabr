@@ -4,6 +4,170 @@ All notable changes to aljabr are documented here. This project uses a rolling c
 
 ---
 
+## v0.3.8 — Canvas Renderer
+
+_Minor release following v0.3.7. Ships a first-class retained-mode 2D canvas renderer at `aljabr/ui/canvas` — a fully pluggable `RendererHost<CanvasNode, CanvasElementNode>` that integrates with the existing reconciler with zero changes to the core. Also includes a small `Option.toResult` / `Result.Expect` follow-up from v0.3.7._
+
+---
+
+### New — `aljabr/ui/canvas` canvas renderer
+
+The canvas renderer gives the same JSX, function-component, and signal model you already know from `aljabr/ui/dom`, targeted at `<canvas>` instead of the browser DOM. Install once, use everywhere — the split lives only in the `jsxImportSource` for each component file.
+
+#### `createCanvasRenderer(canvas, options?)`
+
+Pre-wires `canvasHost` with a `requestAnimationFrame`-backed `RendererProtocol` that schedules a single coalesced flush + repaint per animation frame, attaches one dispatcher per pointer/wheel event type to the canvas DOM element, and returns a `{ view, mount }` pair:
+
+```ts
+import { createCanvasRenderer } from "aljabr/ui/canvas";
+
+const canvas = document.querySelector<HTMLCanvasElement>("#scene")!;
+const r = createCanvasRenderer(canvas);
+const unmount = r.mount(() => (
+  <rect x={10} y={10} width={100} height={100} fill="cornflowerblue" />
+));
+```
+
+The initial paint runs synchronously after `mount`. Subsequent reactive prop updates flow through the rAF protocol and coalesce — multiple `Signal.set` calls within a frame produce one repaint. `unmount()` removes all event listeners, disposes reactive subscriptions, and clears the canvas.
+
+#### `Viewport(canvas)` — pan/zoom factory
+
+Creates a `ViewportHandle` with `x`, `y`, `scale` as `Signal<number>` instances. Pass the handle into `createCanvasRenderer` to enable per-frame off-screen culling, and feed the signals into a root `<group>`:
+
+```tsx
+import { createCanvasRenderer, Viewport } from "aljabr/ui/canvas";
+
+const vp = Viewport(canvas);
+const r = createCanvasRenderer(canvas, { viewport: vp });
+
+r.mount(() => (
+  <group x={vp.x} y={vp.y} scale={vp.scale}>
+    <rect x={0} y={0} width={100} height={100} fill="red" />
+  </group>
+));
+
+vp.scale.set(2); // zoom in — repaints on the next rAF tick
+vp.reset();      // back to (0, 0, 1)
+```
+
+`bounds()` on the handle returns the visible world-space rectangle `(-x/scale, -y/scale, w/scale, h/scale)`, read untracked from the signals since the paint pass is not a reactive computation.
+
+#### `canvasHost` — `RendererHost<CanvasNode, CanvasElementNode>`
+
+The retained-mode host. Most consumers use `createCanvasRenderer`; reach for `canvasHost` directly when bringing your own `RendererProtocol`:
+
+```ts
+import { createRenderer } from "aljabr/ui";
+import { canvasHost } from "aljabr/ui/canvas";
+
+const { mount } = createRenderer(canvasHost, {
+  scheduleFlush(flush) { queueMicrotask(flush); },
+});
+```
+
+#### Seven canvas primitives
+
+JSX with `jsxImportSource: "aljabr/ui/canvas"` or a per-file pragma gives you:
+
+| Tag | Geometry props | Notes |
+|---|---|---|
+| `<rect>` | `x y width height rx` | `rx > 0` triggers `roundRect` |
+| `<circle>` | `cx cy r` | |
+| `<ellipse>` | `cx cy rx ry` | |
+| `<line>` | `x1 y1 x2 y2` | Stroke-only |
+| `<path>` | `d` | SVG path string via `Path2D` |
+| `<group>` | `x y scale rotate` | Transform-only container + paint-context boundary |
+| `<text>` | `x y content` | Single-line; layout-aware under shape parents |
+
+All tags accept `fill`, `stroke`, `strokeWidth`, `zIndex`, all pointer/wheel `on*` handlers, and `onHitTest`. Everything reactive — pass a `Signal`, `Derived`, or `() => value` anywhere a plain value is accepted.
+
+#### Inherited paint props
+
+`fill`, `stroke`, `strokeWidth`, `fontFamily`, `fontSize`, `fontWeight`, `textAlign`, `verticalAlign`, and `padding` propagate down the scene graph through `<group>` boundaries. Non-group elements forward their parent's context unchanged. Per-prop resolution is `el.props[key] ?? group-context[key] ?? default`.
+
+#### Layout-driven labels
+
+A `<text>` element whose parent is a shape (rect/circle/ellipse/line/path) computes its `x` / `y` from the parent's bounds plus `textAlign`, `verticalAlign`, and `padding` — no explicit coordinates required:
+
+```tsx
+<rect x={10} y={10} width={120} height={40}
+      fill="white" stroke="black"
+      textAlign="center" verticalAlign="middle">
+  Click me
+</rect>
+```
+
+The wrapped label positions itself centred both horizontally and vertically. String children are implicitly wrapped in a synthetic `<text>` element at insert time; no explicit `<text>` tag is required.
+
+#### Hit testing & events
+
+The renderer attaches a single dispatcher per pointer and wheel event type (`pointerdown`, `pointerup`, `pointermove`, `pointerenter`, `pointerleave`, `click`, `dblclick`, `contextmenu`, `wheel`) to the canvas DOM element. On each event:
+
+1. `hitTest(root, offsetX, offsetY)` walks the scene graph in reverse paint order, accumulating an inverse affine transform through `<group>` matrices, and returns the deepest element whose bounds (in local frame) contain the point.
+2. `bubbleEvent(target, native)` walks `parent` pointers upward, dispatching the matching `on*` handler on each ancestor until `stopPropagation()` is called or the root is reached.
+
+```tsx
+<group onClick={() => console.log("group handler — fires after rect")}>
+  <rect x={0} y={0} width={50} height={50} fill="red"
+        onClick={(e) => { console.log("rect"); e.stopPropagation(); }} />
+</group>
+```
+
+#### Pixel-perfect `onHitTest`
+
+For irregular shapes, attach an `onHitTest` callback. When present, bounds are not consulted — the callback is the sole gate. The `on*` prefix is required so the reconciler doesn't treat the function as a reactive getter:
+
+```tsx
+const triangle = new Path2D("M 0 0 L 100 0 L 50 100 Z");
+<path d="M 0 0 L 100 0 L 50 100 Z" fill="orange"
+      onHitTest={(x, y) => ctx.isPointInPath(triangle, x, y)}
+      onClick={() => console.log("triangle hit")} />
+```
+
+`(x, y)` are the element's local-frame coordinates post-inverse-transform.
+
+#### Viewport culling
+
+When a `Viewport` is configured, the paint pass skips entire subtrees whose element bounds don't intersect the visible world-space rect. `<group>`, `<path>`, and `<text>` currently report `zeroBounds()` (see [v0.3.9 roadmap](./v0.3.9.md) for the bounds-completeness follow-up); the paint pass treats zero-area bounds as non-cullable so those tags always paint.
+
+---
+
+### Improved — `Option.toResult` + `Result.Expect<T, E>` type tracking
+
+**`Option.toResult` async-error overload.** A third overload accepts an async error thunk `() => Promise<E>`, which lifts `None` into a `Result.Expect` whose pending promise rejects with the constructed `E`. Authors who need a lazily-evaluated async fallback value no longer need to pre-await or wrap:
+
+```ts
+const r = await option.toResult(() => fetch("/error").then(r => r.json()));
+```
+
+**Overload-ordering fix.** A bug in the existing sync-thunk overload caused `E` to be inferred as `() => string` instead of `string` when the thunk returned a primitive. The overloads are now ordered correctly — async thunk first, sync thunk second, plain value third.
+
+**`Result.Expect<T, E>` phantom `E`.** `Expected<T, E = never>` gains a phantom rejection-type parameter so the rejection type propagates through `Thenable.then` chains. `onRejected`'s `reason` parameter narrows from `any` to `E`; `Thenable.catch(fn)` is added as a shorthand. The `E` parameter tracks the rejection type of the underlying promise without requiring authors to handle it at each `then` call.
+
+---
+
+### Changed — DOM JSX import source
+
+The DOM JSX runtime moved from `aljabr/ui/jsx-runtime` to `aljabr/ui/dom/jsx-runtime` to match its new parallel with the canvas runtime. Update `tsconfig.json` and per-file pragmas:
+
+```diff
+-  "jsxImportSource": "aljabr/ui"
++  "jsxImportSource": "aljabr/ui/dom"
+```
+
+The old entry points (`aljabr/ui/jsx-runtime`, `aljabr/ui/jsx-dev-runtime`) are removed — no re-export shim. This is a pre-alpha library; the rename is clean with no stranded consumers.
+
+---
+
+### Docs
+
+- `docs/api/ui.md` → `docs/api/ui/dom.md`; sibling `docs/api/ui/canvas.md` covers the full canvas API surface
+- `docs/guides/ui.md` → `docs/guides/ui/dom.md`; sibling `docs/guides/ui/canvas.md` is a 7-part narrative guide from static elements to an interactive diagram
+- New advanced guide: `docs/guides/advanced/canvas-internals.md` — paint-pass dispatch, hit-test inverse-transform walk, implicit text wrapping, file map, where v0.3.9 hooks in cleanly
+- `docs/roadmap/v0.3.9.md` — three bounds-completeness deferrals with implementation strategy options
+
+---
+
 ## v0.3.7 — Runnable Demo, Iterator Reactivity & List Reconciliation
 
 _Patch release following v0.3.6. Ships the first runnable in-repo demo (`public/`) — a small todo app exercising unions, `Ref`, `RefArray`, the iterator chain, and the DOM renderer end-to-end. Building it surfaced the renderer and iterator-key gaps that the rest of this release closes: list mutations were tearing down and re-mounting the entire list, and key information was being lost across `map`/`filter`/`sort` chains. The renderer now reconciles surgically and keys survive the full iterator chain._
