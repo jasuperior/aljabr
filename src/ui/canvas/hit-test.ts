@@ -153,14 +153,21 @@ function hitTestNode(
     // Groups are transparent — only their descendants can be hit.
     if (el.tag === "group") return null;
 
-    // Inverse-transform the screen point into the element's local frame and
-    // test against its axis-aligned bounds.
+    // Inverse-transform the screen point into the element's local frame.
     const { x: lx, y: ly } = applyInverse(local, sx, sy);
+
+    // When an `onHitTest` override is provided, it is authoritative — the
+    // axis-aligned `bounds` rect is skipped. This is the only path
+    // available for tags whose bounds are not yet computed (`path` reports
+    // `zeroBounds()` until path-string parsing lands), and it matches the
+    // intent of the override: "the bounds rect doesn't describe me, ask
+    // this function instead."
+    if (typeof el.hitTest === "function") {
+        return el.hitTest(lx, ly) ? el : null;
+    }
+
+    // Otherwise the element is hit when its bounds contain the point.
     if (!boundsContains(el.bounds, lx, ly)) return null;
-
-    // Optional pixel-perfect verification.
-    if (typeof el.hitTest === "function" && !el.hitTest(lx, ly)) return null;
-
     return el;
 }
 

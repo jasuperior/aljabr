@@ -189,15 +189,19 @@ describe("hitTest", () => {
             expect(calls).toEqual([{ x: 10, y: 10 }]);
         });
 
-        it("the bounds-miss short-circuits before the override fires", () => {
+        it("the override is authoritative — bounds-miss does not short-circuit it", () => {
+            // With `onHitTest` defined, the rect's axis-aligned bounds are
+            // not consulted. This is what makes paths (whose bounds are
+            // currently zeroBounds() pending the path-string parser)
+            // reachable through their own pixel-perfect override.
             const calls: number[] = [];
             const r = rect(0, 0, 10, 10);
-            canvasHost.setProperty(r, "onHitTest", () => {
-                calls.push(1);
-                return true;
+            canvasHost.setProperty(r, "onHitTest", (x: number, y: number) => {
+                calls.push(x + y);
+                return false;
             });
             hitTest(r, 100, 100);
-            expect(calls).toEqual([]);
+            expect(calls).toEqual([200]);
         });
 
         it("setting onHitTest to a non-function clears it on the variant payload", () => {
