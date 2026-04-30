@@ -35,6 +35,8 @@ body {
         rgba(167, 139, 250, 0.06),
         transparent
     );
+    flex-direction: column;
+    align-items: center;
 }
 
 .app {
@@ -271,3 +273,8 @@ body {
     background: var(--accent-dim);
     border-color: rgba(167, 139, 250, 0.25);
 }
+/* 
+#diagram-canvas {
+    width: 800px;
+    height: 500px;
+} */
