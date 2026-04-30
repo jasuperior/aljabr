@@ -118,7 +118,24 @@ interface CommonCanvasProps extends InheritablePaintProps, CanvasEventHandlers {
 // Per-tag prop interfaces
 // ---------------------------------------------------------------------------
 
-/** `<rect x y width height rx>` — corner radius `rx` triggers `roundRect`. */
+/**
+ * `<rect>` — axis-aligned rectangle. A non-zero `rx` (corner radius) triggers
+ * `ctx.roundRect`; otherwise the renderer uses `fillRect`/`strokeRect`.
+ *
+ * Doubles as a layout container for wrapped `<text>` children: see the
+ * inheritable `textAlign` / `verticalAlign` / `padding` props on
+ * {@link CommonCanvasProps} (via {@link InheritablePaintProps}) for the
+ * label-positioning rules.
+ *
+ * @example
+ * ```tsx
+ * <rect x={10} y={10} width={120} height={40} rx={6}
+ *       fill="white" stroke="black"
+ *       textAlign="center" verticalAlign="middle">
+ *   Click me
+ * </rect>
+ * ```
+ */
 export interface RectProps extends CommonCanvasProps {
     x?: Reactive<number>;
     y?: Reactive<number>;
@@ -150,15 +167,52 @@ export interface LineProps extends CommonCanvasProps {
     y2?: Reactive<number>;
 }
 
-/** `<path d>` — `d` is an SVG path string consumed via `Path2D`. */
+/**
+ * `<path>` — SVG path string consumed via `Path2D`.
+ *
+ * Note: in the current release a `<path>`'s `bounds` are not derived from
+ * `d`; viewport culling treats paths as non-cullable (always paints) and the
+ * AABB hit-test rejects them. Use `onHitTest` to make a path hittable —
+ * typically `(x, y) => ctx.isPointInPath(path2D, x, y)`. The v0.3.9 roadmap
+ * lifts this with a path-string parser.
+ *
+ * @example
+ * ```tsx
+ * const triangle = new Path2D("M 0 0 L 100 0 L 50 100 Z");
+ * <path d="M 0 0 L 100 0 L 50 100 Z" fill="orange"
+ *       onHitTest={(x, y) => ctx.isPointInPath(triangle, x, y)}
+ *       onClick={() => console.log("triangle hit")} />
+ * ```
+ */
 export interface PathProps extends CommonCanvasProps {
     d?: Reactive<string>;
 }
 
 /**
- * `<group x y scale rotate>` — transform-only container. Provides inherited
- * paint context to descendants; sets a transform that nests with ancestors
- * via `ctx.save()` / `ctx.restore()`.
+ * `<group>` — transform-only container.
+ *
+ * Two roles in one element:
+ * - **Transform composition.** `x`, `y`, `scale`, and `rotate` (degrees)
+ *   nest with the parent's accumulated transform via `ctx.save()` /
+ *   `ctx.restore()`. Authors compose by nesting groups; there is no matrix
+ *   prop.
+ * - **Paint-context boundary.** A group whose props override any inheritable
+ *   key (`fill`, `stroke`, `strokeWidth`, `fontFamily`, `fontSize`,
+ *   `fontWeight`, `textAlign`, `verticalAlign`, `padding`) provides a new
+ *   resolved context to its descendants. Non-group elements forward their
+ *   parent's context unchanged.
+ *
+ * Groups are also transparent to hit testing — children come on top, the
+ * group itself is never the hit target. Bubble handlers placed on the group
+ * still run when a descendant is hit.
+ *
+ * @example
+ * ```tsx
+ * <group x={vp.x} y={vp.y} scale={vp.scale} fontSize={14}>
+ *   <rect x={0} y={0} width={100} height={40}>Node A</rect>
+ *   <rect x={120} y={0} width={100} height={40}>Node B</rect>
+ * </group>
+ * ```
  */
 export interface GroupProps extends CommonCanvasProps {
     x?: Reactive<number>;

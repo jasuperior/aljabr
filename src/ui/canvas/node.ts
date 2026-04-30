@@ -6,7 +6,7 @@
  *   carrying tag, props, children, parent pointer, axis-aligned bounds, and
  *   z-index.
  * - **Text** — a leaf string node. Wrapped implicitly by the host into a
- *   synthetic `<text>` element (Phase 5) when inserted as a child of a
+ *   synthetic `<text>` element when inserted as a child of a
  *   non-`text` element.
  *
  * @module
@@ -36,7 +36,17 @@ export interface CanvasBounds {
     height: number;
 }
 
-/** All-zero bounds — used as the initial value before geometry props are set. */
+/**
+ * All-zero bounds — used as the initial value before geometry props are set
+ * and as the placeholder for tags whose bounds are not yet computed (currently
+ * `<group>`, `<path>`, and `<text>`; see the v0.3.9 roadmap for the
+ * bounds-completeness work that lifts these).
+ *
+ * Returns a fresh object on each call — never share a single reference across
+ * elements, since geometry recomputes mutate `el.bounds` in place.
+ *
+ * @returns A new `{ x: 0, y: 0, width: 0, height: 0 }` rect.
+ */
 export function zeroBounds(): CanvasBounds {
     return { x: 0, y: 0, width: 0, height: 0 };
 }
@@ -68,7 +78,7 @@ export type CanvasElementNode = Variant<
  * A `CanvasNode` variant describing a leaf string node.
  *
  * Created by `CanvasNode.Text("…")`. The host wraps text nodes into synthetic
- * `<text>` elements at insert time (Phase 5); bare text nodes are not painted.
+ * `<text>` elements at insert time; bare text nodes are not painted.
  */
 export type CanvasTextNode = Variant<"Text", { content: string }>;
 
@@ -111,7 +121,20 @@ const _canvasFactory = union({
 /**
  * Direct variant constructors for {@link CanvasNode}.
  *
+ * In normal authoring flows you don't construct nodes directly — JSX and
+ * `canvasHost.createElement` / `canvasHost.createText` cover all production
+ * sites. Use this façade when building a `CanvasNode` programmatically (e.g.
+ * tests, custom transforms, or implementing a sibling renderer host that
+ * round-trips through the canvas variant).
+ *
+ * The value lives at this module path; it is **not** re-exported from the
+ * `aljabr/ui/canvas` barrel — `verbatimModuleSyntax: true` rejects exporting
+ * the same identifier as both a type and a value through one barrel.
+ *
  * @example
+ * ```ts
+ * import { CanvasNode, zeroBounds } from "aljabr/ui/canvas/node";
+ *
  * CanvasNode.Element({
  *   tag: "rect",
  *   props: { x: 0, y: 0, width: 10, height: 10 },
@@ -122,6 +145,11 @@ const _canvasFactory = union({
  * });
  *
  * CanvasNode.Text("hello");
+ * ```
+ *
+ * @see {@link CanvasElementNode}
+ * @see {@link CanvasTextNode}
+ * @see {@link zeroBounds}
  */
 export const CanvasNode = _canvasFactory as unknown as {
     Element(p: {

@@ -47,11 +47,40 @@ export interface ViewportHandle {
 /**
  * Create a {@link ViewportHandle} bound to the given canvas element.
  *
- * Initial values: `x = 0`, `y = 0`, `scale = 1` (no pan, no zoom).
+ * Initial values: `x = 0`, `y = 0`, `scale = 1` (no pan, no zoom). Pass the
+ * resulting handle to {@link createCanvasRenderer} via its `viewport` option
+ * to enable per-frame off-screen culling.
  *
  * @param canvas - The HTML canvas element whose pixel dimensions feed into
  *   `bounds()`. The handle does not subscribe to canvas resize events; if the
- *   canvas is resized authors should trigger a repaint themselves.
+ *   canvas is resized authors should trigger a repaint themselves (writing
+ *   any reactive prop on the scene graph is a common no-op trigger).
+ *
+ * @returns A {@link ViewportHandle} whose `x`, `y`, `scale` signals can be
+ *   wired into a root `<group>` and mutated externally.
+ *
+ * @example
+ * ```tsx
+ * import { createCanvasRenderer, Viewport } from "aljabr/ui/canvas";
+ *
+ * const canvas = document.querySelector<HTMLCanvasElement>("#scene")!;
+ * const vp = Viewport(canvas);
+ * const r = createCanvasRenderer(canvas, { viewport: vp });
+ *
+ * r.mount(() => (
+ *   <group x={vp.x} y={vp.y} scale={vp.scale}>
+ *     <rect x={0} y={0} width={100} height={100} fill="red" />
+ *   </group>
+ * ));
+ *
+ * // Pan and zoom by writing the signals directly:
+ * vp.x.set(150);
+ * vp.scale.set(2);
+ * vp.reset(); // back to (0, 0, 1)
+ * ```
+ *
+ * @see {@link ViewportHandle}
+ * @see {@link createCanvasRenderer}
  */
 export function Viewport(canvas: HTMLCanvasElement): ViewportHandle {
     const x = Signal.create<number>(0);

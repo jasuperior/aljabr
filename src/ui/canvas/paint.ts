@@ -2,9 +2,10 @@
  * Canvas paint pass.
  *
  * Walks a `CanvasElementNode` scene graph and emits the corresponding
- * `CanvasRenderingContext2D` calls. The flush driver (Phase 4) is responsible
- * for clearing the backing canvas before invoking {@link paintNode} on the
- * root; this module performs no clearing of its own.
+ * `CanvasRenderingContext2D` calls. The flush driver (typically
+ * `createCanvasRenderer`) is responsible for clearing the backing canvas
+ * before invoking {@link paintNode} on the root; this module performs no
+ * clearing of its own.
  *
  * Dispatch is consistently `match` + `when` on the `CanvasNode` union — first
  * by variant (`Element` vs `Text`), then by `tag` for the per-primitive paint
@@ -149,7 +150,7 @@ function applyPaintStyle(
 }
 
 // ---------------------------------------------------------------------------
-// zIndex sort + culling helpers (carried over from Phase 3 / 4)
+// zIndex sort + culling helpers
 // ---------------------------------------------------------------------------
 
 function sortChildrenByZIndex(children: CanvasNode[]): void {
@@ -334,7 +335,7 @@ function paintShape(
 }
 
 // ---------------------------------------------------------------------------
-// paintNode — recursive entry; flush driver (Phase 4) calls this on the root
+// paintNode — recursive entry; the flush driver calls this on the root
 // ---------------------------------------------------------------------------
 
 /**

@@ -23,6 +23,7 @@ aljabr ships independent entry points. Use what you need; ignore what you don't.
 | `aljabr/signals`   | SolidJS-style convenience layer over the reactive primitives                                                 |
 | `aljabr/ui`        | Reactive UI layer — JSX, function components, pluggable renderer host                                        |
 | `aljabr/ui/dom`    | DOM rendering target (`domHost`) for browser apps                                                            |
+| `aljabr/ui/canvas` | Retained-mode 2D canvas renderer (`createCanvasRenderer`, `Viewport`, `canvasHost`) for diagramming / dataviz |
 
 See the [API Reference](#api-reference) below for the full per-module surface, and the [Guides](#guides) for narrative docs.
 
@@ -146,11 +147,18 @@ npm install aljabr
 
 ### UI (`aljabr/ui`)
 
-- [`view()` / `Fragment` / `ViewNode`](docs/api/ui.md) — element, component, and fragment factories
-- [`createRenderer()` / `mount()`](docs/api/ui.md#createrendererhost-protocol) — renderer factory and mounting
-- [`RendererHost<N, E>`](docs/api/ui.md#rendererhost) — contract for custom rendering targets
-- [`domHost`](docs/api/ui.md#domhost) — production DOM implementation
-- [JSX reference](docs/api/ui.md#jsx-reference) — tsconfig setup and JSX/`view()` equivalence
+- [UI overview](docs/api/ui/index.md) — choosing a renderer, shared core vs. per-renderer surfaces
+- **DOM renderer (`aljabr/ui/dom`)**
+    - [`view()` / `Fragment` / `ViewNode`](docs/api/ui/dom.md) — element, component, and fragment factories
+    - [`createRenderer()` / `mount()`](docs/api/ui/dom.md#createrendererhost-protocol) — renderer factory and mounting
+    - [`RendererHost<N, E>`](docs/api/ui/dom.md#rendererhost) — contract for custom rendering targets
+    - [`domHost`](docs/api/ui/dom.md#domhost) — production DOM implementation
+    - [JSX reference](docs/api/ui/dom.md#jsx-reference) — tsconfig setup and JSX/`view()` equivalence
+- **Canvas renderer (`aljabr/ui/canvas`)**
+    - [`createCanvasRenderer()` / `Viewport()` / `canvasHost`](docs/api/ui/canvas.md) — pre-wired renderer, pan/zoom factory, retained-mode host
+    - [`CanvasNode` union + intrinsic elements](docs/api/ui/canvas.md#the-canvasnode-union) — `rect`, `circle`, `ellipse`, `line`, `path`, `group`, `text`
+    - [Inherited paint props + text layout](docs/api/ui/canvas.md#inherited-paint-props) — `<group>` context, layout-driven labels
+    - [Events + `onHitTest`](docs/api/ui/canvas.md#events) — bubbling synthetic events, pixel-perfect override
 
 ### Prelude (`aljabr/prelude`)
 
@@ -175,7 +183,9 @@ npm install aljabr
 
 ## Guides
 
-- [Building UI with aljabr](docs/guides/ui.md) — static tree → reactive regions → components → lifecycle → reactive lists
+- [Building UI with aljabr](docs/guides/ui/index.md)
+    - [DOM renderer](docs/guides/ui/dom.md) — static tree → reactive regions → components → lifecycle → reactive lists
+    - [Canvas renderer](docs/guides/ui/canvas.md) — primitives, `Viewport` pan/zoom, layout-driven labels, events
 - [Getting Started](docs/guides/getting-started.md) — first union through real-world patterns
 - [Union Patterns](docs/guides/union-patterns.md) — `is.*`, `select()`, destructuring, guards
 - [Schema](docs/guides/schema.md) — decoding external data, error paths, object modes, variant mapping
@@ -186,3 +196,4 @@ npm install aljabr
     - [Reactive UI Patterns](docs/guides/advanced/reactive-ui.md) — Ref + Derived + AsyncDerived composition for complex data-layer state
     - [Resource Lifetime](docs/guides/advanced/resource-lifetime.md) — Scope boundaries, bracket patterns
     - [Parser Construction](docs/guides/advanced/parser-construction.md) — token/AST unions, recursive match
+    - [Canvas Internals](docs/guides/advanced/canvas-internals.md) — paint pass, hit-test, implicit text wrapping

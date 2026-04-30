@@ -27,7 +27,7 @@ const __DEV__ =
         .process?.env?.["NODE_ENV"] !== "production";
 
 // ---------------------------------------------------------------------------
-// Implicit `<text>` wrapping (Phase 5.3)
+// Implicit `<text>` wrapping
 //
 // When the reconciler inserts a `CanvasTextNode` into a non-`text`
 // `CanvasElementNode`, the host wraps the text in a synthetic
@@ -147,13 +147,36 @@ function recomputeBounds(node: CanvasNodeT): CanvasBounds {
 /**
  * Retained-mode canvas implementation of {@link RendererHost}.
  *
- * Pass to {@link createRenderer} (typically pre-wired by
- * `createCanvasRenderer` from Phase 4) to mount component trees into a
- * `CanvasRenderingContext2D`-backed scene graph.
+ * Pass to {@link createRenderer} when you need to bring your own
+ * `RendererProtocol` — for example, a microtask flush, or driving paint from
+ * an external animation loop. Most consumers use `createCanvasRenderer`
+ * instead, which pre-wires this host with a `requestAnimationFrame`-backed
+ * protocol and the pointer event dispatcher.
+ *
+ * The host special-cases two prop keys during `setProperty`:
+ * - `zIndex` is hoisted onto the variant payload's `zIndex` field for the
+ *   paint pass's stable sort.
+ * - `onHitTest` is hoisted onto the payload's `hitTest` field for the
+ *   pixel-perfect override path. The `on` prefix is required so the
+ *   reconciler treats the function as a non-reactive callback rather than a
+ *   reactive getter.
+ *
+ * The host also performs implicit `<text>` wrapping: a {@link CanvasTextNode}
+ * inserted into a non-`text` parent is wrapped in a synthetic `<text>`
+ * element so wrapped labels participate in the paint and hit-test passes.
  *
  * @example
+ * ```ts
  * import { createRenderer } from "aljabr/ui";
  * import { canvasHost } from "aljabr/ui/canvas";
+ *
+ * const { mount } = createRenderer(canvasHost, {
+ *   scheduleFlush(flush) { queueMicrotask(flush); },
+ * });
+ * ```
+ *
+ * @see {@link createCanvasRenderer}
+ * @see {@link CanvasNode}
  *
  * const { mount } = createRenderer(canvasHost);
  */
@@ -179,7 +202,8 @@ export const canvasHost: RendererHost<CanvasNodeT, CanvasElementNode> = {
         // reconciler-driven moves (e.g. keyed list reorders).
         canvasHost.remove(child);
 
-        // Phase 5.3: wrap a Text variant into a synthetic `<text>` element
+        // Implicit wrap: a Text variant inserted into a non-`text` parent is
+        // wrapped in a synthetic `<text>` element
         // when its parent isn't already a `<text>`. The wrapper is what
         // physically lives in `parent.children` from now on; the original
         // Text reference is held only as the reconciler's handle.
