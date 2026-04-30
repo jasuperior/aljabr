@@ -77,7 +77,10 @@ export const jsxDEV = _jsx;
 // JSX namespace — TypeScript intrinsic element types
 // ---------------------------------------------------------------------------
 
-type HTMLProps = Record<string, unknown>;
+type HTMLProps = {
+    mounted?: (el: globalThis.Element) => void;
+    [key: string]: unknown;
+};
 
 /**
  * TypeScript JSX type namespace for aljabr/ui/dom.

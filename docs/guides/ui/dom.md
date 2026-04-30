@@ -277,6 +277,50 @@ function DataStream({ url }: { url: string }) {
 
 ---
 
+## Part 5b: Element access with `mounted`
+
+The `mounted` prop gives a component access to the underlying DOM element after it has been inserted. The reconciler calls the callback synchronously post-insert, inside a dedicated `Scope`. Any `defer()` calls inside the callback register to that scope and run when the element is removed.
+
+```tsx
+import { defer } from "aljabr/prelude";
+
+function AutoFocus() {
+    return (
+        <input
+            type="text"
+            mounted={(el) => {
+                (el as HTMLInputElement).focus();
+            }}
+        />
+    );
+}
+```
+
+The primary use case is mounting a secondary renderer (e.g. the canvas renderer) onto a DOM element that lives inside a component tree:
+
+```tsx
+import { defer } from "aljabr/prelude";
+import { createCanvasRenderer } from "aljabr/ui/canvas";
+
+function Diagram() {
+    return (
+        <canvas
+            width={800}
+            height={500}
+            mounted={(el) => {
+                const renderer = createCanvasRenderer(el as HTMLCanvasElement);
+                renderer.mount(() => <Scene />);
+                defer(() => renderer.dispose());
+            }}
+        />
+    );
+}
+```
+
+`mounted` is stripped before DOM attribute application — it never appears as an HTML attribute. The scope is element-scoped: when the element is removed from the DOM, all `defer`'d callbacks fire in LIFO order.
+
+---
+
 ## Part 6: Reactive lists
 
 Pass a `DerivedArray<ViewNode>` directly as a child to render a reactive list. `DerivedArray` is the read-only view returned by `RefArray.map`, `.filter`, or `.sort`.

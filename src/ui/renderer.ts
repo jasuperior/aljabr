@@ -7,6 +7,7 @@ import {
     untrack,
     runInContext,
 } from "../prelude/context.ts";
+import { type ScopeHandle, Scope, runInScope } from "../prelude/scope.ts";
 import { DerivedArray } from "../prelude/derived-array.ts";
 import { RefArray } from "../prelude/ref.ts";
 import type { RendererHost, RendererProtocol } from "./types.ts";
@@ -157,8 +158,12 @@ function reconcileViewNode<N, E extends N>(
     match(node, {
         Element: ({ tag, props, children }) => {
             const el = host.createElement(tag);
+            const mountedCb = typeof props.mounted === "function"
+                ? props.mounted as (el: E) => void
+                : null;
 
             for (const [key, value] of Object.entries(props)) {
+                if (key === "mounted") continue;
                 if (typeof value === "function" && !key.startsWith("on")) {
                     // Reactive prop — track via a dedicated effect computation
                     const propComp = createOwner(owner);
@@ -187,9 +192,17 @@ function reconcileViewNode<N, E extends N>(
 
             host.insert(parent, el as N, anchor);
             host.onMount?.(el);
+
+            let mountedScope: ScopeHandle | null = null;
+            if (mountedCb !== null) {
+                mountedScope = Scope();
+                runInScope(mountedScope, () => mountedCb(el));
+            }
+
             owner.cleanups.add(() => {
                 host.onUnmount?.(el);
                 host.remove(el as N);
+                mountedScope?.dispose();
             });
         },
 

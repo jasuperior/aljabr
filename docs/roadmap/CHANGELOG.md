@@ -6,7 +6,34 @@ All notable changes to aljabr are documented here. This project uses a rolling c
 
 ## v0.3.8 — Canvas Renderer
 
-_Minor release following v0.3.7. Ships a first-class retained-mode 2D canvas renderer at `aljabr/ui/canvas` — a fully pluggable `RendererHost<CanvasNode, CanvasElementNode>` that integrates with the existing reconciler with zero changes to the core. Also includes a small `Option.toResult` / `Result.Expect` follow-up from v0.3.7._
+_Minor release following v0.3.7. Ships a first-class retained-mode 2D canvas renderer at `aljabr/ui/canvas` — a fully pluggable `RendererHost<CanvasNode, CanvasElementNode>` that integrates with the existing reconciler with zero changes to the core. Also includes the `mounted` prop for DOM element lifecycle access, and a small `Option.toResult` / `Result.Expect` follow-up from v0.3.7._
+
+---
+
+### New — `mounted` prop on host elements
+
+The `mounted` prop gives components direct access to the underlying DOM element after it has been inserted. Pass a callback to any host element; the reconciler calls it synchronously post-insert, inside a dedicated `Scope`. Any `defer()` calls inside the callback register to that scope — they run when the element is removed from the DOM.
+
+```tsx
+import { defer } from "aljabr/prelude";
+import { createCanvasRenderer } from "aljabr/ui/canvas";
+
+function Diagram() {
+    return (
+        <canvas
+            width={800}
+            height={500}
+            mounted={(el) => {
+                const renderer = createCanvasRenderer(el as HTMLCanvasElement);
+                renderer.mount(() => <Scene />);
+                defer(() => renderer.dispose());
+            }}
+        />
+    );
+}
+```
+
+The `mounted` prop is stripped before DOM attribute application — it never appears as an HTML attribute. It is available on all intrinsic host elements. The scope is element-scoped, not component-scoped: if the element is replaced (e.g. via conditional rendering), the previous scope disposes before the new one is created.
 
 ---
 
