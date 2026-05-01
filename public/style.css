@@ -41,7 +41,55 @@ body {
 
 .app {
     width: 100%;
+    max-width: 800px;
+}
+
+/* Todo panel — constrained width within the wider app container */
+.todo-panel {
     max-width: 480px;
+    margin: 0 auto;
+}
+
+/* Tabs */
+.tabs {
+    display: flex;
+    gap: 4px;
+    margin-bottom: 28px;
+    border-bottom: 1px solid var(--border);
+    padding-bottom: 12px;
+}
+
+.tab-btn {
+    background: transparent;
+    border: 1px solid transparent;
+    border-radius: 6px;
+    padding: 7px 16px;
+    font-family: "DM Mono", monospace;
+    font-size: 13px;
+    color: var(--text-muted);
+    cursor: pointer;
+    transition:
+        color 0.15s,
+        background 0.15s,
+        border-color 0.15s;
+}
+
+.tab-btn:hover {
+    color: var(--text);
+}
+
+.tab-btn.active {
+    color: var(--accent);
+    background: var(--accent-dim);
+    border-color: rgba(167, 139, 250, 0.25);
+}
+
+/* Canvas panel */
+.diagram-canvas {
+    display: block;
+    width: 100%;
+    border-radius: var(--radius);
+    border: 1px solid var(--border);
 }
 
 /* Header */
@@ -273,8 +321,3 @@ body {
     background: var(--accent-dim);
     border-color: rgba(167, 139, 250, 0.25);
 }
-/* 
-#diagram-canvas {
-    width: 800px;
-    height: 500px;
-} */
