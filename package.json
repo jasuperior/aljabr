@@ -12,7 +12,10 @@
         "pattern-matching",
         "functional-programming",
         "signals",
-        "reactive"
+        "reactive",
+        "ui",
+        "components",
+        "canvas"
     ],
     "repository": {
         "type": "git",
