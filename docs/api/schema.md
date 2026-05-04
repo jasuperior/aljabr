@@ -272,6 +272,58 @@ The result is a `Codec` object — not a `Schema<P>` variant — so it cannot be
 
 ---
 
+#### `Schema.lazy(thunk)`
+
+```ts
+Schema.lazy<T>(thunk: () => Schema<T>): Schema<T>
+```
+
+Wraps a schema thunk to break circular references in recursive definitions. The thunk is evaluated on every decode/encode pass — cheap, since it just dereferences a closed-over schema.
+
+Use `Schema.lazy` whenever a schema needs to refer to itself (directly or through one of its fields):
+
+```ts
+type TreeNode = {
+    value: number
+    children: TreeNode[]
+}
+
+const treeSchema: Schema<TreeNode> = Schema.object({
+    value: Schema.number(),
+    children: Schema.array(Schema.lazy(() => treeSchema)),
+})
+
+decode(treeSchema, {
+    value: 1,
+    children: [
+        { value: 2, children: [] },
+        { value: 3, children: [{ value: 4, children: [] }] },
+    ],
+})
+// Valid(<the same tree>)
+```
+
+The thunk pattern is also how mutually recursive schemas are expressed:
+
+```ts
+type A = { kind: "a"; b?: B }
+type B = { kind: "b"; a?: A }
+
+const aSchema: Schema<A> = Schema.object({
+    kind: Schema.literal("a"),
+    b: Schema.optional(Schema.lazy(() => bSchema)),
+})
+
+const bSchema: Schema<B> = Schema.object({
+    kind: Schema.literal("b"),
+    a: Schema.optional(Schema.lazy(() => aSchema)),
+})
+```
+
+`Schema.lazy` is a true `Schema<T>` (not a `Codec`), so it composes inside `Schema.array`, `Schema.object`, `Schema.variant`, and the rest of the factories like any other schema. Decode errors from inside the lazy boundary propagate with the correct path.
+
+---
+
 ## `decode(schema, input)`
 
 ```ts

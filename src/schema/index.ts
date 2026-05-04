@@ -52,6 +52,7 @@ const _Schema = union({
         discriminant: string,
         map: Record<string, string> | undefined,
     ) => ({ factory, shapeMap, discriminant, map }),
+    LazySchema: (thunk: () => unknown) => ({ thunk }),
 });
 
 // ===== Public schema types =====
@@ -71,6 +72,7 @@ export type ArraySchema = Union<typeof _Schema, "ArraySchema">;
 export type ObjectSchema = Union<typeof _Schema, "ObjectSchema">;
 export type UnionSchema = Union<typeof _Schema, "UnionSchema">;
 export type VariantSchema = Union<typeof _Schema, "VariantSchema">;
+export type LazySchema = Union<typeof _Schema, "LazySchema">;
 
 // ===== Schema factory (public API) =====
 
@@ -139,6 +141,24 @@ export const Schema = {
             },
             encode: encodeFn as (value: P) => unknown,
         };
+    },
+
+    /**
+     * Wrap a schema thunk to support recursive definitions.
+     *
+     * The thunk is evaluated on every decode/encode pass — cheap, since it just
+     * dereferences the closed-over schema reference. Use `Schema.lazy` to break
+     * circular references when a schema needs to refer to itself.
+     *
+     * @example
+     * type Tree = { value: number; children: Tree[] }
+     * const treeSchema: Schema<Tree> = Schema.object({
+     *     value: Schema.number(),
+     *     children: Schema.array(Schema.lazy(() => treeSchema)),
+     * })
+     */
+    lazy<T>(thunk: () => Schema<T>): Schema<T> {
+        return _Schema.LazySchema(thunk as () => unknown) as Schema<T>;
     },
 };
 
@@ -296,6 +316,9 @@ function _decode(
             ]);
         },
 
+        LazySchema: ({ thunk }) =>
+            _decode((thunk as () => AnySchema)(), input, path),
+
         VariantSchema: ({ factory, shapeMap, discriminant, map }) => {
             if (!isPlainObject(input))
                 return Validation.Invalid([
@@ -423,6 +446,9 @@ function _encode(schema: AnySchema, value: unknown): unknown {
             }
             return value;
         },
+
+        LazySchema: ({ thunk }) =>
+            _encode((thunk as () => AnySchema)(), value),
 
         VariantSchema: ({ shapeMap, discriminant, map }) => {
             const disc = discriminant as string;

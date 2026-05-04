@@ -660,3 +660,110 @@ type NodePayload = FactoryPayload<InstanceType<typeof Node>>
 type WithoutId = FactoryPayload<InstanceType<typeof Node>, "id">
 // { value: number }
 ```
+
+---
+
+## Algebra {#algebra}
+
+The value returned by `union()` carries four non-enumerable methods for composing, narrowing, and replacing variants without rebuilding the union from scratch: `.merge`, `.extend`, `.pick`, `.omit`. Impls and the raw factories object are stashed on the result under internal symbols (`factoriesTag`, `implsTag`) so the algebra methods can recombine them.
+
+All four methods return a fresh `UnionResult` — none mutate the original.
+
+### `.merge`
+
+Extend a union with additional variants. Overlapping keys are a **compile-time error** — use `.extend` (or `.omit("K").merge(...)`) when you intend to replace.
+
+**Direct form** — extend variants only:
+
+```ts
+const Base = union({
+    Foo: (n: number) => ({ n }),
+    Bar: (s: string) => ({ s }),
+})
+
+const Extended = Base.merge({
+    Baz: (b: boolean) => ({ b }),
+})
+// Extended: union of { Foo, Bar, Baz }
+```
+
+**Curried impl form** — mirrors `union([Impl])(factories)`:
+
+```ts
+abstract class Tracked extends Trait<{ id: string }> { logged = true }
+
+const Extended = Base.merge([Tracked])({
+    Baz: (id: string) => ({ id }),
+})
+// Tracked impl applies to Foo, Bar, AND Baz — base impls are preserved and combined with new ones.
+```
+
+Compile-time rejection of overlapping keys:
+
+```ts
+Base.merge({ Foo: (n: number) => ({ n }) })
+// ^ Type error: Variant "Foo" already exists in this union;
+//   use .omit("Foo").merge(...) to replace.
+```
+
+### `.extend`
+
+Sugar for `.omit(K).merge({ K: ... })` — extend the union, **silently replacing** any variants whose keys already exist. Same shape as `.merge` (direct + curried impl forms), no overlap constraint.
+
+```ts
+const Replaced = Base.extend({
+    Foo: (n: number, m: number) => ({ n, m }),  // replaces the original Foo
+    Baz: (b: boolean) => ({ b }),                // adds new
+})
+```
+
+Use `.merge` when you want a compile-time error on overlap (the safer choice when you don't intend to replace anything). Use `.extend` when replacement is intentional.
+
+### `.pick`
+
+Narrow a union to only the named variants. Impls are preserved.
+
+```ts
+const Full = union({
+    Foo: (n: number) => ({ n }),
+    Bar: (s: string) => ({ s }),
+    Baz: (b: boolean) => ({ b }),
+})
+
+const Sub = Full.pick("Foo", "Bar")
+// Sub: union of { Foo, Bar }
+```
+
+Useful for narrowing a public API surface — e.g., a "user-callable commands" subset of a larger editor command union.
+
+### `.omit`
+
+Remove the named variants from a union. Impls are preserved.
+
+```ts
+const Sub = Full.omit("Baz")
+// Sub: union of { Foo, Bar }
+```
+
+Combined with `.merge`, this is the explicit-replacement path:
+
+```ts
+const Replaced = Full.omit("Foo").merge({
+    Foo: (n: number, m: number) => ({ n, m }),
+})
+```
+
+`.extend` is the one-call shorthand for that pattern.
+
+### Round-trip: composing the algebra
+
+```ts
+const Base = union({ A: () => ({}), B: () => ({}) })
+const Extended = Base.merge({ C: () => ({}), D: () => ({}) })
+const Picked = Extended.pick("A", "C")
+// Picked: union of { A, C }
+```
+
+### What's not included
+
+`.intersect` (∩) and `.difference` (A − B) on union *values* are deliberately not provided. `.intersect` on full union types is rarely useful and the typing is tricky (variants with the same name but different payloads). `.difference` on union values is structurally equivalent to `.omit` driven by another union's keys — adds API surface for negligible benefit. If a concrete use case emerges, either can be added without breaking the existing methods.

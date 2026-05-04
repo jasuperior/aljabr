@@ -45,6 +45,12 @@ export const selectTag = Symbol("aljabr.select");
 /** @internal — stored on a union factory to carry its unique identity */
 export const unionFactoryTag = Symbol("aljabr.unionFactory");
 
+/** @internal — stored on a union result to carry its raw factories object (for `.merge` / `.pick` / `.omit`) */
+export const factoriesTag = Symbol("aljabr.factories");
+
+/** @internal — stored on a union result to carry its raw impl array (for `.merge` / `.pick` / `.omit`) */
+export const implsTag = Symbol("aljabr.impls");
+
 /** @internal — stored on variant prototypes to link back to their parent union */
 export const parentUnionId = Symbol("aljabr.parentUnion");
 
@@ -765,21 +771,167 @@ export function when(
  * @see {@link match} for consuming variants
  * @see {@link Union} for extracting the TypeScript union type from the factory object
  */
+/**
+ * Compile-time guard: errors if any key in `F2` already exists in `F`.
+ * Used to reject `.merge` calls that would silently override an existing variant.
+ *
+ * To replace a variant, chain: `.omit("Foo").merge({ Foo: ... })`.
+ */
+export type NoOverlap<F, F2> = {
+    [K in keyof F2]: K extends keyof F
+        ? never & {
+              __error: `Variant "${K & string}" already exists in this union; use .omit("${K & string}").merge(...) to replace.`;
+          }
+        : F2[K];
+};
+
+/**
+ * The compiled output of `union()` — the factories object plus algebra methods.
+ *
+ * @typeParam Result - The factories record (keys → variant factory functions)
+ * @typeParam Factories - The raw factories object passed to `union()` (preserved for `.merge` / `.pick` / `.omit`)
+ * @typeParam Impl - The impl array passed to `union([Impl])(...)` (preserved for `.merge` / `.pick` / `.omit`)
+ */
+export type UnionResult<
+    Result extends Record<string, any>,
+    Factories extends Record<string, any>,
+    Impl extends AbstractConstructor[],
+> = Result & {
+    /**
+     * Extend this union with additional variants (and optionally additional impls).
+     *
+     * **Direct form** — extend variants only:
+     * ```ts
+     * const Extended = Base.merge({ NewVariant: (x: number) => ({ x }) })
+     * ```
+     *
+     * **Curried impl form** — mirrors `union([Impl])(factories)`:
+     * ```ts
+     * const Extended = Base.merge([Impl])({ NewVariant: ... })
+     * ```
+     *
+     * Overlapping keys are a compile-time error. Use `.omit("Foo").merge({ Foo: ... })` to replace.
+     */
+    readonly merge: {
+        <F2 extends Record<string, ValidVariant<AllRequired<Impl>>>>(
+            factories: NoOverlap<Factories, F2>,
+        ): UnionResult<
+            BuildFactories<Factories & F2, Impl>,
+            Factories & F2,
+            Impl
+        >;
+        <I2 extends AbstractConstructor[]>(
+            impls: I2,
+        ): <
+            F2 extends Record<
+                string,
+                ValidVariant<AllRequired<[...Impl, ...I2]>>
+            >,
+        >(
+            factories: NoOverlap<Factories, F2>,
+        ) => UnionResult<
+            BuildFactories<Factories & F2, [...Impl, ...I2]>,
+            Factories & F2,
+            [...Impl, ...I2]
+        >;
+    };
+
+    /**
+     * Sugar for `.omit(K).merge({ K: ... })` — extend the union, silently
+     * replacing any variants whose keys already exist. New keys are added;
+     * overlapping keys are replaced.
+     *
+     * Use `.merge` when you want a compile-time error on overlapping keys
+     * (the safer choice when you don't intend to replace anything).
+     *
+     * **Direct form** — extend or replace variants:
+     * ```ts
+     * const Replaced = Base.extend({ Foo: (n: number, m: number) => ({ n, m }) })
+     * ```
+     *
+     * **Curried impl form** — mirrors `.merge([Impl])(factories)`:
+     * ```ts
+     * const Replaced = Base.extend([Impl])({ Foo: ... })
+     * ```
+     */
+    readonly extend: {
+        <F2 extends Record<string, ValidVariant<AllRequired<Impl>>>>(
+            factories: F2,
+        ): UnionResult<
+            BuildFactories<Omit<Factories, keyof F2> & F2, Impl>,
+            Omit<Factories, keyof F2> & F2,
+            Impl
+        >;
+        <I2 extends AbstractConstructor[]>(
+            impls: I2,
+        ): <
+            F2 extends Record<
+                string,
+                ValidVariant<AllRequired<[...Impl, ...I2]>>
+            >,
+        >(
+            factories: F2,
+        ) => UnionResult<
+            BuildFactories<Omit<Factories, keyof F2> & F2, [...Impl, ...I2]>,
+            Omit<Factories, keyof F2> & F2,
+            [...Impl, ...I2]
+        >;
+    };
+
+    /**
+     * Narrow this union to only the named variants. Impls are preserved.
+     *
+     * ```ts
+     * const Sub = Full.pick("Foo", "Bar")
+     * ```
+     */
+    readonly pick: <K extends keyof Factories & string>(
+        ...keys: K[]
+    ) => UnionResult<
+        BuildFactories<Pick<Factories, K>, Impl>,
+        Pick<Factories, K>,
+        Impl
+    >;
+
+    /**
+     * Remove the named variants from this union. Impls are preserved.
+     *
+     * ```ts
+     * const Sub = Full.omit("Bar")
+     * ```
+     */
+    readonly omit: <K extends keyof Factories & string>(
+        ...keys: K[]
+    ) => UnionResult<
+        BuildFactories<Omit<Factories, K>, Impl>,
+        Omit<Factories, K>,
+        Impl
+    >;
+};
+
+type Pretty<T> = {
+    [Key in keyof T]: T[Key];
+} & {};
+/** @internal — reproduces the per-key shape that `union(...)` produces, lifted to a reusable mapped type. */
+type BuildFactories<
+    F extends Record<string, any>,
+    Impl extends AbstractConstructor[],
+> = {
+    [K in keyof F & string]: F[K] extends (...args: any[]) => any
+        ? (...args: Parameters<F[K]>) => Pretty<
+              ReturnType<F[K]> & {
+                  [tag]: K;
+              }
+          > &
+              ImplMixinFromImpl<Impl>
+        : () => Pretty<F[K] & { [tag]: K }> & ImplMixinFromImpl<Impl>;
+};
+
 interface UnionBuilder<Impl extends AbstractConstructor[]> {
     /** Existing inferred path — generics erased, impl mixin auto-applied. */
     <Factories extends Record<string, ValidVariant<AllRequired<Impl>>>>(
         factories: Factories,
-    ): {
-        [K in keyof Factories & string]: Factories[K] extends (
-            ...args: any[]
-        ) => any
-            ? (...args: Parameters<Factories[K]>) => ReturnType<
-                  Factories[K]
-              > & {
-                  [tag]: K;
-              } & ImplMixinFromImpl<Impl>
-            : () => Factories[K] & { [tag]: K } & ImplMixinFromImpl<Impl>;
-    };
+    ): UnionResult<BuildFactories<Factories, Impl>, Factories, Impl>;
 
     /**
      * Identity passthrough: factory types flow through unchanged.
@@ -792,7 +944,7 @@ interface UnionBuilder<Impl extends AbstractConstructor[]> {
         Factories extends Record<string, (...args: any[]) => AllRequired<Impl>>,
     >(
         factories: Factories,
-    ) => Factories;
+    ) => UnionResult<Factories, Factories, Impl>;
 }
 
 export function union<Impl extends AbstractConstructor[]>(
@@ -802,11 +954,7 @@ export function union<Impl extends AbstractConstructor[]>(
 /** No-impl form: union(factories) */
 export function union<Def extends Record<string, any>>(
     factories: Def,
-): {
-    [K in keyof Def & string]: Def[K] extends (...args: any[]) => any
-        ? (...args: Parameters<Def[K]>) => ReturnType<Def[K]> & { [tag]: K }
-        : () => Def[K] & { [tag]: K };
-};
+): UnionResult<BuildFactories<Def, []>, Def, []>;
 
 export function union(factoriesOrImpls: any): any {
     if (Array.isArray(factoriesOrImpls)) {
@@ -874,6 +1022,81 @@ function buildUnion(factories: Record<string, any>, impl: any[]): any {
 
     Object.defineProperty(result, unionFactoryTag, {
         value: id,
+        enumerable: false,
+        writable: false,
+        configurable: false,
+    });
+
+    // Stash the raw inputs so `.merge` / `.pick` / `.omit` can recombine them.
+    Object.defineProperty(result, factoriesTag, {
+        value: factories,
+        enumerable: false,
+        writable: false,
+        configurable: false,
+    });
+    Object.defineProperty(result, implsTag, {
+        value: impl,
+        enumerable: false,
+        writable: false,
+        configurable: false,
+    });
+
+    // Algebra — non-enumerable methods.
+    Object.defineProperty(result, "merge", {
+        value: function merge(arg: any): any {
+            if (Array.isArray(arg)) {
+                // Curried impl form: union.merge([Impl])(factories)
+                return (extraFactories: Record<string, any>) =>
+                    buildUnion({ ...factories, ...extraFactories }, [
+                        ...impl,
+                        ...arg,
+                    ]);
+            }
+            // Direct form: union.merge({ NewVariant: ... })
+            return buildUnion({ ...factories, ...arg }, impl);
+        },
+        enumerable: false,
+        writable: false,
+        configurable: false,
+    });
+    Object.defineProperty(result, "pick", {
+        value: function pick(...keys: string[]): any {
+            const picked: Record<string, any> = {};
+            for (const key of keys) {
+                if (key in factories) picked[key] = factories[key];
+            }
+            return buildUnion(picked, impl);
+        },
+        enumerable: false,
+        writable: false,
+        configurable: false,
+    });
+    Object.defineProperty(result, "omit", {
+        value: function omit(...keys: string[]): any {
+            const omitSet = new Set(keys);
+            const remaining: Record<string, any> = {};
+            for (const key of Object.keys(factories)) {
+                if (!omitSet.has(key)) remaining[key] = factories[key];
+            }
+            return buildUnion(remaining, impl);
+        },
+        enumerable: false,
+        writable: false,
+        configurable: false,
+    });
+    Object.defineProperty(result, "extend", {
+        value: function extend(arg: any): any {
+            if (Array.isArray(arg)) {
+                // Curried impl form: union.extend([Impl])(factories)
+                return (extraFactories: Record<string, any>) =>
+                    buildUnion({ ...factories, ...extraFactories }, [
+                        ...impl,
+                        ...arg,
+                    ]);
+            }
+            // Direct form: overlapping keys silently replace base variants.
+            return buildUnion({ ...factories, ...arg }, impl);
+        },
         enumerable: false,
         writable: false,
         configurable: false,
