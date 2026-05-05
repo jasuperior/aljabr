@@ -16,8 +16,12 @@ import { Trait } from "../union.ts";
 // type, and the trait hierarchy expresses the layered relationships
 // (Mappable → Bindable, etc.).
 //
-// Canonical traits all extend `Trait` with no payload requirement; ADT-specific
-// classes layer their own payload constraints if they need them.
+// **Payload requirements:** canonical traits intentionally carry no
+// `[requirements]` constraint so they can be extended by any ADT regardless
+// of payload shape (e.g. Effect's Idle has `thunk`, not `value`). Each
+// ADT-specific trait class re-declares `[requirements]` to assert its own
+// payload constraint — see Option's Mappable, Result's Thenable,
+// Validation's Combinable, Tree's Traversable.
 
 /**
  * The base trait for any type that supports the `map` operation:

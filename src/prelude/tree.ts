@@ -1,8 +1,10 @@
-import { union, type Variant } from "../union.ts";
+import { union, requirements, type Variant } from "../union.ts";
 import { match } from "../match.ts";
 import { Mappable } from "./traits.ts";
 
 export abstract class Traversable<T> extends Mappable<T> {
+    declare readonly [requirements]: { value: unknown };
+
     map<U>(fn: (value: T) => U): Tree<U> {
         return match(this as unknown as Tree<T>, {
             Leaf: ({ value }) => Tree.Leaf(fn(value)),

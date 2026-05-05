@@ -1,4 +1,4 @@
-import { union, type Variant } from "../union.ts";
+import { union, requirements, type Variant } from "../union.ts";
 import { match } from "../match.ts";
 import { Result } from "./result.ts";
 import { Bindable } from "./traits.ts";
@@ -13,6 +13,8 @@ type AllError<Vs extends readonly Validation<unknown, unknown>[]> =
     Vs[number] extends Validation<unknown, infer E> ? E : never
 
 export abstract class Combinable<T, E> extends Bindable<T> {
+    declare readonly [requirements]: { value: T };
+
     map<U>(fn: (value: T) => U): Validation<U, E> {
         return match(this as unknown as Validation<T, E>, {
             Unvalidated: () => Validation.Unvalidated(),

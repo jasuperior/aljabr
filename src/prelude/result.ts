@@ -1,4 +1,4 @@
-import { union, getTag, type Variant } from "../union.ts";
+import { union, getTag, requirements, type Variant } from "../union.ts";
 import { match } from "../match.ts";
 import { Bindable } from "./traits.ts";
 
@@ -10,6 +10,8 @@ type AnyError<Rs extends readonly Result<unknown, unknown>[]> =
     Rs[number] extends Result<unknown, infer E> ? E : never;
 
 export abstract class Thenable<T, E = never> extends Bindable<T> {
+    declare readonly [requirements]: { value: unknown };
+
     map<U>(fn: (value: T) => U): Result<U, E> {
         return match(this as unknown as Result<T, E>, {
             Accept: ({ value }) => Result.Accept(fn(value)),
