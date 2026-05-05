@@ -103,7 +103,7 @@ type WritableDerivedOptions<T> = {
  * @example Writable derived
  * const firstName = Signal.create("ada");
  * const lastName  = Signal.create("lovelace");
- * const full = Derived.create({
+ * const full = Derived.writable({
  *   get: () => `${firstName.get()} ${lastName.get()}`,
  *   set: (v) => { const [f, l] = v.split(" "); firstName.set(f); lastName.set(l); },
  * });
@@ -111,15 +111,16 @@ type WritableDerivedOptions<T> = {
  */
 export class Derived<T> {
     #fn: () => T;
-    #setter: ((value: T) => void) | undefined;
+    /** @internal — accessed by WritableDerived subclass for set-handler dispatch. */
+    protected _setter: ((value: T) => void) | undefined;
     #state: DerivedState<T> = DerivedState.Uncomputed();
     #computation: Computation;
     readonly #subscribers = new Map<Computation, () => void>();
     readonly #valueSubscribers = new Set<(value: T | null) => void>();
 
-    private constructor(fn: () => T, setter?: (value: T) => void) {
+    protected constructor(fn: () => T, setter?: (value: T) => void) {
         this.#fn = fn;
-        this.#setter = setter;
+        this._setter = setter;
 
         this.#computation = createOwner();
         this.#computation.dirty = () => {
@@ -147,16 +148,19 @@ export class Derived<T> {
     }
 
     /** Create a read-only derived value. */
-    static create<T>(fn: () => T): Derived<T>;
-    /** Create a derived value with a writable set-handler. */
-    static create<T>(options: WritableDerivedOptions<T>): Derived<T>;
-    static create<T>(
-        fnOrOptions: (() => T) | WritableDerivedOptions<T>,
-    ): Derived<T> {
-        if (typeof fnOrOptions === "function") {
-            return new Derived(fnOrOptions);
-        }
-        return new Derived(fnOrOptions.get, fnOrOptions.set);
+    static create<T>(fn: () => T): Derived<T> {
+        return new Derived(fn);
+    }
+
+    /**
+     * Create a writable derived value. Returns `WritableDerived<T>`, which
+     * extends `Derived<T>` and adds `.set(value)`. A variable typed
+     * `Derived<T>` accepts either factory's return; only `WritableDerived<T>`
+     * exposes the setter — calling `.set()` on a read-only `Derived<T>` is a
+     * compile-time error.
+     */
+    static writable<T>(options: WritableDerivedOptions<T>): WritableDerived<T> {
+        return new WritableDerived(options.get, options.set);
     }
 
     /**
@@ -221,21 +225,6 @@ export class Derived<T> {
         return this.#state.getValue();
     }
 
-    /**
-     * Write a value using the provided set-handler.
-     * The handler is responsible for updating the upstream Signals that feed
-     * into this derivation — the derived's own computation is not bypassed.
-     *
-     * @throws If this derived was created without a set-handler.
-     */
-    set(value: T): void {
-        if (!this.#setter) {
-            throw new Error(
-                "Derived is read-only — provide a set handler via Derived.create({ get, set }) to make it writable.",
-            );
-        }
-        this.#setter(value);
-    }
 
     /**
      * Register a synchronous callback that fires every time this derived
@@ -308,6 +297,34 @@ export class Derived<T> {
         const value = trackIn(this.#computation, this.#fn);
         this.#state = DerivedState.Computed(value);
         for (const cb of this.#valueSubscribers) cb(value);
+    }
+}
+
+/**
+ * A writable derived value: extends `Derived<T>` with a `.set(value)` method
+ * that delegates to the set-handler provided at construction.
+ *
+ * Created via `Derived.writable({ get, set })`. The handler is responsible for
+ * updating the upstream signals that feed into this derivation — the derived's
+ * own computation is not bypassed.
+ *
+ * A variable typed `Derived<T>` accepts either form; `.set()` is only callable
+ * when the static type is `WritableDerived<T>`. This is enforced at compile
+ * time, replacing the runtime "Derived is read-only" throw.
+ */
+export class WritableDerived<T> extends Derived<T> {
+    /** @internal — allow Derived.writable to invoke the protected constructor. */
+    constructor(fn: () => T, setter: (value: T) => void) {
+        super(fn, setter);
+    }
+
+    /**
+     * Write a value using the provided set-handler.
+     * The handler is responsible for updating the upstream Signals that feed
+     * into this derivation — the derived's own computation is not bypassed.
+     */
+    set(value: T): void {
+        this._setter!(value);
     }
 }
 

@@ -1,7 +1,7 @@
 /** @jsxImportSource aljabr/ui/canvas */
 
 import { union, match, type Union } from "aljabr";
-import { RefArray, Signal } from "aljabr/prelude";
+import { List, Signal } from "aljabr/prelude";
 import {
     createCanvasRenderer,
     Viewport,
@@ -55,8 +55,8 @@ function getOrigin(node: GraphNode): { x: number; y: number } {
 // ─── Reactive State (module-level — persists across tab switches) ──────────
 
 let nextId = 3;
-const nodes = RefArray.create<GraphNode>([]);
-const edges = RefArray.create<Edge>([]);
+const nodes = List.create<GraphNode>([]);
+const edges = List.create<Edge>([]);
 const selectedNodeId = Signal.create<number | null>(null);
 const draggingNodeId = Signal.create<number | null>(null);
 const dragOffset = Signal.create({ x: 0, y: 0 });
@@ -113,9 +113,22 @@ export function mountDiagram(canvasEl: HTMLCanvasElement): () => void {
                 const newPos = { x: world.x - off.x, y: world.y - off.y };
                 const updated = match(node, {
                     RectNode: (n) =>
-                        GraphNode.RectNode(n.id, newPos.x, newPos.y, n.w, n.h, n.label),
+                        GraphNode.RectNode(
+                            n.id,
+                            newPos.x,
+                            newPos.y,
+                            n.w,
+                            n.h,
+                            n.label,
+                        ),
                     CircleNode: (n) =>
-                        GraphNode.CircleNode(n.id, newPos.x, newPos.y, n.r, n.label),
+                        GraphNode.CircleNode(
+                            n.id,
+                            newPos.x,
+                            newPos.y,
+                            n.r,
+                            n.label,
+                        ),
                 });
                 nodes.set(index, updated);
             },
@@ -131,10 +144,13 @@ export function mountDiagram(canvasEl: HTMLCanvasElement): () => void {
 
     function EdgeLine({ edge }: { edge: Edge }) {
         const centerCoord = (dir: "from" | "to", coord: "x" | "y") => () =>
-            match(nodes.find((n) => getNodeId(n) === edge[`${dir}Id`]), {
-                Some: ({ value }) => getCenter(value)[coord],
-                None: () => 0,
-            });
+            match(
+                nodes.find((n) => getNodeId(n) === edge[`${dir}Id`]),
+                {
+                    Some: ({ value }) => getCenter(value)[coord],
+                    None: () => 0,
+                },
+            );
         return (
             <line
                 x1={centerCoord("from", "x")}
@@ -167,7 +183,9 @@ export function mountDiagram(canvasEl: HTMLCanvasElement): () => void {
                     textAlign="center"
                     verticalAlign="middle"
                     onPointerDown={(e) => startDrag(e, node)}
-                    onHitTest={(X, Y) => X >= x && X <= x + w && Y >= y && Y <= y + h}
+                    onHitTest={(X, Y) =>
+                        X >= x && X <= x + w && Y >= y && Y <= y + h
+                    }
                 >
                     {label}
                 </rect>
@@ -213,7 +231,16 @@ export function mountDiagram(canvasEl: HTMLCanvasElement): () => void {
     const onDblClick = (e: MouseEvent) => {
         const world = canvasToWorld(e);
         const id = nextId++;
-        nodes.push(GraphNode.RectNode(id, world.x - 50, world.y - 25, 100, 50, `Box ${id}`));
+        nodes.push(
+            GraphNode.RectNode(
+                id,
+                world.x - 50,
+                world.y - 25,
+                100,
+                50,
+                `Box ${id}`,
+            ),
+        );
         const selId = selectedNodeId.get();
         selectedNodeId.set(id);
         if (selId !== null && selId !== id) {

@@ -140,7 +140,7 @@ describe("Derived — writable form", () => {
     it("set() delegates to the provided handler", () => {
         const sig = Signal.create(0);
         const handler = vi.fn((v: number) => sig.set(v));
-        const d = Derived.create({ get: () => sig.get()!, set: handler });
+        const d = Derived.writable({ get: () => sig.get()!, set: handler });
 
         d.set(99);
         expect(handler).toHaveBeenCalledWith(99);
@@ -149,7 +149,7 @@ describe("Derived — writable form", () => {
 
     it("get() still reflects the upstream signal value", () => {
         const sig = Signal.create("ada");
-        const d = Derived.create({
+        const d = Derived.writable({
             get: () => sig.get()!.toUpperCase(),
             set: (v) => sig.set(v.toLowerCase()),
         });
@@ -160,9 +160,18 @@ describe("Derived — writable form", () => {
         expect(d.get()).toBe("GRACE");
     });
 
-    it("set() on a read-only derived throws an informative error", () => {
+    it("set() does not exist on a read-only Derived", () => {
         const d = Derived.create(() => 1);
-        expect(() => d.set(2)).toThrow(/read-only/);
+        // Compile-time error replaces runtime throw — .set is not present.
+        expect((d as { set?: unknown }).set).toBeUndefined();
+    });
+
+    it("WritableDerived is structurally a Derived (covariant assignment)", () => {
+        const sig = Signal.create(0);
+        const d = Derived.writable({ get: () => sig.get()!, set: (v) => sig.set(v) });
+        expect(d).toBeInstanceOf(Derived);
+        const asDerived: Derived<number> = d;
+        expect(asDerived.get()).toBe(0);
     });
 });
 

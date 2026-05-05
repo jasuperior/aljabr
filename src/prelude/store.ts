@@ -1,5 +1,5 @@
 import { Signal } from "./signal.ts";
-import { Derived } from "./derived.ts";
+import { Derived, WritableDerived } from "./derived.ts";
 import { Option } from "./option.ts";
 import { getCurrentComputation, untrack } from "./context.ts";
 import { DerivedArray, type IteratorOptions } from "./derived-array.ts";
@@ -938,14 +938,14 @@ export class Store<T extends object> {
      * - **Object path** → `Store<V>`, a scoped view into this Store's internal state.
      *   Mutations forward to the root's signal map. Repeated calls return the
      *   identical `Store<V>` instance.
-     * - **Primitive (leaf) path** → `Derived<V>`, a writable reactive handle.
+     * - **Primitive (leaf) path** → `WritableDerived<V>`, a reactive handle.
      *   Reads track through this Store's signal for `path`. Writes route back
-     *   through `set(path, value)`. Repeated calls return the same `Derived<V>`.
+     *   through `set(path, value)`. Repeated calls return the same instance.
      *
      * @example
      * const scoresStore = state.at("scores");    // List<number>
      * const userStore   = state.at("user");      // Store<{ name: string; age: number }>
-     * const nameD     = state.at("user.name"); // Derived<string>
+     * const nameD     = state.at("user.name"); // WritableDerived<string | undefined>
      * nameD.get();                             // tracked read
      * nameD.set("Bob");                        // forwards to state.set("user.name", "Bob")
      */
@@ -955,7 +955,7 @@ export class Store<T extends object> {
         ? List<PathValue<T, P>[number]>
         : PathValue<T, P> extends object
           ? Store<PathValue<T, P> & object>
-          : Derived<PathValue<T, P> | undefined> {
+          : WritableDerived<PathValue<T, P> | undefined> {
         const fullPath = resolveFullPath(this.#prefix, path as string);
         const cached = this.#holder.handles.get(fullPath);
         if (cached) return cached as any;
@@ -972,11 +972,11 @@ export class Store<T extends object> {
             // Object path — scoped sub-Store sharing the same holder
             handle = new Store(this.#holder, fullPath);
         } else {
-            // Primitive or undefined — writable Derived that routes through Store
+            // Primitive or undefined — WritableDerived that routes through Store
             // eslint-disable-next-line @typescript-eslint/no-this-alias
             const self = this;
             handle = untrack(() =>
-                Derived.create({
+                Derived.writable({
                     get: (): PathValue<T, P> | undefined => self.get(path),
                     set: (v: PathValue<T, P> | undefined) => {
                         if (v !== undefined) self.set(path, v);
