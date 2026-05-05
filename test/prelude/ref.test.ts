@@ -1024,3 +1024,12 @@ describe("Ref.subscribe (v0.3.10 Phase 5)", () => {
         expect(lastValue).toBeUndefined();
     });
 });
+
+describe("Ref Symbol.dispose (v0.3.10 Phase 5)", () => {
+    it("Symbol.dispose disposes the Ref (subsequent set is a no-op)", () => {
+        const r = Ref.create({ x: 1 });
+        r[Symbol.dispose]();
+        r.set("x", 99);
+        expect(r.peek("x")).toBe(1);
+    });
+});

@@ -210,6 +210,11 @@ export class Dispatcher<T, S, Cmd> {
         this.#valueSubscribers.clear();
     }
 
+    /** TC39 explicit resource management — equivalent to `dispose()`. */
+    [Symbol.dispose](): void {
+        this.dispose();
+    }
+
     /** @internal */
     unsubscribe(computation: Computation): void {
         this.#subscribers.delete(computation);

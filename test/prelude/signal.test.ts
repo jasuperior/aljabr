@@ -364,3 +364,22 @@ describe("Signal.getOr (v0.3.10 Phase 5)", () => {
         expect(s.getOr(99)).toBe(99);
     });
 });
+
+describe("Signal Symbol.dispose (v0.3.10 Phase 5)", () => {
+    it("Symbol.dispose disposes the signal", () => {
+        const s = Signal.create(7);
+        s[Symbol.dispose]();
+        expect(s.peek()).toBeNull();
+    });
+
+    it("works with `using` declaration", () => {
+        let captured: Signal<number> | null = null;
+        {
+            using s = Signal.create(42);
+            captured = s;
+            expect(s.peek()).toBe(42);
+        }
+        // After block exit, dispose was called
+        expect(captured!.peek()).toBeNull();
+    });
+});

@@ -220,7 +220,14 @@ export const Effect = Object.assign(
 // watchEffect — reactive effect runner
 // ---------------------------------------------------------------------------
 
-type WatchHandle = { stop(): void };
+type WatchHandle = {
+    /** Stop the reactive effect, abort any in-flight thunk, and clean up. */
+    stop(): void;
+    /** Alias for {@link stop} — uniform disposal name across the library. */
+    dispose(): void;
+    /** TC39 explicit resource management — equivalent to {@link dispose}. */
+    [Symbol.dispose](): void;
+};
 
 type WatchOptions<E = never> = AsyncOptions<E> & {
     /**
@@ -426,11 +433,15 @@ export function watchEffect<T, E = never>(
         }
     })();
 
+    const stop = (): void => {
+        cancelRetryTimer();
+        currentController?.abort();
+        computation.dispose();
+    };
+
     return {
-        stop() {
-            cancelRetryTimer();
-            currentController?.abort();
-            computation.dispose();
-        },
+        stop,
+        dispose: stop,
+        [Symbol.dispose]: stop,
     };
 }

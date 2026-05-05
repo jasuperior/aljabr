@@ -692,6 +692,11 @@ export class RefArray<T> {
         this.#holder.valueSubscribers.clear();
     }
 
+    /** TC39 explicit resource management — equivalent to `dispose()`. */
+    [Symbol.dispose](): void {
+        this.dispose();
+    }
+
     // -------------------------------------------------------------------------
     // Internal
     // -------------------------------------------------------------------------
@@ -1106,6 +1111,11 @@ export class Ref<T extends object> {
             for (const cb of subs) cb(undefined);
         }
         this.#holder.valueSubscribers.clear();
+    }
+
+    /** TC39 explicit resource management — equivalent to `dispose()`. */
+    [Symbol.dispose](): void {
+        this.dispose();
     }
 
     /**

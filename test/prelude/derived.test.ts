@@ -633,3 +633,18 @@ describe("Derived.subscribe (v0.3.10 Phase 5)", () => {
         expect(count).toBe(1);
     });
 });
+
+describe("Derived/AsyncDerived Symbol.dispose (v0.3.10 Phase 5)", () => {
+    it("Derived[Symbol.dispose]() disposes the derived", () => {
+        const d = Derived.create(() => 1);
+        d.get();
+        d[Symbol.dispose]();
+        expect(getTag(d.peekState())).toBe("Disposed");
+    });
+
+    it("AsyncDerived[Symbol.dispose]() disposes the async derived", () => {
+        const d = AsyncDerived.create(async () => 1);
+        d[Symbol.dispose]();
+        expect(getTag(d.peekState())).toBe("Disposed");
+    });
+});

@@ -297,3 +297,15 @@ describe("Dispatcher.subscribe (v0.3.10 Phase 5)", () => {
         expect(lastValue).toBeNull();
     });
 });
+
+describe("Dispatcher Symbol.dispose (v0.3.10 Phase 5)", () => {
+    it("Symbol.dispose disposes the dispatcher", () => {
+        const d = Dispatcher.create<number, number, number>(0, {
+            extract: (s) => s,
+            apply: (current, cmd) =>
+                Validation.Valid({ next: cmd, inverse: current }),
+        });
+        d[Symbol.dispose]();
+        expect(() => d.dispatch(1)).toThrow(/disposed/);
+    });
+});

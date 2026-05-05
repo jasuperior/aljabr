@@ -290,6 +290,11 @@ export class Signal<T, S = never> {
         this.#valueSubscribers.clear();
     }
 
+    /** TC39 explicit resource management — equivalent to `dispose()`. */
+    [Symbol.dispose](): void {
+        this.dispose();
+    }
+
     /** @internal Remove a computation from this signal's subscriber set. */
     unsubscribe(computation: Computation): void {
         this.#subscribers.delete(computation);
