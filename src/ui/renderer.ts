@@ -9,7 +9,7 @@ import {
 } from "../prelude/context.ts";
 import { type ScopeHandle, Scope, runInScope } from "../prelude/scope.ts";
 import { DerivedArray } from "../prelude/derived-array.ts";
-import { RefArray } from "../prelude/ref.ts";
+import { List } from "../prelude/store.ts";
 import type { RendererHost, RendererProtocol } from "./types.ts";
 import { type Child, type ViewNode, view } from "./view-node.ts";
 
@@ -134,7 +134,7 @@ function reconcileChild<N, E extends N>(
         return;
     }
 
-    if (child instanceof DerivedArray || child instanceof RefArray) {
+    if (child instanceof DerivedArray || child instanceof List) {
         mountDerivedArray(host, schedule, child, parent, anchor, owner);
         return;
     }
@@ -296,7 +296,7 @@ function mountReactiveRegion<N, E extends N>(
 }
 
 // ---------------------------------------------------------------------------
-// Reactive array reconciliation — DerivedArray<Child> / RefArray<Child>
+// Reactive array reconciliation — DerivedArray<Child> / List<Child>
 //
 // Phase A (positional): each index gets its own owner scope subscribing only
 // to arr.get(i). The outer lengthOwner subscribes to arr.length() and

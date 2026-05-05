@@ -2,7 +2,7 @@ import { describe, it, expect, vi } from "vitest";
 import { Dispatcher } from "../../src/prelude/dispatcher.ts";
 import { CommandError } from "../../src/prelude/command-error.ts";
 import { Validation } from "../../src/prelude/validation.ts";
-import { watchEffect } from "../../src/prelude/effect.ts";
+import { watch } from "../../src/prelude/effect.ts";
 import { union, getTag, type Union } from "../../src/union.ts";
 import { match } from "../../src/match.ts";
 
@@ -85,7 +85,7 @@ describe("dispatch — Valid", () => {
     it("notifies dependents", async () => {
         const d = Dispatcher.create(0, counterProtocol);
         const seen: string[] = [];
-        const handle = watchEffect(
+        const handle = watch(
             async () => d.get() ?? 0,
             (result) => {
                 seen.push(getTag(result));
@@ -94,7 +94,7 @@ describe("dispatch — Valid", () => {
         await settle();
         d.dispatch(Counter.Increment());
         expect(seen).toContain("Stale");
-        handle.stop();
+        handle.dispose();
     });
 });
 
@@ -108,12 +108,12 @@ describe("dispatch — Invalid", () => {
     it("does not notify dependents on rejection", async () => {
         const d = Dispatcher.create(0, counterProtocol);
         const cb = vi.fn();
-        const handle = watchEffect(async () => d.get() ?? 0, cb);
+        const handle = watch(async () => d.get() ?? 0, cb);
         await settle();
         cb.mockClear();
         d.dispatch(Counter.Reject());
         expect(cb).not.toHaveBeenCalled();
-        handle.stop();
+        handle.dispose();
     });
 
     it("returns the Invalid validation with errors", () => {
@@ -150,7 +150,7 @@ describe("tracked vs untracked reads", () => {
     it("peekState does not register a dependency", async () => {
         const d = Dispatcher.create(0, counterProtocol);
         const cb = vi.fn();
-        const handle = watchEffect(async () => {
+        const handle = watch(async () => {
             d.peekState();
             return 0;
         }, cb);
@@ -158,13 +158,13 @@ describe("tracked vs untracked reads", () => {
         cb.mockClear();
         d.dispatch(Counter.Increment());
         expect(cb).not.toHaveBeenCalled();
-        handle.stop();
+        handle.dispose();
     });
 
     it("state() registers a dependency", async () => {
         const d = Dispatcher.create(0, counterProtocol);
         const seen: string[] = [];
-        const handle = watchEffect(
+        const handle = watch(
             async () => {
                 d.state();
                 return 0;
@@ -175,7 +175,7 @@ describe("tracked vs untracked reads", () => {
         seen.length = 0;
         d.dispatch(Counter.Increment());
         expect(seen).toContain("Stale");
-        handle.stop();
+        handle.dispose();
     });
 });
 

@@ -1,6 +1,6 @@
 import { union, type Variant } from "../union.ts";
 import { DerivedArray } from "../prelude/derived-array.ts";
-import { RefArray } from "../prelude/ref.ts";
+import { List } from "../prelude/store.ts";
 
 // ---------------------------------------------------------------------------
 // Explicit variant payload types
@@ -109,7 +109,7 @@ export type ViewNode =
  * | `ViewNode` | Mounted as-is |
  * | `() => Child` | **Reactive region** — re-evaluated when dependencies change |
  * | `DerivedArray<any>` | **Reactive list** — re-rendered when the array mutates |
- * | `RefArray<any>` | **Reactive list** — re-rendered when the array mutates |
+ * | `List<any>` | **Reactive list** — re-rendered when the array mutates |
  * | `{ get(): Child }` | **Readable shorthand** — normalized to `() => r.get()` by `view()` |
  *
  * @example
@@ -135,7 +135,7 @@ export type Child =
     | ViewNode
     | (() => Child)
     | DerivedArray<any> // invariant — accepts any DerivedArray regardless of item type
-    | RefArray<any>      // invariant — accepts any RefArray regardless of item type
+    | List<any>      // invariant — accepts any List regardless of item type
     | { get(): Child };  // any readable (Signal, Derived, custom) — normalized to () => r.get() in view()
 
 // ---------------------------------------------------------------------------
@@ -174,7 +174,7 @@ function isReadable(v: unknown): v is { get(): unknown } {
         v !== null &&
         typeof v === "object" &&
         !(v instanceof DerivedArray) &&
-        !(v instanceof RefArray) &&
+        !(v instanceof List) &&
         typeof (v as Record<string, unknown>).get === "function"
     );
 }

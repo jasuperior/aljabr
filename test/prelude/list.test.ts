@@ -1,5 +1,5 @@
 import { describe, expect, it, expectTypeOf, vi } from "vitest";
-import { Ref, RefArray } from "../../src/prelude/ref";
+import { Store, List } from "../../src/prelude/store";
 import { DerivedArray } from "../../src/prelude/derived-array.ts";
 import { Derived } from "../../src/prelude/derived";
 import { batch, createOwner, trackIn } from "../../src/prelude/context";
@@ -10,12 +10,12 @@ import { batch, createOwner, trackIn } from "../../src/prelude/context";
 
 type Item = { id: number; name: string };
 
-function makeNumberArray(): RefArray<number> {
-    return Ref.create([1, 2, 3, 4, 5]);
+function makeNumberArray(): List<number> {
+    return Store.create([1, 2, 3, 4, 5]);
 }
 
-function makeObjectArray(): RefArray<Item> {
-    return Ref.create([
+function makeObjectArray(): List<Item> {
+    return Store.create([
         { id: 1, name: "Alice" },
         { id: 2, name: "Bob" },
         { id: 3, name: "Carol" },
@@ -23,18 +23,18 @@ function makeObjectArray(): RefArray<Item> {
 }
 
 // ---------------------------------------------------------------------------
-// Ref.create(T[]) → RefArray<T>
+// Store.create(T[]) → List<T>
 // ---------------------------------------------------------------------------
 
-describe("Ref.create(T[])", () => {
-    it("returns RefArray when passed an array", () => {
-        const arr = Ref.create([1, 2, 3]);
-        expect(arr).toBeInstanceOf(RefArray);
+describe("Store.create(T[])", () => {
+    it("returns List when passed an array", () => {
+        const arr = Store.create([1, 2, 3]);
+        expect(arr).toBeInstanceOf(List);
     });
 
-    it("returns Ref when passed an object", () => {
-        const ref = Ref.create({ x: 1 });
-        expect(ref).toBeInstanceOf(Ref);
+    it("returns Store when passed an object", () => {
+        const ref = Store.create({ x: 1 });
+        expect(ref).toBeInstanceOf(Store);
     });
 
     it("isUnset is false after creation with array", () => {
@@ -46,7 +46,7 @@ describe("Ref.create(T[])", () => {
         const owner = createOwner(null);
         let disposed = false;
         trackIn(owner, () => {
-            const arr = Ref.create([1, 2, 3]);
+            const arr = Store.create([1, 2, 3]);
             const orig = arr.dispose.bind(arr);
             arr.dispose = () => {
                 disposed = true;
@@ -57,26 +57,26 @@ describe("Ref.create(T[])", () => {
         expect(disposed).toBe(true);
     });
 
-    it("type-level: Ref.create(T[]) returns RefArray<T>", () => {
-        expectTypeOf(Ref.create([1, 2, 3])).toEqualTypeOf<RefArray<number>>();
-        expectTypeOf(Ref.create(["a", "b"])).toEqualTypeOf<RefArray<string>>();
+    it("type-level: Store.create(T[]) returns List<T>", () => {
+        expectTypeOf(Store.create([1, 2, 3])).toEqualTypeOf<List<number>>();
+        expectTypeOf(Store.create(["a", "b"])).toEqualTypeOf<List<string>>();
     });
 });
 
 // ---------------------------------------------------------------------------
-// RefArray.create
+// List.create
 // ---------------------------------------------------------------------------
 
-describe("RefArray.create", () => {
-    it("creates a RefArray with initial items", () => {
-        const arr = RefArray.create([10, 20, 30]);
+describe("List.create", () => {
+    it("creates a List with initial items", () => {
+        const arr = List.create([10, 20, 30]);
         expect(arr.get(0)).toBe(10);
         expect(arr.get(1)).toBe(20);
         expect(arr.get(2)).toBe(30);
     });
 
     it("returns undefined for out-of-bounds index", () => {
-        const arr = RefArray.create([1, 2]);
+        const arr = List.create([1, 2]);
         expect(arr.get(5)).toBeUndefined();
     });
 });
@@ -164,7 +164,7 @@ describe("refArray.get() — no-arg whole-array", () => {
     });
 
     it("returns [] for an empty array", () => {
-        const arr = RefArray.create<number>([]);
+        const arr = List.create<number>([]);
         expect(arr.get()).toEqual([]);
     });
 });
@@ -330,13 +330,13 @@ describe("refArray.pop", () => {
     it("removes and returns the last item", () => {
         const arr = makeNumberArray();
         const last = arr.pop();
-        expect(last.getOrElse(-1)).toBe(5);
+        expect(last.getOr(-1)).toBe(5);
         expect(arr.length()).toBe(4);
     });
 
     it("returns None on empty array", () => {
-        const arr = RefArray.create<number>([]);
-        expect(arr.pop().getOrElse(-1)).toBe(-1);
+        const arr = List.create<number>([]);
+        expect(arr.pop().getOr(-1)).toBe(-1);
     });
 
     it("notifies subscribers at the removed index", () => {
@@ -448,59 +448,59 @@ describe("refArray.move", () => {
 });
 
 // ---------------------------------------------------------------------------
-// Ref.at(path) → RefArray for array paths
+// Store.at(path) → List for array paths
 // ---------------------------------------------------------------------------
 
-describe("Ref.at(path) → RefArray", () => {
+describe("Store.at(path) → List", () => {
     type State = { items: number[]; user: { name: string } };
 
-    function makeState(): Ref<State> {
-        return Ref.create<State>({
+    function makeState(): Store<State> {
+        return Store.create<State>({
             items: [1, 2, 3],
             user: { name: "Alice" },
         });
     }
 
-    it("returns RefArray for an array path", () => {
+    it("returns List for an array path", () => {
         const state = makeState();
         const items = state.at("items");
-        expect(items).toBeInstanceOf(RefArray);
+        expect(items).toBeInstanceOf(List);
     });
 
-    it("returns Ref for an object path", () => {
+    it("returns Store for an object path", () => {
         const state = makeState();
         const user = state.at("user");
-        expect(user).toBeInstanceOf(Ref);
+        expect(user).toBeInstanceOf(Store);
     });
 
-    it("the RefArray reads elements correctly", () => {
+    it("the List reads elements correctly", () => {
         const state = makeState();
         const items = state.at("items");
         expect(items.get(0)).toBe(1);
         expect(items.get(2)).toBe(3);
     });
 
-    it("the RefArray length reflects parent state", () => {
+    it("the List length reflects parent state", () => {
         const state = makeState();
         const items = state.at("items");
         expect(items.length()).toBe(3);
     });
 
-    it("push on the RefArray updates parent Ref", () => {
+    it("push on the List updates parent Store", () => {
         const state = makeState();
         const items = state.at("items");
         items.push(4);
         expect(state.get("items")).toEqual([1, 2, 3, 4]);
     });
 
-    it("pop on the RefArray updates parent Ref", () => {
+    it("pop on the List updates parent Store", () => {
         const state = makeState();
         const items = state.at("items");
         items.pop();
         expect(state.get("items")).toEqual([1, 2]);
     });
 
-    it("parent Ref.push notifies the RefArray's length signal", () => {
+    it("parent Store.push notifies the List's length signal", () => {
         const state = makeState();
         const items = state.at("items");
 
@@ -519,15 +519,15 @@ describe("Ref.at(path) → RefArray", () => {
         expect(state.at("items")).toBe(state.at("items"));
     });
 
-    it("type-level: at('items') returns RefArray<number>", () => {
+    it("type-level: at('items') returns List<number>", () => {
         const state = makeState();
-        expectTypeOf(state.at("items")).toEqualTypeOf<RefArray<number>>();
+        expectTypeOf(state.at("items")).toEqualTypeOf<List<number>>();
     });
 
-    it("type-level: at('user') returns Ref<State['user']>", () => {
+    it("type-level: at('user') returns Store<State['user']>", () => {
         const state = makeState();
         type UserType = State["user"];
-        expectTypeOf(state.at("user")).toEqualTypeOf<Ref<UserType>>();
+        expectTypeOf(state.at("user")).toEqualTypeOf<Store<UserType>>();
     });
 });
 
@@ -535,7 +535,7 @@ describe("Ref.at(path) → RefArray", () => {
 // batch interactions
 // ---------------------------------------------------------------------------
 
-describe("RefArray + batch", () => {
+describe("List + batch", () => {
     it("batches multiple mutations into one notification pass", () => {
         const arr = makeNumberArray();
         const comp = createOwner(null);
@@ -562,7 +562,7 @@ describe("RefArray + batch", () => {
 // dispose
 // ---------------------------------------------------------------------------
 
-describe("RefArray.dispose", () => {
+describe("List.dispose", () => {
     it("no-op on mutations after dispose", () => {
         const arr = makeNumberArray();
         arr.dispose();
@@ -571,21 +571,21 @@ describe("RefArray.dispose", () => {
         expect(arr.length()).toBe(5);
     });
 
-    it("sub-RefArray from Ref.at does not dispose the shared holder", () => {
+    it("sub-List from Store.at does not dispose the shared holder", () => {
         type S = { items: number[] };
-        const state = Ref.create<S>({ items: [1, 2, 3] });
+        const state = Store.create<S>({ items: [1, 2, 3] });
         const items = state.at("items");
-        items.dispose(); // sub-RefArray — no-op
-        // Parent Ref is still functional
+        items.dispose(); // sub-List — no-op
+        // Parent Store is still functional
         expect(state.get("items")).toEqual([1, 2, 3]);
     });
 });
 
 // ---------------------------------------------------------------------------
-// iterator methods on RefArray (smoke tests — deep tests in derived-array suite)
+// iterator methods on List (smoke tests — deep tests in derived-array suite)
 // ---------------------------------------------------------------------------
 
-describe("RefArray iterator methods", () => {
+describe("List iterator methods", () => {
     it("map returns DerivedArray with transformed items", () => {
         const arr = makeNumberArray();
         const doubled = arr.map((x) => x * 2);
@@ -604,7 +604,7 @@ describe("RefArray iterator methods", () => {
     });
 
     it("sort returns a sorted DerivedArray", () => {
-        const arr = RefArray.create([3, 1, 4, 1, 5, 9]);
+        const arr = List.create([3, 1, 4, 1, 5, 9]);
         const sorted = arr.sort((a, b) => a - b);
         expect(sorted.get(0)).toBe(1);
         expect(sorted.get(5)).toBe(9);
@@ -647,21 +647,21 @@ describe("RefArray iterator methods", () => {
     });
 });
 
-describe("RefArray.getOr (v0.3.10 Phase 5)", () => {
+describe("List.getOr (v0.3.10 Phase 5)", () => {
     it("returns the item when index is in range", () => {
-        const r = Ref.create([10, 20, 30]);
+        const r = Store.create([10, 20, 30]);
         expect(r.getOr(1, -1)).toBe(20);
     });
 
     it("returns the default when index is out of range", () => {
-        const r = Ref.create([10, 20, 30]);
+        const r = Store.create([10, 20, 30]);
         expect(r.getOr(99, -1)).toBe(-1);
     });
 });
 
-describe("RefArray.subscribe (v0.3.10 Phase 5)", () => {
+describe("List.subscribe (v0.3.10 Phase 5)", () => {
     it("fires on push/pop/splice with the current snapshot", () => {
-        const r = Ref.create([1, 2, 3]);
+        const r = Store.create([1, 2, 3]);
         const seen: number[][] = [];
         r.subscribe((arr) => seen.push([...arr]));
         r.push(4);
@@ -670,7 +670,7 @@ describe("RefArray.subscribe (v0.3.10 Phase 5)", () => {
     });
 
     it("unsubscribe stops further callbacks", () => {
-        const r = Ref.create([1, 2]);
+        const r = Store.create([1, 2]);
         let count = 0;
         const unsub = r.subscribe(() => { count++; });
         r.push(3);

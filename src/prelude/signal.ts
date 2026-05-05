@@ -5,6 +5,12 @@ import {
     getCurrentComputation,
     scheduleNotification,
 } from "./context.ts";
+import {
+    _createPersistedSignal,
+    _persistSignal,
+    type PersistOptions,
+} from "./persist.ts";
+import type { WatchHandle } from "./effect.ts";
 
 // ---------------------------------------------------------------------------
 // SignalState<T> — immutable lifecycle union (the former Signal<T>)
@@ -150,6 +156,36 @@ export class Signal<T, S = never> {
     }
 
     /**
+     * Create a `Signal<T>` that is automatically persisted to and rehydrated
+     * from an external store (localStorage by default).
+     *
+     * On creation the store is read; if a persisted value exists, the signal
+     * starts `Active` with the stored value. Every subsequent `set()` is
+     * mirrored to the store via an internal `watch`.
+     *
+     * @example
+     * const theme = Signal.persisted<"light" | "dark">("light", { key: "theme" });
+     * theme.set("dark"); // written to localStorage["theme"]
+     * // On next page load, theme.peek() === "dark"
+     */
+    static persisted<T>(
+        initialValue: T,
+        options: PersistOptions<T>,
+    ): Signal<T> {
+        return _createPersistedSignal(initialValue, options);
+    }
+
+    /**
+     * Mirror this signal to an external store for the lifetime of the returned
+     * `WatchHandle`. Unlike {@link Signal.persisted}, this does not rehydrate —
+     * use it when you already have a signal whose value you want to mirror
+     * out-of-band. Dispose the returned handle to stop syncing.
+     */
+    persist(options: PersistOptions<T>): WatchHandle {
+        return _persistSignal(this as unknown as Signal<T>, options);
+    }
+
+    /**
      * The current state. Untracked — safe to read outside reactive contexts.
      * Pattern-match this with `match`.
      *
@@ -195,7 +231,7 @@ export class Signal<T, S = never> {
      * context (e.g. to handle `Invalid` errors, `Unset`, etc.).
      *
      * @example
-     * watchEffect(async () => {
+     * watch(async () => {
      *   return match(field.state(), {
      *     Unvalidated: () => null,
      *     Valid:       ({ value }) => submit(value),
@@ -265,7 +301,7 @@ export class Signal<T, S = never> {
      *
      * Unlike `get()`, this does not register a reactive dependency — it is a
      * raw push subscription intended for bridging signals into external systems
-     * (e.g. `Ref.bind()`).
+     * (e.g. `Store.bind()`).
      */
     subscribe(callback: (value: T | null) => void): () => void {
         this.#valueSubscribers.add(callback);

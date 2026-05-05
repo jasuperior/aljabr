@@ -7,13 +7,13 @@ import { type Computation, createOwner, trackIn, untrack } from "./context.ts";
 // ---------------------------------------------------------------------------
 
 /**
- * Options for reactive iterator methods (`filter`, `sort`) on `RefArray` and
+ * Options for reactive iterator methods (`filter`, `sort`) on `List` and
  * `DerivedArray`.
  *
  * Providing a `key` function enables surgical per-index invalidation: only
  * the output positions whose keyed item changed are notified. Without a key,
  * identity falls back to reference equality (`item => item`), which works for
- * primitives but breaks for objects under `Ref`'s immutable-update model.
+ * primitives but breaks for objects under `Store`'s immutable-update model.
  *
  * **Dev-mode warnings are emitted when:**
  * - No key is provided and items are objects (reference equality is unreliable)
@@ -37,7 +37,7 @@ function isPrimitiveLike(v: unknown): boolean {
 
 /**
  * A read-only, per-index reactive view of an array. Returned by `map`,
- * `filter`, and `sort` on `RefArray` and `DerivedArray`.
+ * `filter`, and `sort` on `List` and `DerivedArray`.
  *
  * Each index is backed by a dedicated `Signal<T | undefined>`. When the
  * underlying source changes, only the positions whose values actually changed
@@ -48,9 +48,9 @@ function isPrimitiveLike(v: unknown): boolean {
  * Iterator methods are chainable — each call returns a new `DerivedArray`.
  *
  * @example
- * const state = Ref.create({ items: [1, 2, 3, 4, 5] });
+ * const state = Store.create({ items: [1, 2, 3, 4, 5] });
  *
- * const evens = state.at("items")          // RefArray<number>
+ * const evens = state.at("items")          // List<number>
  *     .filter(x => x % 2 === 0);           // DerivedArray<number>
  *
  * const doubled = state.at("items")
@@ -289,7 +289,7 @@ export class DerivedArray<T> {
      *
      * Provide a `key` function via `opts` for surgical per-index invalidation
      * when items are objects. Without a key, reference equality is used, which
-     * breaks under `Ref`'s immutable-update model.
+     * breaks under `Store`'s immutable-update model.
      */
     filter(fn: (item: T, i: number) => boolean, opts?: IteratorOptions<T>): DerivedArray<T> {
         const sourceKey = !this.#keyIsDefault ? this.#keyFn : null;
@@ -378,7 +378,7 @@ export class DerivedArray<T> {
                 if (hasObjects) {
                     console.warn(
                         "[aljabr] DerivedArray: no key function provided for an object array. " +
-                        "Reference equality is unreliable under Ref's immutable-update model. " +
+                        "Reference equality is unreliable under Store's immutable-update model. " +
                         "Provide a key via { key: (item) => item.id }.",
                     );
                     this.#keyDefaultWarnEmitted = true;

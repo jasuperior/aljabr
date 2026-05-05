@@ -54,13 +54,13 @@ describe("Option.flatMap", () => {
     });
 });
 
-describe("Option.getOrElse", () => {
+describe("Option.getOr", () => {
     it("returns value for Some", () => {
-        expect(Option.Some("hello").getOrElse("default")).toBe("hello");
+        expect(Option.Some("hello").getOr("default")).toBe("hello");
     });
     it("returns default for None", () => {
         const n: Option<string> = Option.None();
-        expect(n.getOrElse("fallback")).toBe("fallback");
+        expect(n.getOr("fallback")).toBe("fallback");
     });
 });
 

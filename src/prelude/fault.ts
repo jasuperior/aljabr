@@ -4,7 +4,7 @@ import { union, Trait, type Variant } from "../union.ts";
 // Fault<E> — flat error union for async reactive pipelines
 // ---------------------------------------------------------------------------
 //
-// Three variants cover every failure mode in AsyncDerived and watchEffect:
+// Three variants cover every failure mode in AsyncDerived and watch:
 //
 //   Fail<E>      — expected domain error; user threw Fault.Fail(myError)
 //   Defect       — unexpected runtime panic; any unrecognised throw

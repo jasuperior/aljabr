@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import { DerivedArray } from "../../src/prelude/derived-array.ts";
-import { Ref, RefArray } from "../../src/prelude/ref";
+import { Store, List } from "../../src/prelude/store";
 import { Derived } from "../../src/prelude/derived";
 import { batch, createOwner, trackIn } from "../../src/prelude/context";
 
@@ -10,8 +10,8 @@ import { batch, createOwner, trackIn } from "../../src/prelude/context";
 
 type Item = { id: number; value: number };
 
-function makeNumbers(): RefArray<number> {
-    return Ref.create([1, 2, 3, 4, 5]);
+function makeNumbers(): List<number> {
+    return Store.create([1, 2, 3, 4, 5]);
 }
 
 // ---------------------------------------------------------------------------
@@ -355,7 +355,7 @@ describe("DerivedArray.filter", () => {
     });
 
     it("with key: surgical update when keyed item moves to different position", () => {
-        const arr = Ref.create([
+        const arr = Store.create([
             { id: 1, value: 10 },
             { id: 2, value: 20 },
             { id: 3, value: 30 },
@@ -393,14 +393,14 @@ describe("DerivedArray.filter", () => {
 
 describe("DerivedArray.sort", () => {
     it("sorts elements initially", () => {
-        const arr = RefArray.create([3, 1, 4, 1, 5, 9, 2, 6]);
+        const arr = List.create([3, 1, 4, 1, 5, 9, 2, 6]);
         const sorted = arr.sort((a, b) => a - b);
         expect(sorted.get(0)).toBe(1);
         expect(sorted.get(7)).toBe(9);
     });
 
     it("updates when source changes", () => {
-        const arr = RefArray.create([3, 1, 2]);
+        const arr = List.create([3, 1, 2]);
         const sorted = arr.sort((a, b) => a - b); // [1,2,3]
 
         arr.push(0); // source: [3,1,2,0] → sorted: [0,1,2,3]
@@ -410,7 +410,7 @@ describe("DerivedArray.sort", () => {
     });
 
     it("notifies length subscribers when size changes", () => {
-        const arr = RefArray.create([3, 1, 2]);
+        const arr = List.create([3, 1, 2]);
         const sorted = arr.sort((a, b) => a - b);
 
         const comp = createOwner(null);
@@ -424,7 +424,7 @@ describe("DerivedArray.sort", () => {
     });
 
     it("with key: sorts objects stably by key", () => {
-        const arr = Ref.create([
+        const arr = Store.create([
             { id: 3, name: "Charlie" },
             { id: 1, name: "Alice" },
             { id: 2, name: "Bob" },
@@ -439,7 +439,7 @@ describe("DerivedArray.sort", () => {
     });
 
     it("is chainable: sort().map()", () => {
-        const arr = RefArray.create([3, 1, 2]);
+        const arr = List.create([3, 1, 2]);
         const result = arr
             .sort((a, b) => a - b) // [1,2,3]
             .map(x => x * 10);     // [10,20,30]
@@ -553,7 +553,7 @@ describe("DerivedArray dev warnings", () => {
     it("emits a warning when no key is provided for an object array filter", () => {
         const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
 
-        const arr = Ref.create([{ id: 1 }, { id: 2 }]);
+        const arr = Store.create([{ id: 1 }, { id: 2 }]);
         const filtered = arr.filter(item => item.id > 0); // no key → default identity
         // Trigger the computation (access items to force first update)
         filtered.get(0);
@@ -569,7 +569,7 @@ describe("DerivedArray dev warnings", () => {
     it("emits a warning for duplicate keys", () => {
         const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
 
-        const arr = RefArray.create([1, 2, 1, 3]); // duplicate 1
+        const arr = List.create([1, 2, 1, 3]); // duplicate 1
         const sorted = arr.sort((a, b) => a - b, { key: x => x }); // key = identity → duplicate 1
         sorted.get(0); // trigger initial
         arr.push(1); // trigger re-sort with more duplicates

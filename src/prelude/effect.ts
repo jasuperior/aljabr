@@ -217,13 +217,11 @@ export const Effect = Object.assign(
 );
 
 // ---------------------------------------------------------------------------
-// watchEffect — reactive effect runner
+// watch — reactive effect runner
 // ---------------------------------------------------------------------------
 
-type WatchHandle = {
+export type WatchHandle = {
     /** Stop the reactive effect, abort any in-flight thunk, and clean up. */
-    stop(): void;
-    /** Alias for {@link stop} — uniform disposal name across the library. */
     dispose(): void;
     /** TC39 explicit resource management — equivalent to {@link dispose}. */
     [Symbol.dispose](): void;
@@ -255,7 +253,7 @@ type WatchOptions<E = never> = AsyncOptions<E> & {
  *
  * @example Lazy (default)
  * const src = Signal.create("hello");
- * const handle = watchEffect(
+ * const handle = watch(
  *   async (signal) => fetchData(src.get()!, signal),
  *   (result) => match(result, {
  *     Done:   ({ value }) => console.log(value),
@@ -269,7 +267,7 @@ type WatchOptions<E = never> = AsyncOptions<E> & {
  * );
  *
  * @example Eager with retry
- * const handle = watchEffect(
+ * const handle = watch(
  *   async (signal) => fetch("/api/data", { signal }).then(r => r.json()),
  *   (result) => match(result, {
  *     Done:   ({ value }) => setState(value),
@@ -279,7 +277,7 @@ type WatchOptions<E = never> = AsyncOptions<E> & {
  *   { eager: true, schedule: Schedule.Exponential({ initialDelay: 100, maxDelay: 30_000 }) },
  * );
  */
-export function watchEffect<T, E = never>(
+export function watch<T, E = never>(
     thunk: (signal: AbortSignal, scope: ScopeHandle) => Promise<T>,
     onChange: (result: Done<T, E> | Stale<T, E> | Failed<T, E>) => void,
     options: WatchOptions<E> = {},
@@ -433,15 +431,14 @@ export function watchEffect<T, E = never>(
         }
     })();
 
-    const stop = (): void => {
+    const dispose = (): void => {
         cancelRetryTimer();
         currentController?.abort();
         computation.dispose();
     };
 
     return {
-        stop,
-        dispose: stop,
-        [Symbol.dispose]: stop,
+        dispose,
+        [Symbol.dispose]: dispose,
     };
 }

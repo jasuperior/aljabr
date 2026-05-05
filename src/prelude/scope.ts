@@ -227,7 +227,7 @@ export function Scope(options: ScopeOptions = {}): ScopeHandle {
     };
 
     // Cascade disposal — fires when the owning computation disposes (e.g. a
-    // parent watchEffect stops). Fire-and-forget; defects are routed to
+    // parent watch stops). Fire-and-forget; defects are routed to
     // catchDefect if provided, otherwise console.warn.
     computation.cleanups.add(() => {
         void handle.dispose().then((defects) => {

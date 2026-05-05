@@ -1,7 +1,7 @@
 import { describe, expect, it, vi, expectTypeOf, beforeEach, afterEach } from "vitest";
 import {
     Effect,
-    watchEffect,
+    watch,
     type Idle,
     type Done,
     type Stale,
@@ -190,7 +190,7 @@ describe("Effect.recover", () => {
 });
 
 // ===========================================================================
-// watchEffect
+// watch
 // ===========================================================================
 
 // Settle the initial IIFE before asserting onChange calls.
@@ -200,12 +200,12 @@ const settle = () => new Promise<void>(r => setTimeout(r, 0));
 // Lazy mode — dep-change notifications
 // ---------------------------------------------------------------------------
 
-describe("watchEffect — lazy (eager=false) dep change", () => {
+describe("watch — lazy (eager=false) dep change", () => {
     it("delivers Stale synchronously when a dependency changes after initial run", async () => {
         const sig = Signal.create("a");
         const changes: string[] = [];
 
-        const handle = watchEffect(
+        const handle = watch(
             async () => sig.get()!,
             (result) => changes.push(getTag(result)),
         );
@@ -215,14 +215,14 @@ describe("watchEffect — lazy (eager=false) dep change", () => {
         sig.set("b"); // dirty() fires synchronously → onChange(Stale)
 
         expect(changes).toEqual(["Stale"]);
-        handle.stop();
+        handle.dispose();
     });
 
     it("Stale carries the last known value", async () => {
         const sig = Signal.create(10);
         let staleValue: number | null = null;
 
-        const handle = watchEffect(
+        const handle = watch(
             async () => sig.get()!,
             (result) => {
                 if (getTag(result) === "Stale") {
@@ -235,19 +235,19 @@ describe("watchEffect — lazy (eager=false) dep change", () => {
         sig.set(20);
 
         expect(staleValue).toBe(10);
-        handle.stop();
+        handle.dispose();
     });
 
     it("does NOT call onChange before the initial run settles", () => {
         const sig = Signal.create("x");
         const onChange = vi.fn();
 
-        const handle = watchEffect(async () => sig.get()!, onChange);
+        const handle = watch(async () => sig.get()!, onChange);
         // Signal changed immediately — lastResult is still null, dirty() returns early
         sig.set("y");
 
         expect(onChange).not.toHaveBeenCalled();
-        handle.stop();
+        handle.dispose();
     });
 });
 
@@ -255,12 +255,12 @@ describe("watchEffect — lazy (eager=false) dep change", () => {
 // Eager mode — automatic re-run on dep change
 // ---------------------------------------------------------------------------
 
-describe("watchEffect — eager (eager=true) dep change", () => {
+describe("watch — eager (eager=true) dep change", () => {
     it("re-runs and delivers Done when a dependency changes", async () => {
         const sig = Signal.create(1);
         const results: string[] = [];
 
-        const handle = watchEffect(
+        const handle = watch(
             async () => sig.get()! * 2,
             (result) => results.push(getTag(result)),
             { eager: true },
@@ -274,14 +274,14 @@ describe("watchEffect — eager (eager=true) dep change", () => {
         expect(results).toContain("Done");
         const lastDone = results.findLast(t => t === "Done");
         expect(lastDone).toBe("Done");
-        handle.stop();
+        handle.dispose();
     });
 
     it("eager re-run delivers the updated computed value", async () => {
         const sig = Signal.create(3);
         let lastValue: number | undefined;
 
-        const handle = watchEffect(
+        const handle = watch(
             async () => sig.get()! * 10,
             (result) => {
                 if (getTag(result) === "Done") lastValue = (result as Done<number>).value;
@@ -294,7 +294,7 @@ describe("watchEffect — eager (eager=true) dep change", () => {
         await settle();
 
         expect(lastValue).toBe(70);
-        handle.stop();
+        handle.dispose();
     });
 });
 
@@ -302,14 +302,14 @@ describe("watchEffect — eager (eager=true) dep change", () => {
 // stop() — cancellation
 // ---------------------------------------------------------------------------
 
-describe("watchEffect — stop()", () => {
+describe("watch — stop()", () => {
     it("no more onChange callbacks after stop()", async () => {
         const sig = Signal.create("a");
         const onChange = vi.fn();
 
-        const handle = watchEffect(async () => sig.get()!, onChange);
+        const handle = watch(async () => sig.get()!, onChange);
         await settle();
-        handle.stop();
+        handle.dispose();
 
         sig.set("b");
         await settle();
@@ -320,7 +320,7 @@ describe("watchEffect — stop()", () => {
     it("aborts the AbortSignal of any in-flight thunk when stopped", async () => {
         let capturedSignal!: AbortSignal;
 
-        const handle = watchEffect(
+        const handle = watch(
             async (signal) => {
                 capturedSignal = signal;
                 await new Promise<never>((_, reject) =>
@@ -332,7 +332,7 @@ describe("watchEffect — stop()", () => {
         );
 
         await new Promise(r => setTimeout(r, 0)); // let #evaluate start
-        handle.stop();
+        handle.dispose();
         expect(capturedSignal?.aborted).toBe(true);
     });
 });
@@ -341,7 +341,7 @@ describe("watchEffect — stop()", () => {
 // Retry — schedule-based
 // ---------------------------------------------------------------------------
 
-describe("watchEffect — retry", () => {
+describe("watch — retry", () => {
     beforeEach(() => { vi.useFakeTimers(); });
     afterEach(() => { vi.useRealTimers(); });
 
@@ -350,7 +350,7 @@ describe("watchEffect — retry", () => {
         let callCount = 0;
         const results: string[] = [];
 
-        const handle = watchEffect(
+        const handle = watch(
             async () => {
                 sig.get(); // track the signal
                 callCount++;
@@ -369,14 +369,14 @@ describe("watchEffect — retry", () => {
         await vi.advanceTimersByTimeAsync(100);
 
         expect(results).toContain("Done");
-        handle.stop();
+        handle.dispose();
     });
 
     it("delivers Failed with MaxRetriesExceeded after maxRetries exhausted", async () => {
         const results: string[] = [];
         const faults: unknown[] = [];
 
-        const handle = watchEffect(
+        const handle = watch(
             async () => { throw Fault.Fail("always"); },
             (r) => {
                 results.push(getTag(r));
@@ -399,14 +399,14 @@ describe("watchEffect — retry", () => {
             getTag(lastFault) === "Fail" &&
             instanceOf(ScheduleError.MaxRetriesExceeded, lastFault.error);
         expect(hitMaxRetries).toBe(true);
-        handle.stop();
+        handle.dispose();
     });
 
     it("does not retry when shouldRetry returns false", async () => {
         let attempts = 0;
         const onChange = vi.fn();
 
-        const handle = watchEffect(
+        const handle = watch(
             async () => {
                 attempts++;
                 throw Fault.Fail("stop");
@@ -420,7 +420,7 @@ describe("watchEffect — retry", () => {
         await vi.advanceTimersByTimeAsync(200);
 
         expect(attempts).toBe(1); // only initial run, no retries
-        handle.stop();
+        handle.dispose();
     });
 
     it("invokes afterRetry before each retry fires", async () => {
@@ -431,7 +431,7 @@ describe("watchEffect — retry", () => {
         // Initial IIFE: fail → retry timer (no afterRetry from IIFE path).
         // rerun #1: fail → handleFailure → afterRetry called → retry timer.
         // rerun #2: succeed.
-        const handle = watchEffect(
+        const handle = watch(
             async () => {
                 attempts++;
                 if (attempts <= 2) throw Fault.Fail("not yet");
@@ -450,7 +450,7 @@ describe("watchEffect — retry", () => {
         expect(afterRetry).toHaveBeenCalledOnce();
         const [, , delayArg] = afterRetry.mock.calls[0]!;
         expect(delayArg).toBe(200);
-        handle.stop();
+        handle.dispose();
     });
 });
 
@@ -458,7 +458,7 @@ describe("watchEffect — retry", () => {
 // timeout
 // ---------------------------------------------------------------------------
 
-describe("watchEffect — timeout", () => {
+describe("watch — timeout", () => {
     beforeEach(() => { vi.useFakeTimers(); });
     afterEach(() => { vi.useRealTimers(); });
 
@@ -468,7 +468,7 @@ describe("watchEffect — timeout", () => {
         let attempt = 0;
         const results: string[] = [];
 
-        const handle = watchEffect(
+        const handle = watch(
             async () => {
                 attempt++;
                 if (attempt === 1) throw Fault.Fail("fail fast"); // initial fails immediately
@@ -490,7 +490,7 @@ describe("watchEffect — timeout", () => {
         // timeout fired → abort → Interrupted → handleFailure → onChange(Failed)
 
         expect(results).toContain("Failed");
-        handle.stop();
+        handle.dispose();
     });
 });
 

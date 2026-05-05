@@ -1,5 +1,6 @@
 import { describe, expect, it, vi, beforeEach } from "vitest";
-import { persistedSignal, syncToStore, type PersistAdapter } from "../../src/prelude/persist";
+import { Signal } from "../../src/prelude/signal";
+import { type PersistAdapter } from "../../src/prelude/persist";
 
 // ---------------------------------------------------------------------------
 // Fake adapter — no real localStorage needed
@@ -15,8 +16,8 @@ function makeAdapter(): PersistAdapter & { store: Record<string, string> } {
     };
 }
 
-// Flush multiple microtask/macrotask cycles so watchEffect's async thunk settles.
-// watchEffect runs immediately on creation (initial value) and again on signal changes,
+// Flush multiple microtask/macrotask cycles so watch's async thunk settles.
+// watch runs immediately on creation (initial value) and again on signal changes,
 // but each re-run requires several async hops through the Effect scheduler.
 const flush = async (rounds = 4) => {
     for (let i = 0; i < rounds; i++) {
@@ -25,37 +26,37 @@ const flush = async (rounds = 4) => {
 };
 
 // ---------------------------------------------------------------------------
-// persistedSignal
+// Signal.persisted
 // ---------------------------------------------------------------------------
 
-describe("persistedSignal — initial value", () => {
+describe("Signal.persisted — initial value", () => {
     it("uses initialValue when the store has no entry", async () => {
         const adapter = makeAdapter();
-        const sig = persistedSignal("default", { key: "k", adapter });
+        const sig = Signal.persisted("default", { key: "k", adapter });
         expect(sig.peek()).toBe("default");
     });
 
     it("rehydrates from the stored value when one exists", async () => {
         const adapter = makeAdapter();
         adapter.store["theme"] = JSON.stringify("dark");
-        const sig = persistedSignal<"light" | "dark">("light", { key: "theme", adapter });
+        const sig = Signal.persisted<"light" | "dark">("light", { key: "theme", adapter });
         expect(sig.peek()).toBe("dark");
     });
 
     it("falls back to initialValue when stored data is corrupt JSON", async () => {
         const adapter = makeAdapter();
         adapter.store["bad"] = "NOT_JSON{{{";
-        const sig = persistedSignal("fallback", { key: "bad", adapter });
+        const sig = Signal.persisted("fallback", { key: "bad", adapter });
         expect(sig.peek()).toBe("fallback");
     });
 });
 
-describe("persistedSignal — writing through", () => {
+describe("Signal.persisted — writing through", () => {
     it("calls adapter.set() with the serialized value when signal is set", async () => {
         const adapter = makeAdapter();
-        const sig = persistedSignal("initial", { key: "myKey", adapter });
+        const sig = Signal.persisted("initial", { key: "myKey", adapter });
 
-        // Let the initial watchEffect run first
+        // Let the initial watch run first
         await flush();
         (adapter.set as ReturnType<typeof vi.fn>).mockClear();
 
@@ -67,7 +68,7 @@ describe("persistedSignal — writing through", () => {
 
     it("calls adapter.remove() when signal is set to null", async () => {
         const adapter = makeAdapter();
-        const sig = persistedSignal<string | null>("hello", { key: "x", adapter });
+        const sig = Signal.persisted<string | null>("hello", { key: "x", adapter });
         await flush();
 
         // Null-able signal: must cast
@@ -78,13 +79,13 @@ describe("persistedSignal — writing through", () => {
     });
 });
 
-describe("persistedSignal — custom serialize / deserialize", () => {
+describe("Signal.persisted — custom serialize / deserialize", () => {
     it("uses the provided serializer on writes", async () => {
         const adapter = makeAdapter();
         const serialize = vi.fn((v: number) => String(v));
         const deserialize = vi.fn((s: string) => Number(s));
 
-        const sig = persistedSignal(0, { key: "n", adapter, serialize, deserialize });
+        const sig = Signal.persisted(0, { key: "n", adapter, serialize, deserialize });
         await flush();
         serialize.mockClear();
         (adapter.set as ReturnType<typeof vi.fn>).mockClear();
@@ -101,22 +102,22 @@ describe("persistedSignal — custom serialize / deserialize", () => {
         adapter.store["n"] = "7";
         const deserialize = vi.fn((s: string) => Number(s));
 
-        const sig = persistedSignal(0, { key: "n", adapter, deserialize });
+        const sig = Signal.persisted(0, { key: "n", adapter, deserialize });
         expect(deserialize).toHaveBeenCalledWith("7");
         expect(sig.peek()).toBe(7);
     });
 });
 
 // ---------------------------------------------------------------------------
-// syncToStore
+// signal.persist
 // ---------------------------------------------------------------------------
 
-describe("syncToStore", () => {
+describe("signal.persist", () => {
     it("mirrors writes to the adapter", async () => {
         const adapter = makeAdapter();
         const { Signal } = await import("../../src/prelude/signal");
         const sig = Signal.create("hello");
-        syncToStore(sig, { key: "s", adapter });
+        sig.persist({ key: "s", adapter });
         // Let initial sync fire, then clear
         await flush();
         (adapter.set as ReturnType<typeof vi.fn>).mockClear();
@@ -127,13 +128,13 @@ describe("syncToStore", () => {
         expect(adapter.set).toHaveBeenCalledWith("s", JSON.stringify("world"));
     });
 
-    it("stop function halts syncing", async () => {
+    it("returned WatchHandle.dispose() halts syncing", async () => {
         const adapter = makeAdapter();
         const { Signal } = await import("../../src/prelude/signal");
         const sig = Signal.create("a");
-        const stop = syncToStore(sig, { key: "t", adapter });
+        const handle = sig.persist({ key: "t", adapter });
 
-        stop();
+        handle.dispose();
 
         sig.set("b");
         await flush();
@@ -150,9 +151,9 @@ describe("syncToStore", () => {
 
         const { Signal } = await import("../../src/prelude/signal");
         const sig = Signal.create("fresh");
-        syncToStore(sig, { key: "existing", adapter });
+        sig.persist({ key: "existing", adapter });
 
-        // syncToStore must NOT overwrite the signal's value with the stored one
+        // signal.persist must NOT overwrite the signal's value with the stored one
         expect(sig.peek()).toBe("fresh");
     });
 });

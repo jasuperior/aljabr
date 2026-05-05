@@ -3,7 +3,7 @@ import { createRenderer } from "../../src/ui/renderer.ts";
 import { view, Fragment } from "../../src/ui/view-node.ts";
 import type { RendererHost } from "../../src/ui/types.ts";
 import { Signal } from "../../src/prelude/signal.ts";
-import { Ref } from "../../src/prelude/ref.ts";
+import { Store } from "../../src/prelude/store.ts";
 import { createOwner } from "../../src/prelude/context.ts";
 
 // ---------------------------------------------------------------------------
@@ -304,7 +304,7 @@ describe("createRenderer", () => {
         it("renders initial array", () => {
             const host = makeHost();
             const { mount } = createRenderer(host);
-            const ref = Ref.create({ items: ["a", "b", "c"] });
+            const ref = Store.create({ items: ["a", "b", "c"] });
             const rows = ref
                 .at("items")
                 .map((item, _) => view("li", null, item));
@@ -318,7 +318,7 @@ describe("createRenderer", () => {
         it("updates when array item changes", () => {
             const host = makeHost();
             const { mount } = createRenderer(host);
-            const ref = Ref.create({ items: ["a", "b"] });
+            const ref = Store.create({ items: ["a", "b"] });
             const rows = ref.at("items").map((item) => view("li", null, item));
 
             mount(() => view("ul", null, rows), host.root);
@@ -331,7 +331,7 @@ describe("createRenderer", () => {
         it("adds new items when array grows", () => {
             const host = makeHost();
             const { mount } = createRenderer(host);
-            const ref = Ref.create({ items: ["a"] });
+            const ref = Store.create({ items: ["a"] });
             const rows = ref.at("items").map((item) => view("li", null, item));
 
             mount(() => view("ul", null, rows), host.root);
@@ -348,7 +348,7 @@ describe("createRenderer", () => {
         it("removes items when array shrinks", () => {
             const host = makeHost();
             const { mount } = createRenderer(host);
-            const ref = Ref.create({ items: ["a", "b", "c"] });
+            const ref = Store.create({ items: ["a", "b", "c"] });
             const rows = ref.at("items").map((item) => view("li", null, item));
 
             mount(() => view("ul", null, rows), host.root);
@@ -484,10 +484,10 @@ describe("createRenderer", () => {
     });
 
     describe("nested DerivedArray items", () => {
-        it("renders string items from a RefArray directly", () => {
+        it("renders string items from a List directly", () => {
             const host = makeHost();
             const { mount } = createRenderer(host);
-            const arr = Ref.create({ items: ["x", "y"] });
+            const arr = Store.create({ items: ["x", "y"] });
             mount(
                 () => view("ul", null, arr.at("items")),
                 host.root,
@@ -500,7 +500,7 @@ describe("createRenderer", () => {
         it("renders ViewNode items nested inside outer DerivedArray", () => {
             const host = makeHost();
             const { mount } = createRenderer(host);
-            const ref = Ref.create({ groups: [["a", "b"], ["c"]] });
+            const ref = Store.create({ groups: [["a", "b"], ["c"]] });
             const rows = ref.at("groups").map((group, i) =>
                 view("li", null, String(i), ": ", group.join(","))
             );
@@ -521,7 +521,7 @@ describe("createRenderer", () => {
             };
 
             const { mount } = createRenderer(host);
-            const tasks = Ref.create([
+            const tasks = Store.create([
                 { id: 1, done: false },
                 { id: 2, done: false },
                 { id: 3, done: false },
@@ -543,7 +543,7 @@ describe("createRenderer", () => {
             const { mount } = createRenderer(host);
             const renderCounts = [0, 0, 0];
 
-            const tasks = Ref.create([
+            const tasks = Store.create([
                 { id: 1, done: false },
                 { id: 2, done: false },
                 { id: 3, done: false },
@@ -568,7 +568,7 @@ describe("createRenderer", () => {
             const { mount } = createRenderer(host);
 
             type T = { id: string; done: boolean };
-            const tasks = Ref.create<T[]>([
+            const tasks = Store.create<T[]>([
                 { id: "a", done: false },
                 { id: "b", done: true },
                 { id: "c", done: false },
@@ -632,7 +632,7 @@ describe("createRenderer", () => {
             const { mount } = createRenderer(host);
 
             type T = { id: string; done: boolean };
-            const tasks = Ref.create<T[]>([
+            const tasks = Store.create<T[]>([
                 { id: "a", done: false },
                 { id: "b", done: true },
                 { id: "c", done: false },

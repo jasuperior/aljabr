@@ -1,14 +1,15 @@
 import { Signal } from "./signal.ts";
-import { watchEffect } from "./effect.ts";
+import { watch } from "./effect.ts";
+import type { WatchHandle } from "./effect.ts";
 
 // ---------------------------------------------------------------------------
 // Persistence helpers
 // ---------------------------------------------------------------------------
 //
 // These utilities connect Signal<T> values to an external store (localStorage,
-// sessionStorage, or any custom adapter). They are deliberately thin — each
-// helper returns a plain Signal<T> so the rest of your reactive graph needs no
-// knowledge of where the value persists.
+// sessionStorage, or any custom adapter). They are surfaced as Signal statics
+// and instance methods (`Signal.persisted`, `signal.persist(...)`) — see
+// signal.ts for the public API.
 
 /** Read / write adapter for an external key-value store. */
 export type PersistAdapter = {
@@ -42,20 +43,12 @@ export type PersistOptions<T> = {
     adapter?: PersistAdapter;
 };
 
-/**
- * Create a `Signal<T>` that is automatically persisted to and rehydrated from
- * an external store (localStorage by default).
- *
- * On creation the store is read and, if a persisted value exists, the signal
- * starts `Active` with the stored value. Every subsequent `set()` is mirrored
- * to the store via `watchEffect`.
- *
- * @example
- * const theme = persistedSignal<"light" | "dark">("theme", "light");
- * theme.set("dark"); // written to localStorage["theme"]
- * // On next page load, theme.peek() === "dark"
- */
-export function persistedSignal<T>(
+// ---------------------------------------------------------------------------
+// Internal implementations — invoked by Signal.persisted / signal.persist
+// ---------------------------------------------------------------------------
+
+/** @internal — implementation backing `Signal.persisted`. */
+export function _createPersistedSignal<T>(
     initialValue: T,
     options: PersistOptions<T>,
 ): Signal<T> {
@@ -78,7 +71,7 @@ export function persistedSignal<T>(
     const signal = Signal.create(startValue);
 
     // Mirror every write to the store — eager so re-runs automatically on each change
-    watchEffect(
+    watch(
         async () => {
             const value = signal.get();
             if (value !== null) {
@@ -94,30 +87,18 @@ export function persistedSignal<T>(
     return signal;
 }
 
-/**
- * Persist an existing `Signal<T>` to an external store, keeping it in sync
- * for its entire lifetime. Returns a cleanup function that stops syncing.
- *
- * Unlike `persistedSignal`, this does not rehydrate — use it when you already
- * have a signal whose value you want to mirror out-of-band.
- *
- * @example
- * const pos = Signal.create({ line: 0, col: 0 });
- * const stop = syncToStore(pos, { key: "cursor" });
- * // Later, to stop persisting:
- * stop();
- */
-export function syncToStore<T>(
+/** @internal — implementation backing `signal.persist`. */
+export function _persistSignal<T>(
     signal: Signal<T>,
     options: PersistOptions<T>,
-): () => void {
+): WatchHandle {
     const {
         key,
         serialize = JSON.stringify,
         adapter = localStorageAdapter,
     } = options;
 
-    const handle = watchEffect(
+    return watch(
         async () => {
             const value = signal.get();
             if (value !== null) adapter.set(key, serialize(value));
@@ -125,6 +106,4 @@ export function syncToStore<T>(
         () => {},
         { eager: true },
     );
-
-    return () => handle.stop();
 }

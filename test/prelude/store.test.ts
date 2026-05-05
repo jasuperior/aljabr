@@ -1,5 +1,5 @@
 import { describe, expect, it, expectTypeOf, vi } from "vitest";
-import { Ref, type PathValue } from "../../src/prelude/ref";
+import { Store, type PathValue } from "../../src/prelude/store";
 import { Signal } from "../../src/prelude/signal";
 import { Derived } from "../../src/prelude/derived";
 import { Option, type Some, type None } from "../../src/prelude/option";
@@ -16,8 +16,8 @@ type State = {
     active: boolean;
 };
 
-function makeState(): Ref<State> {
-    return Ref.create<State>({
+function makeState(): Store<State> {
+    return Store.create<State>({
         user: { name: "Alice", age: 30 },
         scores: [1, 2, 3],
         active: true,
@@ -28,20 +28,20 @@ function makeState(): Ref<State> {
 // Creation
 // ---------------------------------------------------------------------------
 
-describe("Ref.create", () => {
-    it("creates an active Ref with an initial value", () => {
+describe("Store.create", () => {
+    it("creates an active Store with an initial value", () => {
         const ref = makeState();
         expect(ref.isUnset).toBe(false);
         expect(ref.get("user.name")).toBe("Alice");
     });
 
-    it("creates an Unset Ref when called with no argument", () => {
-        const ref = Ref.create<State>();
+    it("creates an Unset Store when called with no argument", () => {
+        const ref = Store.create<State>();
         expect(ref.isUnset).toBe(true);
     });
 
-    it("get returns undefined on an Unset Ref", () => {
-        const ref = Ref.create<State>();
+    it("get returns undefined on an Unset Store", () => {
+        const ref = Store.create<State>();
         expect(ref.get("active")).toBeUndefined();
     });
 
@@ -50,7 +50,7 @@ describe("Ref.create", () => {
         let disposed = false;
 
         trackIn(owner, () => {
-            const ref = Ref.create({ x: 1 });
+            const ref = Store.create({ x: 1 });
             // Monkey-patch the dispose to observe it
             const orig = ref.dispose.bind(ref);
             ref.dispose = () => {
@@ -154,8 +154,8 @@ describe("ref.get() — no-arg whole-object", () => {
         expect(dirty).toHaveBeenCalledTimes(1);
     });
 
-    it("returns undefined when Ref is unset", () => {
-        const ref = Ref.create<{ x: number }>();
+    it("returns undefined when Store is unset", () => {
+        const ref = Store.create<{ x: number }>();
         expect(ref.get()).toBeUndefined();
     });
 });
@@ -246,8 +246,8 @@ describe("ref.set", () => {
         expect(dirty).toHaveBeenCalledTimes(1);
     });
 
-    it("transitions an Unset Ref to active on first set", () => {
-        const ref = Ref.create<State>();
+    it("transitions an Unset Store to active on first set", () => {
+        const ref = Store.create<State>();
         expect(ref.isUnset).toBe(true);
         ref.set("active", false);
         expect(ref.isUnset).toBe(false);
@@ -290,7 +290,7 @@ describe("ref.patch", () => {
 
     it("skips unchanged sub-trees via reference equality", () => {
         const scores = [1, 2, 3];
-        const ref = Ref.create({ user: { name: "Alice" }, scores });
+        const ref = Store.create({ user: { name: "Alice" }, scores });
 
         const scoresComp = createOwner(null);
         const scoresDirty = vi.fn();
@@ -305,7 +305,7 @@ describe("ref.patch", () => {
 
     it("does not notify when root value is reference-equal", () => {
         const user = { name: "Alice", age: 30 };
-        const ref = Ref.create({ user });
+        const ref = Store.create({ user });
 
         const comp = createOwner(null);
         const dirty = vi.fn();
@@ -335,8 +335,8 @@ describe("ref.patch", () => {
         expect(ageDirty).toHaveBeenCalledTimes(1);
     });
 
-    it("transitions an Unset Ref to active on first patch", () => {
-        const ref = Ref.create<State>();
+    it("transitions an Unset Store to active on first patch", () => {
+        const ref = Store.create<State>();
         ref.patch("user", { name: "Alice", age: 30 });
         expect(ref.isUnset).toBe(false);
         expect(ref.get("user.name")).toBe("Alice");
@@ -344,37 +344,37 @@ describe("ref.patch", () => {
 });
 
 // ---------------------------------------------------------------------------
-// at — object path → Ref<V>
+// at — object path → Store<V>
 // ---------------------------------------------------------------------------
 
 describe("ref.at — object path", () => {
-    it("returns a Ref scoped to the path", () => {
+    it("returns a Store scoped to the path", () => {
         const ref = makeState();
         const userRef = ref.at("user");
-        expect(userRef).toBeInstanceOf(Ref);
+        expect(userRef).toBeInstanceOf(Store);
     });
 
-    it("returns the same Ref instance on repeated calls", () => {
+    it("returns the same Store instance on repeated calls", () => {
         const ref = makeState();
         expect(ref.at("user")).toBe(ref.at("user"));
     });
 
-    it("sub-Ref.get reads values from root state", () => {
+    it("sub-Store.get reads values from root state", () => {
         const ref = makeState();
-        const userRef = ref.at("user") as Ref<{ name: string; age: number }>;
+        const userRef = ref.at("user") as Store<{ name: string; age: number }>;
         expect(userRef.get("name" as any)).toBe("Alice");
     });
 
-    it("mutations on sub-Ref are reflected in root state", () => {
+    it("mutations on sub-Store are reflected in root state", () => {
         const ref = makeState();
-        const userRef = ref.at("user") as Ref<{ name: string; age: number }>;
+        const userRef = ref.at("user") as Store<{ name: string; age: number }>;
         userRef.set("name" as any, "Bob");
         expect(ref.get("user.name")).toBe("Bob");
     });
 
-    it("sub-Ref tracks through root signal map", () => {
+    it("sub-Store tracks through root signal map", () => {
         const ref = makeState();
-        const userRef = ref.at("user") as Ref<{ name: string; age: number }>;
+        const userRef = ref.at("user") as Store<{ name: string; age: number }>;
 
         const comp = createOwner(null);
         const dirty = vi.fn();
@@ -423,14 +423,14 @@ describe("ref.at — leaf path", () => {
         expect(dirty).toHaveBeenCalledTimes(1);
     });
 
-    it("Derived.set() writes back to the Ref", () => {
+    it("Derived.set() writes back to the Store", () => {
         const ref = makeState();
         const handle = ref.at("active") as Derived<boolean | undefined>;
         handle.set(false);
         expect(ref.get("active")).toBe(false);
     });
 
-    it("Derived.get() reflects a set done on the root Ref", () => {
+    it("Derived.get() reflects a set done on the root Store", () => {
         const ref = makeState();
         const handle = ref.at("active") as Derived<boolean | undefined>;
         ref.set("active", false);
@@ -488,13 +488,13 @@ describe("ref.pop", () => {
     it("removes and returns the last element", () => {
         const ref = makeState();
         const val = ref.pop("scores");
-        expect(val.getOrElse(-1)).toBe(3);
+        expect(val.getOr(-1)).toBe(3);
         expect(ref.get("scores")).toEqual([1, 2]);
     });
 
     it("returns None on an empty array", () => {
-        const ref = Ref.create({ items: [] as number[] });
-        expect(ref.pop("items").getOrElse(-1)).toBe(-1);
+        const ref = Store.create({ items: [] as number[] });
+        expect(ref.pop("items").getOr(-1)).toBe(-1);
     });
 
     it("notifies the array path signal", () => {
@@ -510,7 +510,7 @@ describe("ref.pop", () => {
     });
 
     it("is a no-op on an empty array and does not notify", () => {
-        const ref = Ref.create({ items: [] as number[] });
+        const ref = Store.create({ items: [] as number[] });
         const comp = createOwner(null);
         const dirty = vi.fn();
         comp.dirty = dirty;
@@ -629,12 +629,12 @@ describe("ref.dispose", () => {
         expect(() => ref.patch("user", { name: "Bob", age: 30 })).not.toThrow();
     });
 
-    it("sub-Ref.dispose() is a no-op — only root can be disposed", () => {
+    it("sub-Store.dispose() is a no-op — only root can be disposed", () => {
         const ref = makeState();
-        const userRef = ref.at("user") as Ref<{ name: string; age: number }>;
+        const userRef = ref.at("user") as Store<{ name: string; age: number }>;
         expect(() => userRef.dispose()).not.toThrow();
 
-        // Root is still alive after sub-Ref dispose
+        // Root is still alive after sub-Store dispose
         ref.set("user.name", "Bob");
         expect(ref.get("user.name")).toBe("Bob");
     });
@@ -644,7 +644,7 @@ describe("ref.dispose", () => {
 // batch integration
 // ---------------------------------------------------------------------------
 
-describe("batch + Ref", () => {
+describe("batch + Store", () => {
     it("defers notifications until the batch exits", () => {
         const ref = makeState();
         const comp = createOwner(null);
@@ -730,9 +730,9 @@ describe("ref.delete", () => {
         expect(dirty).not.toHaveBeenCalled();
     });
 
-    it("cached .at() sub-Ref stays alive and transitions to isUnset", () => {
+    it("cached .at() sub-Store stays alive and transitions to isUnset", () => {
         const ref = makeState();
-        const userRef = ref.at("user") as Ref<{ name: string; age: number }>;
+        const userRef = ref.at("user") as Store<{ name: string; age: number }>;
         ref.delete("user");
         expect(userRef.isUnset).toBe(true);
         expect(ref.at("user")).toBe(userRef); // same cached instance
@@ -768,7 +768,7 @@ describe("ref.delete", () => {
     it("recursively descends into a nested array element to delete a deeper key", () => {
         // Exercises #deleteAtPath recursive Array.isArray branch (tail.length > 0, obj is array)
         type Row = { items: Array<{ id: number; label: string }> };
-        const ref = Ref.create<Row>({
+        const ref = Store.create<Row>({
             items: [
                 { id: 1, label: "a" },
                 { id: 2, label: "b" },
@@ -806,8 +806,8 @@ describe("ref.maybeAt", () => {
         expect(getTag(result!)).toBe("None");
     });
 
-    it("returns None for an Unset Ref", () => {
-        const ref = Ref.create<State>();
+    it("returns None for an Unset Store", () => {
+        const ref = Store.create<State>();
         const handle = ref.maybeAt("active");
         const result = handle.get();
         expect(result).not.toBeNull();
@@ -852,7 +852,7 @@ describe("ref.bind", () => {
         expect(ref.get("user.name")).toBe("Updated");
     });
 
-    it("notifies Ref subscribers when the bound signal changes", () => {
+    it("notifies Store subscribers when the bound signal changes", () => {
         const ref = makeState();
         const sig = Signal.create("Bound");
         ref.bind("user.name", sig);
@@ -966,28 +966,28 @@ describe("PathValue type inference", () => {
         expectTypeOf<PathValue<State, "scores.0">>().toEqualTypeOf<number>();
     });
 
-    it("Ref.get return type matches PathValue", () => {
+    it("Store.get return type matches PathValue", () => {
         const ref = makeState();
         expectTypeOf(ref.get("active")).toEqualTypeOf<boolean | undefined>();
         expectTypeOf(ref.get("user.name")).toEqualTypeOf<string | undefined>();
     });
 });
 
-describe("Ref.getOr (v0.3.10 Phase 5)", () => {
+describe("Store.getOr (v0.3.10 Phase 5)", () => {
     it("returns the value at path when defined", () => {
-        const r = Ref.create({ user: { name: "Ada" } });
+        const r = Store.create({ user: { name: "Ada" } });
         expect(r.getOr("user.name", "anon")).toBe("Ada");
     });
 
-    it("returns the default when path is undefined on an unset Ref", () => {
-        const r = Ref.create<{ user: { name: string } }>();
+    it("returns the default when path is undefined on an unset Store", () => {
+        const r = Store.create<{ user: { name: string } }>();
         expect(r.getOr("user.name", "anon")).toBe("anon");
     });
 });
 
-describe("Ref.subscribe (v0.3.10 Phase 5)", () => {
+describe("Store.subscribe (v0.3.10 Phase 5)", () => {
     it("fires on root mutations with full snapshot", () => {
-        const r = Ref.create({ name: "Ada", age: 30 });
+        const r = Store.create({ name: "Ada", age: 30 });
         const seen: ({ name: string; age: number } | undefined)[] = [];
         r.subscribe((v) => seen.push(v));
         r.set("name", "Grace");
@@ -996,8 +996,8 @@ describe("Ref.subscribe (v0.3.10 Phase 5)", () => {
         expect(seen[1]).toEqual({ name: "Grace", age: 31 });
     });
 
-    it("sub-Ref subscribes to its scope", () => {
-        const r = Ref.create({ user: { name: "Ada" } });
+    it("sub-Store subscribes to its scope", () => {
+        const r = Store.create({ user: { name: "Ada" } });
         const userRef = r.at("user");
         const seen: ({ name: string } | undefined)[] = [];
         userRef.subscribe((v) => seen.push(v));
@@ -1007,7 +1007,7 @@ describe("Ref.subscribe (v0.3.10 Phase 5)", () => {
     });
 
     it("unsubscribe stops further callbacks", () => {
-        const r = Ref.create({ x: 1 });
+        const r = Store.create({ x: 1 });
         let count = 0;
         const unsub = r.subscribe(() => { count++; });
         r.set("x", 2);
@@ -1017,7 +1017,7 @@ describe("Ref.subscribe (v0.3.10 Phase 5)", () => {
     });
 
     it("fires with undefined on dispose", () => {
-        const r = Ref.create({ x: 1 });
+        const r = Store.create({ x: 1 });
         let lastValue: { x: number } | undefined = { x: 99 };
         r.subscribe((v) => { lastValue = v; });
         r.dispose();
@@ -1025,9 +1025,9 @@ describe("Ref.subscribe (v0.3.10 Phase 5)", () => {
     });
 });
 
-describe("Ref Symbol.dispose (v0.3.10 Phase 5)", () => {
-    it("Symbol.dispose disposes the Ref (subsequent set is a no-op)", () => {
-        const r = Ref.create({ x: 1 });
+describe("Store Symbol.dispose (v0.3.10 Phase 5)", () => {
+    it("Symbol.dispose disposes the Store (subsequent set is a no-op)", () => {
+        const r = Store.create({ x: 1 });
         r[Symbol.dispose]();
         r.set("x", 99);
         expect(r.peek("x")).toBe(1);

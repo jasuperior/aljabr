@@ -56,7 +56,7 @@ export type PathValue<T, P extends string> = P extends `${infer K}.${infer Rest}
 
 /**
  * All paths into `T` whose resolved value type is an array.
- * Use with Ref's array mutation methods (`push`, `pop`, `splice`, `move`).
+ * Use with Store's array mutation methods (`push`, `pop`, `splice`, `move`).
  */
 export type ArrayPath<T> = {
     [P in Path<T>]: PathValue<T, P> extends unknown[] ? P : never;
@@ -73,12 +73,12 @@ export type ArrayItem<T, P extends string> = PathValue<T, P> extends (infer E)[]
 // Internal shared state
 // ---------------------------------------------------------------------------
 
-type RefHolder = {
+type StoreHolder = {
     state: unknown;
     unset: boolean;
     signals: Map<string, Signal<unknown>>;
     lengthSignals: Map<string, Signal<number>>;
-    handles: Map<string, Ref<any> | Derived<unknown> | RefArray<any>>;
+    handles: Map<string, Store<any> | Derived<unknown> | List<any>>;
     bindings: Map<string, () => void>;       // path → unsubscribe fn
     boundSignals: Map<string, Signal<unknown>>; // path → source signal
     valueSubscribers: Map<string, Set<(value: unknown) => void>>; // prefix → push subscribers
@@ -200,10 +200,10 @@ function collectLeafChanges(
 }
 
 // ---------------------------------------------------------------------------
-// Module-level reactive helpers (shared by Ref and RefArray)
+// Module-level reactive helpers (shared by Store and List)
 // ---------------------------------------------------------------------------
 
-function getOrCreateSignal(holder: RefHolder, fullPath: string): Signal<unknown> {
+function getOrCreateSignal(holder: StoreHolder, fullPath: string): Signal<unknown> {
     let sig = holder.signals.get(fullPath);
     if (!sig) {
         const value = holder.unset ? undefined : getAtPath(holder.state, fullPath);
@@ -214,7 +214,7 @@ function getOrCreateSignal(holder: RefHolder, fullPath: string): Signal<unknown>
 }
 
 function cleanupOutOfRangeSignals(
-    holder: RefHolder,
+    holder: StoreHolder,
     arrayPath: string,
     newLength: number,
 ): void {
@@ -233,7 +233,7 @@ function cleanupOutOfRangeSignals(
     }
 }
 
-function notifyValueSubscribers(holder: RefHolder): void {
+function notifyValueSubscribers(holder: StoreHolder): void {
     for (const [prefix, subs] of holder.valueSubscribers) {
         const value = holder.unset
             ? undefined
@@ -243,7 +243,7 @@ function notifyValueSubscribers(holder: RefHolder): void {
 }
 
 function applyArrayMutation(
-    holder: RefHolder,
+    holder: StoreHolder,
     fullPath: string,
     oldArr: unknown[],
     newArr: unknown[],
@@ -282,14 +282,14 @@ function applyArrayMutation(
 }
 
 // ---------------------------------------------------------------------------
-// RefArray<T>  (defined before Ref so Ref.create can reference it)
+// List<T>  (defined before Store so Store.create can reference it)
 // ---------------------------------------------------------------------------
 
 /**
  * A reactive mutable container for a root-level array. Returned by
- * `Ref.create(T[])` and `Ref.at(path)` when the path resolves to an array.
+ * `Store.create(T[])` and `Store.at(path)` when the path resolves to an array.
  *
- * Unlike `Ref<T[]>`, `RefArray<T>` exposes pathless mutation methods that
+ * Unlike `Store<T[]>`, `List<T>` exposes pathless mutation methods that
  * operate directly on the root array without requiring a path argument.
  *
  * Per-index reads (`get(i)`, `at(i)`) and `length()` are all reactive —
@@ -301,7 +301,7 @@ function applyArrayMutation(
  * structural mutations.
  *
  * @example
- * const items = Ref.create([1, 2, 3, 4, 5]);
+ * const items = Store.create([1, 2, 3, 4, 5]);
  *
  * items.push(6);                                  // [1, 2, 3, 4, 5, 6]
  * items.pop();                                    // [1, 2, 3, 4, 5]
@@ -310,27 +310,27 @@ function applyArrayMutation(
  * const evens = items.filter(x => x % 2 === 0);  // DerivedArray<number>
  * const doubled = evens.map(x => x * 2);          // DerivedArray<number>
  */
-export class RefArray<T> {
-    readonly #holder: RefHolder;
+export class List<T> {
+    readonly #holder: StoreHolder;
     readonly #prefix: string;
 
-    private constructor(holder: RefHolder, prefix: string) {
+    private constructor(holder: StoreHolder, prefix: string) {
         this.#holder = holder;
         this.#prefix = prefix;
     }
 
-    /** @internal Create a RefArray backed by an existing shared holder. */
-    static _fromHolder<T>(holder: RefHolder, prefix: string): RefArray<T> {
-        return new RefArray<T>(holder, prefix);
+    /** @internal Create a List backed by an existing shared holder. */
+    static _fromHolder<T>(holder: StoreHolder, prefix: string): List<T> {
+        return new List<T>(holder, prefix);
     }
 
     /**
-     * Create a `RefArray` with an initial array value.
-     * Prefer `Ref.create(T[])` — this static is provided for direct use.
+     * Create a `List` with an initial array value.
+     * Prefer `Store.create(T[])` — this static is provided for direct use.
      */
-    static create<T>(initial: T[]): RefArray<T> {
+    static create<T>(initial: T[]): List<T> {
         const owner = getCurrentComputation();
-        const holder: RefHolder = {
+        const holder: StoreHolder = {
             state: initial,
             unset: false,
             signals: new Map(),
@@ -341,12 +341,12 @@ export class RefArray<T> {
             valueSubscribers: new Map(),
             disposed: false,
         };
-        const refArray = new RefArray<T>(holder, "");
+        const refArray = new List<T>(holder, "");
         if (owner) owner.cleanups.add(() => refArray.dispose());
         return refArray;
     }
 
-    /** `true` if this RefArray was created without an initial value. */
+    /** `true` if this List was created without an initial value. */
     get isUnset(): boolean {
         return this.#holder.unset;
     }
@@ -482,7 +482,7 @@ export class RefArray<T> {
 
     /**
      * Register a synchronous callback that fires after every mutation to this
-     * RefArray. The callback receives the current array snapshot.
+     * List. The callback receives the current array snapshot.
      *
      * Use this when bridging to external systems; prefer `watch` for
      * declarative reactive coordination.
@@ -669,13 +669,13 @@ export class RefArray<T> {
     // -------------------------------------------------------------------------
 
     /**
-     * Dispose this RefArray and all internal reactive nodes.
+     * Dispose this List and all internal reactive nodes.
      *
-     * No-op on sub-RefArrays created via `Ref.at()` — only root RefArrays
-     * (created via `Ref.create(T[])` or `RefArray.create()`) own the holder.
+     * No-op on sub-Lists created via `Store.at()` — only root RefArrays
+     * (created via `Store.create(T[])` or `List.create()`) own the holder.
      */
     dispose(): void {
-        if (this.#prefix !== "") return; // non-root shares holder with parent Ref
+        if (this.#prefix !== "") return; // non-root shares holder with parent Store
         if (this.#holder.disposed) return;
         this.#holder.disposed = true;
         for (const unsub of this.#holder.bindings.values()) unsub();
@@ -719,19 +719,19 @@ export class RefArray<T> {
 }
 
 // ---------------------------------------------------------------------------
-// Ref<T>
+// Store<T>
 // ---------------------------------------------------------------------------
 
 /**
  * A reactive mutable container for structured objects and arrays.
  *
- * `Ref<T>` tracks per-path subscriptions. Each `get(path)` call inside a
+ * `Store<T>` tracks per-path subscriptions. Each `get(path)` call inside a
  * reactive context registers exactly that path as a dependency — changes to
  * other paths do not re-run the computation.
  *
  * Internally, a lazy `Signal` is created for each accessed path. All
- * sub-Refs created via `.at(path)` share the same internal signal map and
- * state holder as the root `Ref`.
+ * sub-Stores created via `.at(path)` share the same internal signal map and
+ * state holder as the root `Store`.
  *
  * **`set(path, value)`** — replaces the subtree at `path` and notifies all
  * signals at related paths (the exact path, descendants, and ancestors).
@@ -742,16 +742,16 @@ export class RefArray<T> {
  * Reference equality is checked at each node before recursing.
  *
  * **`.at(path)`** — returns a stable reactive handle:
- * - Array path → `RefArray<E>`, a scoped reactive array.
- * - Object path → `Ref<V>`, a scoped view that forwards mutations to the
+ * - Array path → `List<E>`, a scoped reactive array.
+ * - Object path → `Store<V>`, a scoped view that forwards mutations to the
  *   root's signal map.
  * - Primitive (leaf) path → `Derived<V>`, a writable reactive handle that
- *   routes reads and writes through the Ref's signal machinery.
+ *   routes reads and writes through the Store's signal machinery.
  *
  * @example
- * const state = Ref.create({ user: { name: "Alice", age: 30 }, scores: [1, 2, 3] });
+ * const state = Store.create({ user: { name: "Alice", age: 30 }, scores: [1, 2, 3] });
  *
- * watchEffect(async () => {
+ * watch(async () => {
  *   console.log(state.get("user.name")); // reruns only when user.name changes
  * }, onChange);
  *
@@ -759,36 +759,36 @@ export class RefArray<T> {
  * state.patch("user", { name: "Bob", age: 30 });  // only notifies "user.name"
  * state.push("scores", 5);                         // appends 5
  *
- * const scoresRef  = state.at("scores");           // RefArray<number>
- * const userRef    = state.at("user");             // Ref<{ name: string; age: number }>
+ * const scoresStore  = state.at("scores");           // List<number>
+ * const userStore    = state.at("user");             // Store<{ name: string; age: number }>
  * const nameHandle = state.at("user.name");        // Derived<string>
  */
-export class Ref<T extends object> {
-    readonly #holder: RefHolder;
+export class Store<T extends object> {
+    readonly #holder: StoreHolder;
     readonly #prefix: string;
 
-    private constructor(holder: RefHolder, prefix: string) {
+    private constructor(holder: StoreHolder, prefix: string) {
         this.#holder = holder;
         this.#prefix = prefix;
     }
 
-    /** Create a `RefArray<E>` from a typed array literal — unwraps `T[]` to `RefArray<T>`. */
-    static create<T extends unknown[]>(initial: T): RefArray<T[number]>;
-    /** Create a `RefArray<T>` from a root array. */
-    static create<T>(initial: T[]): RefArray<T>;
-    /** Create a Ref with an initial value (active state). */
-    static create<T extends object>(initial: T): Ref<T>;
+    /** Create a `List<E>` from a typed array literal — unwraps `T[]` to `List<T>`. */
+    static create<T extends unknown[]>(initial: T): List<T[number]>;
+    /** Create a `List<T>` from a root array. */
+    static create<T>(initial: T[]): List<T>;
+    /** Create a Store with an initial value (active state). */
+    static create<T extends object>(initial: T): Store<T>;
     /**
-     * Create a Ref in `Unset` state — no initial value.
+     * Create a Store in `Unset` state — no initial value.
      * `get(path)` returns `undefined` until the first `set(path, value)` call.
      */
-    static create<T extends object>(): Ref<T>;
-    static create<T extends object>(initial?: T | T[]): Ref<T> | RefArray<any> {
+    static create<T extends object>(): Store<T>;
+    static create<T extends object>(initial?: T | T[]): Store<T> | List<any> {
         if (Array.isArray(initial)) {
-            return RefArray.create(initial);
+            return List.create(initial);
         }
         const owner = getCurrentComputation();
-        const holder: RefHolder = {
+        const holder: StoreHolder = {
             state: initial ?? null,
             unset: initial === undefined,
             signals: new Map(),
@@ -799,24 +799,24 @@ export class Ref<T extends object> {
             valueSubscribers: new Map(),
             disposed: false,
         };
-        const ref = new Ref<T>(holder, "");
+        const ref = new Store<T>(holder, "");
         if (owner) owner.cleanups.add(() => ref.dispose());
         return ref;
     }
 
-    /** `true` if this Ref was created without an initial value and has not been set yet. */
+    /** `true` if this Store was created without an initial value and has not been set yet. */
     get isUnset(): boolean {
         return this.#holder.unset;
     }
 
     /**
      * Read the entire object and register it as a dependency. Re-evaluates on any mutation.
-     * Returns `undefined` if the Ref is in Unset state.
+     * Returns `undefined` if the Store is in Unset state.
      */
     get(): T | undefined
     /**
      * Read the value at `path` and register it as a dependency in the active
-     * tracking context. Returns `undefined` if the Ref is in Unset state or
+     * tracking context. Returns `undefined` if the Store is in Unset state or
      * if the path does not resolve to a value.
      */
     get<P extends Path<T>>(path: P): PathValue<T, P> | undefined
@@ -834,7 +834,7 @@ export class Ref<T extends object> {
 
     /**
      * Read the entire object without registering a reactive dependency.
-     * Returns `undefined` if the Ref is in Unset state.
+     * Returns `undefined` if the Store is in Unset state.
      */
     peek(): T | undefined
     /**
@@ -934,17 +934,17 @@ export class Ref<T extends object> {
     /**
      * Returns a stable reactive handle for the subtree or leaf at `path`.
      *
-     * - **Array path** → `RefArray<E>`, a scoped reactive array.
-     * - **Object path** → `Ref<V>`, a scoped view into this Ref's internal state.
+     * - **Array path** → `List<E>`, a scoped reactive array.
+     * - **Object path** → `Store<V>`, a scoped view into this Store's internal state.
      *   Mutations forward to the root's signal map. Repeated calls return the
-     *   identical `Ref<V>` instance.
+     *   identical `Store<V>` instance.
      * - **Primitive (leaf) path** → `Derived<V>`, a writable reactive handle.
-     *   Reads track through this Ref's signal for `path`. Writes route back
+     *   Reads track through this Store's signal for `path`. Writes route back
      *   through `set(path, value)`. Repeated calls return the same `Derived<V>`.
      *
      * @example
-     * const scoresRef = state.at("scores");    // RefArray<number>
-     * const userRef   = state.at("user");      // Ref<{ name: string; age: number }>
+     * const scoresStore = state.at("scores");    // List<number>
+     * const userStore   = state.at("user");      // Store<{ name: string; age: number }>
      * const nameD     = state.at("user.name"); // Derived<string>
      * nameD.get();                             // tracked read
      * nameD.set("Bob");                        // forwards to state.set("user.name", "Bob")
@@ -952,9 +952,9 @@ export class Ref<T extends object> {
     at<P extends Path<T>>(
         path: P,
     ): PathValue<T, P> extends any[]
-        ? RefArray<PathValue<T, P>[number]>
+        ? List<PathValue<T, P>[number]>
         : PathValue<T, P> extends object
-          ? Ref<PathValue<T, P> & object>
+          ? Store<PathValue<T, P> & object>
           : Derived<PathValue<T, P> | undefined> {
         const fullPath = resolveFullPath(this.#prefix, path as string);
         const cached = this.#holder.handles.get(fullPath);
@@ -964,15 +964,15 @@ export class Ref<T extends object> {
             ? undefined
             : getAtPath(this.#holder.state, fullPath);
 
-        let handle: Ref<any> | Derived<unknown> | RefArray<any>;
+        let handle: Store<any> | Derived<unknown> | List<any>;
         if (Array.isArray(currentValue)) {
-            // Array path → shared RefArray
-            handle = RefArray._fromHolder(this.#holder, fullPath);
+            // Array path → shared List
+            handle = List._fromHolder(this.#holder, fullPath);
         } else if (isObjectLike(currentValue)) {
-            // Object path — scoped sub-Ref sharing the same holder
-            handle = new Ref(this.#holder, fullPath);
+            // Object path — scoped sub-Store sharing the same holder
+            handle = new Store(this.#holder, fullPath);
         } else {
-            // Primitive or undefined — writable Derived that routes through Ref
+            // Primitive or undefined — writable Derived that routes through Store
             // eslint-disable-next-line @typescript-eslint/no-this-alias
             const self = this;
             handle = untrack(() =>
@@ -1050,7 +1050,7 @@ export class Ref<T extends object> {
     /**
      * Establish a live binding from `signal` to `path`.
      *
-     * When `signal` changes, the Ref path is updated synchronously. Re-binding
+     * When `signal` changes, the Store path is updated synchronously. Re-binding
      * a path silently replaces the existing subscription. Calling `set(path, v)`
      * after binding implicitly unbinds — plain writes always win.
      *
@@ -1090,13 +1090,13 @@ export class Ref<T extends object> {
     }
 
     /**
-     * Dispose this Ref and all internal reactive nodes.
+     * Dispose this Store and all internal reactive nodes.
      *
-     * No-op on sub-Refs created via `.at()` — only the root Ref (created via
-     * `Ref.create()`) owns the internal state and can be disposed.
+     * No-op on sub-Stores created via `.at()` — only the root Store (created via
+     * `Store.create()`) owns the internal state and can be disposed.
      */
     dispose(): void {
-        if (this.#prefix !== "") return; // sub-Refs are not root owners
+        if (this.#prefix !== "") return; // sub-Stores are not root owners
         if (this.#holder.disposed) return;
         this.#holder.disposed = true;
         for (const unsub of this.#holder.bindings.values()) unsub();
@@ -1122,7 +1122,7 @@ export class Ref<T extends object> {
      * Remove the value at `path` and all descendant paths.
      *
      * All descendant signals receive `undefined` and notify their subscribers.
-     * Cached `.at()` sub-Ref handles remain alive and transition to `isUnset`.
+     * Cached `.at()` sub-Store handles remain alive and transition to `isUnset`.
      * Any binding at `path` or a descendant is also released.
      * `get(path)` returns `undefined` after deletion.
      */
@@ -1161,9 +1161,9 @@ export class Ref<T extends object> {
             if (sig) sig.set(getAtPath(this.#holder.state, ancestorPath));
         }
 
-        // Transition any cached sub-Ref handle to isUnset
+        // Transition any cached sub-Store handle to isUnset
         const subRef = this.#holder.handles.get(fullPath);
-        if (subRef instanceof Ref) {
+        if (subRef instanceof Store) {
             subRef.#holder.unset = true;
         }
 
@@ -1172,9 +1172,9 @@ export class Ref<T extends object> {
 
     /**
      * Register a synchronous callback that fires after every mutation to this
-     * Ref's state. The callback receives the current snapshot at this Ref's
+     * Store's state. The callback receives the current snapshot at this Store's
      * scope (the whole object for the root, or the sub-object for an `at()`
-     * sub-Ref). Returns `undefined` if the path is unset.
+     * sub-Store). Returns `undefined` if the path is unset.
      *
      * Use this when bridging to external systems; prefer `watch` for
      * declarative reactive coordination.

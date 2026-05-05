@@ -48,7 +48,7 @@ export const ScheduleError = union([ScheduleErrorBase]).typed({
 });
 
 // ---------------------------------------------------------------------------
-// AsyncOptions<E> — shared options bag for AsyncDerived and watchEffect
+// AsyncOptions<E> — shared options bag for AsyncDerived and watch
 // ---------------------------------------------------------------------------
 
 export type AsyncOptions<E = unknown> = {
@@ -68,7 +68,7 @@ export type AsyncOptions<E = unknown> = {
 };
 
 // ---------------------------------------------------------------------------
-// computeDelay — internal helper used by AsyncDerived and watchEffect
+// computeDelay — internal helper used by AsyncDerived and watch
 // ---------------------------------------------------------------------------
 
 function applyJitter(delay: number, jitter: boolean): number {

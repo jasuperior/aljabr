@@ -10,7 +10,7 @@ export * from "./scope.ts";
 export * from "./persist.ts";
 export * from "./tree.ts";
 export * from "./validation.ts";
-export * from "./ref.ts";
+export * from "./store.ts";
 export * from "./derived-array.ts";
 export * from "./command-error.ts";
 export * from "./dispatcher.ts";

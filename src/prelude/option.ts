@@ -31,11 +31,6 @@ export abstract class Mappable<T> extends Bindable<T> {
         });
     }
 
-    /** @deprecated Use {@link getOr} instead. Removed in a future release. */
-    getOrElse(defaultValue: T): T {
-        return this.getOr(defaultValue);
-    }
-
     toResult<E>(error: () => Promise<E>): Result<T, E>;
     toResult<E>(error: () => E): Result<T, E>;
     toResult<E>(error: E): Result<T, E>;
