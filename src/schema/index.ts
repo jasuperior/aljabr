@@ -59,7 +59,11 @@ const _Schema = union({
 
 declare const _schemaOutput: unique symbol;
 export type AnySchema = Union<typeof _Schema>;
-export type Schema<T> = AnySchema & { readonly [_schemaOutput]?: T };
+// Phantom is non-optional so `Schema<X | undefined>` does not collapse to
+// `Schema<X>` (an optional `?: T` property implicitly admits `undefined` and
+// makes the two forms structurally equivalent, breaking ObjectOutput's
+// detection of optional fields).
+export type Schema<T> = AnySchema & { readonly [_schemaOutput]: T };
 
 export type StringSchema = Union<typeof _Schema, "StringSchema">;
 export type NumberSchema = Union<typeof _Schema, "NumberSchema">;
@@ -73,6 +77,26 @@ export type ObjectSchema = Union<typeof _Schema, "ObjectSchema">;
 export type UnionSchema = Union<typeof _Schema, "UnionSchema">;
 export type VariantSchema = Union<typeof _Schema, "VariantSchema">;
 export type LazySchema = Union<typeof _Schema, "LazySchema">;
+
+// ===== Object output inference =====
+//
+// A field whose schema is `Schema<X | undefined>` (e.g. produced by
+// `Schema.optional`) maps to an optional key in the inferred output type:
+// `{ age?: X | undefined }`, not `{ age: X | undefined }`. The key being
+// optional is what makes `{ name: "Alice" }` (with `age` absent) a valid
+// argument to `encode`/`decode`.
+
+type SchemaValue<S> = S extends Schema<infer T> ? T : never;
+
+type ObjectOutput<S> = {
+    [K in keyof S as undefined extends SchemaValue<S[K]>
+        ? never
+        : K]: SchemaValue<S[K]>;
+} & {
+    [K in keyof S as undefined extends SchemaValue<S[K]>
+        ? K
+        : never]?: SchemaValue<S[K]>;
+};
 
 // ===== Schema factory (public API) =====
 
@@ -99,14 +123,14 @@ export const Schema = {
     array: <T>(element: Schema<T>): Schema<T[]> =>
         _Schema.ArraySchema(element) as Schema<T[]>,
 
-    object: <T extends Record<string, unknown>>(
-        shape: { [K in keyof T]: Schema<T[K]> },
+    object: <S extends Record<string, Schema<unknown>>>(
+        shape: S,
         options?: { mode?: ObjectMode },
-    ): Schema<T> =>
+    ): Schema<ObjectOutput<S>> =>
         _Schema.ObjectSchema(
             shape as Record<string, unknown>,
             options?.mode ?? "strip",
-        ) as Schema<T>,
+        ) as Schema<ObjectOutput<S>>,
 
     union: <Ts extends unknown[]>(
         ...schemas: { [K in keyof Ts]: Schema<Ts[K]> }
