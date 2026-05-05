@@ -1,6 +1,7 @@
-import { union, Trait, type Variant } from "../union.ts";
+import { union, type Variant } from "../union.ts";
 import { match } from "../match.ts";
 import { Result } from "./result.ts";
+import { Mappable } from "./traits.ts";
 
 type CombineValues<A, B> = A extends readonly unknown[] ? [...A, B] : [A, B]
 
@@ -11,7 +12,7 @@ type AllValues<Vs extends readonly Validation<unknown, unknown>[]> = {
 type AllError<Vs extends readonly Validation<unknown, unknown>[]> =
     Vs[number] extends Validation<unknown, infer E> ? E : never
 
-export abstract class Combinable<T, E> extends Trait<{ value: T }> {
+export abstract class Combinable<T, E> extends Mappable<T> {
     map<U>(fn: (value: T) => U): Validation<U, E> {
         return match(this as unknown as Validation<T, E>, {
             Unvalidated: () => Validation.Unvalidated(),

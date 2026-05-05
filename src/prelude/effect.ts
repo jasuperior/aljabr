@@ -1,6 +1,7 @@
-import { union, Trait, type Variant, instanceOf } from "../union.ts";
+import { union, type Variant, instanceOf } from "../union.ts";
 import { getTag } from "../union.ts";
 import { match } from "../match.ts";
+import { Bindable } from "./traits.ts";
 import {
     type Computation,
     getCurrentComputation,
@@ -34,7 +35,7 @@ function classifyError<E>(e: unknown, signal: AbortSignal): Fault<E> {
     return FaultUnion.Defect(e);
 }
 
-export abstract class Computable<T, E> extends Trait {
+export abstract class Computable<T, E> extends Bindable<T> {
     async run(): Promise<Done<T, E> | Failed<T, E>> {
         const self = this as unknown as Effect<T, E>;
         return match(self, {
