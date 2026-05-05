@@ -135,3 +135,26 @@ describe("Option.toResult", () => {
         expectTypeOf(r).toExtend<Result<number, string>>();
     });
 });
+
+describe("Option.all (v0.3.10 Phase 5)", () => {
+    it("returns Some with all values when every option is Some", () => {
+        const r = Option.all([Option.Some(1), Option.Some("a"), Option.Some(true)]);
+        expect(getTag(r)).toBe("Some");
+        expect((r as { value: unknown[] }).value).toEqual([1, "a", true]);
+    });
+
+    it("returns None on the first None (fail-fast)", () => {
+        const r = Option.all([
+            Option.Some(1),
+            Option.None<string>(),
+            Option.Some(true),
+        ]);
+        expect(getTag(r)).toBe("None");
+    });
+
+    it("returns Some([]) for empty input", () => {
+        const r = Option.all([]);
+        expect(getTag(r)).toBe("Some");
+        expect((r as { value: unknown[] }).value).toEqual([]);
+    });
+});

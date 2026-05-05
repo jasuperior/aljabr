@@ -1,6 +1,13 @@
-import { union, type Variant } from "../union.ts";
+import { union, getTag, type Variant } from "../union.ts";
 import { match } from "../match.ts";
 import { Bindable } from "./traits.ts";
+
+type AllValues<Rs extends readonly Result<unknown, unknown>[]> = {
+    [K in keyof Rs]: Rs[K] extends Result<infer T, unknown> ? T : never;
+};
+
+type AnyError<Rs extends readonly Result<unknown, unknown>[]> =
+    Rs[number] extends Result<unknown, infer E> ? E : never;
 
 export abstract class Thenable<T, E = never> extends Bindable<T> {
     map<U>(fn: (value: T) => U): Result<U, E> {
@@ -119,9 +126,60 @@ export type Result<T = unknown, E = never> =
     | Expected<T, E>
     | Rejected<E>;
 
-export const Result = union([Thenable]).typed({
-    Accept: <T>(value: T) => ({ value }) as Accepted<T>,
-    Expect: <T, E = never>(pending: PromiseLike<T>) =>
-        ({ pending, value: null }) as Expected<T, E>,
-    Reject: <E>(error: E) => ({ error, value: null }) as Rejected<E>,
-});
+export const Result = Object.assign(
+    union([Thenable]).typed({
+        Accept: <T>(value: T) => ({ value }) as Accepted<T>,
+        Expect: <T, E = never>(pending: PromiseLike<T>) =>
+            ({ pending, value: null }) as Expected<T, E>,
+        Reject: <E>(error: E) => ({ error, value: null }) as Rejected<E>,
+    }),
+    {
+        /**
+         * Aggregate an array of Results. Returns `Accept([...])` only if every
+         * element is `Accept`; short-circuits on the first `Reject`.
+         *
+         * `Expect` (pending) elements are surfaced as a single `Expect` whose
+         * resolved value is the aggregated value tuple.
+         */
+        all<Rs extends readonly Result<unknown, unknown>[]>(
+            results: readonly [...Rs],
+        ): Result<AllValues<Rs>, AnyError<Rs>> {
+            const values: unknown[] = [];
+            const pendings: PromiseLike<unknown>[] = [];
+            const pendingIndices: number[] = [];
+
+            for (let i = 0; i < results.length; i++) {
+                const r = results[i]!;
+                const tag = getTag(r as Result<unknown, unknown>);
+                if (tag === "Reject") {
+                    return Result.Reject(
+                        (r as { error: unknown }).error,
+                    ) as unknown as Result<AllValues<Rs>, AnyError<Rs>>;
+                }
+                if (tag === "Expect") {
+                    pendings.push((r as { pending: PromiseLike<unknown> }).pending);
+                    pendingIndices.push(i);
+                    values.push(undefined); // placeholder
+                } else {
+                    values.push((r as { value: unknown }).value);
+                }
+            }
+
+            if (pendings.length === 0) {
+                return Result.Accept(values) as Result<
+                    AllValues<Rs>,
+                    AnyError<Rs>
+                >;
+            }
+
+            return Result.Expect(
+                Promise.all(pendings).then((resolved) => {
+                    for (let i = 0; i < resolved.length; i++) {
+                        values[pendingIndices[i]!] = resolved[i];
+                    }
+                    return values as AllValues<Rs>;
+                }),
+            ) as Result<AllValues<Rs>, AnyError<Rs>>;
+        },
+    },
+);

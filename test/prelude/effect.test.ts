@@ -493,3 +493,59 @@ describe("watchEffect — timeout", () => {
         handle.stop();
     });
 });
+
+describe("Effect.all (v0.3.10 Phase 5)", () => {
+    it("aggregates Done values in parallel", async () => {
+        const e = Effect.all([
+            Effect.Idle<number>(async () => 1),
+            Effect.Idle<string>(async () => "a"),
+        ]);
+        const result = await e.run();
+        expect(getTag(result)).toBe("Done");
+        expect((result as { value: unknown[] }).value).toEqual([1, "a"]);
+    });
+
+    it("fails fast on the first Failed effect", async () => {
+        const e = Effect.all([
+            Effect.Idle<number>(async () => 1),
+            Effect.Idle<string>(async () => {
+                throw Fault.Fail("boom");
+            }),
+        ]);
+        const result = await e.run();
+        expect(getTag(result)).toBe("Failed");
+    });
+});
+
+describe("Effect.allSettled (v0.3.10 Phase 5)", () => {
+    it("returns every settlement, never failing the aggregate", async () => {
+        const e = Effect.allSettled([
+            Effect.Idle<number>(async () => 1),
+            Effect.Idle<string>(async () => {
+                throw Fault.Fail("boom");
+            }),
+            Effect.Idle<boolean>(async () => true),
+        ]);
+        const result = await e.run();
+        expect(getTag(result)).toBe("Done");
+        const settled = (result as { value: unknown[] }).value;
+        expect(settled.length).toBe(3);
+        expect(getTag(settled[0] as never)).toBe("Done");
+        expect(getTag(settled[1] as never)).toBe("Failed");
+        expect(getTag(settled[2] as never)).toBe("Done");
+    });
+});
+
+describe("Effect.runOr (v0.3.10 Phase 5)", () => {
+    it("returns the resolved value on Done", async () => {
+        const e = Effect.Idle<number>(async () => 42);
+        expect(await e.runOr(0)).toBe(42);
+    });
+
+    it("returns the default on Failed", async () => {
+        const e = Effect.Idle<number>(async () => {
+            throw Fault.Fail("boom");
+        });
+        expect(await e.runOr(99)).toBe(99);
+    });
+});

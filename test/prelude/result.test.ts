@@ -317,3 +317,38 @@ describe("Result.getOr", () => {
         expect(r.getOr(7)).toBe(7);
     });
 });
+
+describe("Result.all (v0.3.10 Phase 5)", () => {
+    it("returns Accept with all values when every result is Accept", () => {
+        const r = Result.all([
+            Result.Accept<number>(1),
+            Result.Accept<string>("a"),
+        ]);
+        expect(getTag(r)).toBe("Accept");
+        expect((r as Accepted<unknown[]>).value).toEqual([1, "a"]);
+    });
+
+    it("short-circuits on the first Reject", () => {
+        const r = Result.all([
+            Result.Accept<number>(1),
+            Result.Reject<string>("err"),
+            Result.Accept<boolean>(true),
+        ]);
+        expect(getTag(r)).toBe("Reject");
+    });
+
+    it("returns Expect when any element is Expect", async () => {
+        const r = Result.all([
+            Result.Accept<number>(1),
+            Result.Expect<string, never>(Promise.resolve("a")),
+        ]);
+        expect(getTag(r)).toBe("Expect");
+        const settled = await (r as Expected<unknown[], never>).pending;
+        expect(settled).toEqual([1, "a"]);
+    });
+
+    it("returns Accept([]) for empty input", () => {
+        const r = Result.all([]);
+        expect(getTag(r)).toBe("Accept");
+    });
+});

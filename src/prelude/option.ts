@@ -1,7 +1,11 @@
-import { union, type Variant } from "../union.ts";
+import { union, getTag, type Variant } from "../union.ts";
 import { match } from "../match.ts";
 import { Result } from "./result.ts";
 import { Bindable } from "./traits.ts";
+
+type AllValues<Os extends readonly Option<unknown>[]> = {
+    [K in keyof Os]: Os[K] extends Option<infer T> ? T : never;
+};
 
 export abstract class Mappable<T> extends Bindable<T> {
     map<U>(fn: (value: T) => U): Option<U> {
@@ -59,7 +63,29 @@ export type Some<T> = Variant<"Some", { value: T }, Mappable<T>>;
 export type None<T = never> = Variant<"None", { value: null }, Mappable<T>>;
 export type Option<T> = Some<T> | None<T>;
 
-export const Option = union([Mappable]).typed({
-    Some: <T>(value: T) => ({ value }) as Some<T>,
-    None: <T = never>() => ({ value: null }) as None<T>,
-});
+export const Option = Object.assign(
+    union([Mappable]).typed({
+        Some: <T>(value: T) => ({ value }) as Some<T>,
+        None: <T = never>() => ({ value: null }) as None<T>,
+    }),
+    {
+        /**
+         * Aggregate an array of Options. Returns `Some([...])` only if every
+         * element is `Some`; otherwise `None`.
+         *
+         * Fail-fast: stops scanning at the first `None`.
+         */
+        all<Os extends readonly Option<unknown>[]>(
+            options: readonly [...Os],
+        ): Option<AllValues<Os>> {
+            const values: unknown[] = [];
+            for (const opt of options) {
+                if (getTag(opt) === "None") {
+                    return Option.None() as Option<AllValues<Os>>;
+                }
+                values.push((opt as { value: unknown }).value);
+            }
+            return Option.Some(values) as Option<AllValues<Os>>;
+        },
+    },
+);

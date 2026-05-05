@@ -93,6 +93,17 @@ export abstract class Computable<T, E> extends Bindable<T> {
             return (recoveryResult as Done<T, F>).value;
         }) as Idle<T, F>;
     }
+
+    /**
+     * Run the effect and return the resolved value, or `defaultValue` if the
+     * effect fails. Mirrors `AsyncDerived.runOr` and the `getOr` family.
+     */
+    async runOr(defaultValue: T): Promise<T> {
+        const self = this as unknown as Effect<T, E>;
+        const result = await self.run();
+        if (getTag(result) === "Failed") return defaultValue;
+        return (result as Done<T, E>).value;
+    }
 }
 
 export type Idle<T, E = never> = Variant<
@@ -136,18 +147,74 @@ export type Effect<T, E = never> =
     | Stale<T, E>
     | Failed<T, E>;
 
-export const Effect = union([Computable]).typed({
-    Idle:    <T, E = never>(thunk: () => Promise<T>) =>
-        ({ thunk }) as Idle<T, E>,
-    Running: <T, E = never>(pending: Promise<Done<T, E> | Failed<T, E>>) =>
-        ({ pending }) as Running<T, E>,
-    Done:    <T, E = never>(value: T) =>
-        ({ value }) as Done<T, E>,
-    Stale:   <T, E = never>(value: T | null, thunk: () => Promise<T>) =>
-        ({ value, thunk }) as Stale<T, E>,
-    Failed:  <T, E = never>(fault: Fault<E>, attempts: number, nextRetryAt: number | null) =>
-        ({ fault, attempts, nextRetryAt }) as Failed<T, E>,
-});
+type AllValues<Es extends readonly Effect<unknown, unknown>[]> = {
+    [K in keyof Es]: Es[K] extends Effect<infer T, unknown> ? T : never;
+};
+
+type AnyError<Es extends readonly Effect<unknown, unknown>[]> =
+    Es[number] extends Effect<unknown, infer E> ? E : never;
+
+type Settled<Es extends readonly Effect<unknown, unknown>[]> = {
+    [K in keyof Es]: Es[K] extends Effect<infer T, infer E>
+        ? Done<T, E> | Failed<T, E>
+        : never;
+};
+
+export const Effect = Object.assign(
+    union([Computable]).typed({
+        Idle:    <T, E = never>(thunk: () => Promise<T>) =>
+            ({ thunk }) as Idle<T, E>,
+        Running: <T, E = never>(pending: Promise<Done<T, E> | Failed<T, E>>) =>
+            ({ pending }) as Running<T, E>,
+        Done:    <T, E = never>(value: T) =>
+            ({ value }) as Done<T, E>,
+        Stale:   <T, E = never>(value: T | null, thunk: () => Promise<T>) =>
+            ({ value, thunk }) as Stale<T, E>,
+        Failed:  <T, E = never>(fault: Fault<E>, attempts: number, nextRetryAt: number | null) =>
+            ({ fault, attempts, nextRetryAt }) as Failed<T, E>,
+    }),
+    {
+        /**
+         * Run an array of effects in parallel and aggregate the resolved values
+         * as a tuple. Fail-fast: rejects on the first `Failed` effect, mirroring
+         * `Promise.all`. Returns an `Idle<T[], E>` — call `.run()` to start.
+         */
+        all<Es extends readonly Effect<unknown, unknown>[]>(
+            effects: readonly [...Es],
+        ): Idle<AllValues<Es>, AnyError<Es>> {
+            return Effect.Idle(async () => {
+                const settled = await Promise.all(
+                    effects.map((e) => (e as Effect<unknown, unknown>).run()),
+                );
+                const values: unknown[] = [];
+                for (const s of settled) {
+                    if (getTag(s) === "Failed") {
+                        throw (s as Failed<unknown, unknown>).fault;
+                    }
+                    values.push((s as Done<unknown, unknown>).value);
+                }
+                return values as AllValues<Es>;
+            }) as Idle<AllValues<Es>, AnyError<Es>>;
+        },
+
+        /**
+         * Run an array of effects in parallel and collect every settlement.
+         * Never fails: returns an `Idle<Array<Done | Failed>, never>` whose
+         * resolved value preserves each input's settlement. Mirrors
+         * `Promise.allSettled`.
+         */
+        allSettled<Es extends readonly Effect<unknown, unknown>[]>(
+            effects: readonly [...Es],
+        ): Idle<Settled<Es>, never> {
+            return Effect.Idle(async () => {
+                const settled = await Promise.all(
+                    effects.map((e) => (e as Effect<unknown, unknown>).run()),
+                );
+                return settled as Settled<Es>;
+            }) as Idle<Settled<Es>, never>;
+        },
+    },
+);
 
 // ---------------------------------------------------------------------------
 // watchEffect — reactive effect runner
