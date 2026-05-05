@@ -229,3 +229,32 @@ describe("disposal", () => {
         expect(() => d.dispatch(Counter.Increment())).toThrow();
     });
 });
+
+describe("Dispatcher.peek and getOr (v0.3.10 Phase 5)", () => {
+    it("peek() returns the extracted value untracked", () => {
+        const d = Dispatcher.create<number, number, number>(5, {
+            extract: (s) => s,
+            apply: (current, cmd) =>
+                Validation.Valid({ next: cmd, inverse: current }),
+        });
+        expect(d.peek()).toBe(5);
+    });
+
+    it("getOr returns the value when extracted is non-null", () => {
+        const d = Dispatcher.create<number, number, number>(5, {
+            extract: (s) => s,
+            apply: (current, cmd) =>
+                Validation.Valid({ next: cmd, inverse: current }),
+        });
+        expect(d.getOr(0)).toBe(5);
+    });
+
+    it("getOr returns the default when extract yields null", () => {
+        const d = Dispatcher.create<number, number | null, number>(null, {
+            extract: (s) => s,
+            apply: (current, cmd) =>
+                Validation.Valid({ next: cmd, inverse: current ?? 0 }),
+        });
+        expect(d.getOr(99)).toBe(99);
+    });
+});

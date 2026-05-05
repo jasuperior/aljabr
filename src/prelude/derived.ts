@@ -152,8 +152,23 @@ export class Derived<T> {
         return new Derived(fnOrOptions.get, fnOrOptions.set);
     }
 
-    /** The current lifecycle state. Pattern-match this with `match`. */
-    get state(): DerivedState<T> {
+    /**
+     * Read the current lifecycle state and register this derived as a
+     * dependency in the active tracking context.
+     */
+    state(): DerivedState<T> {
+        const comp = getCurrentComputation();
+        if (comp && !this.#subscribers.has(comp)) {
+            this.#trackComputation(comp);
+        }
+        return this.#state;
+    }
+
+    /**
+     * Read the current lifecycle state without registering a dependency.
+     * Pattern-match this with `match`.
+     */
+    peekState(): DerivedState<T> {
         return this.#state;
     }
 
@@ -180,6 +195,15 @@ export class Derived<T> {
         }
 
         return this.#state.getValue();
+    }
+
+    /**
+     * Read the current value with a fallback default. Tracked.
+     * Returns `defaultValue` when the extracted value is `null`.
+     */
+    getOr(defaultValue: T): T {
+        const value = this.get();
+        return value === null ? defaultValue : value;
     }
 
     /**
@@ -414,8 +438,23 @@ export class AsyncDerived<T, E = unknown> {
         return new AsyncDerived(fn, options);
     }
 
-    /** The current lifecycle state. Pattern-match this with `match`. */
-    get state(): AsyncDerivedState<T, E> {
+    /**
+     * Read the current lifecycle state and register this derived as a
+     * dependency in the active tracking context.
+     */
+    state(): AsyncDerivedState<T, E> {
+        const comp = getCurrentComputation();
+        if (comp && !this.#subscribers.has(comp)) {
+            this.#trackComputation(comp);
+        }
+        return this.#state;
+    }
+
+    /**
+     * Read the current lifecycle state without registering a dependency.
+     * Pattern-match this with `match`.
+     */
+    peekState(): AsyncDerivedState<T, E> {
         return this.#state;
     }
 

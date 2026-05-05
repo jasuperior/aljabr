@@ -1,7 +1,7 @@
 import { union, type Variant } from "../union.ts";
 import { match } from "../match.ts";
 import { Result } from "./result.ts";
-import { Mappable } from "./traits.ts";
+import { Bindable } from "./traits.ts";
 
 type CombineValues<A, B> = A extends readonly unknown[] ? [...A, B] : [A, B]
 
@@ -12,13 +12,29 @@ type AllValues<Vs extends readonly Validation<unknown, unknown>[]> = {
 type AllError<Vs extends readonly Validation<unknown, unknown>[]> =
     Vs[number] extends Validation<unknown, infer E> ? E : never
 
-export abstract class Combinable<T, E> extends Mappable<T> {
+export abstract class Combinable<T, E> extends Bindable<T> {
     map<U>(fn: (value: T) => U): Validation<U, E> {
         return match(this as unknown as Validation<T, E>, {
             Unvalidated: () => Validation.Unvalidated(),
             Valid: ({ value }) => Validation.Valid(fn(value)),
             Invalid: ({ errors }) => Validation.Invalid(errors),
         }) as Validation<U, E>;
+    }
+
+    flatMap<U>(fn: (value: T) => Validation<U, E>): Validation<U, E> {
+        return match(this as unknown as Validation<T, E>, {
+            Unvalidated: () => Validation.Unvalidated(),
+            Valid: ({ value }) => fn(value),
+            Invalid: ({ errors }) => Validation.Invalid(errors),
+        }) as Validation<U, E>;
+    }
+
+    getOr(defaultValue: T): T {
+        return match(this as unknown as Validation<T, E>, {
+            Unvalidated: () => defaultValue,
+            Valid: ({ value }) => value as T,
+            Invalid: () => defaultValue,
+        });
     }
 
     combine<U>(other: Validation<U, E>): Validation<CombineValues<T, U>, E> {

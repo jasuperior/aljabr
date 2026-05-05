@@ -646,3 +646,15 @@ describe("RefArray iterator methods", () => {
         expect(doubled.get(0)).toBe(20);
     });
 });
+
+describe("RefArray.getOr (v0.3.10 Phase 5)", () => {
+    it("returns the item when index is in range", () => {
+        const r = Ref.create([10, 20, 30]);
+        expect(r.getOr(1, -1)).toBe(20);
+    });
+
+    it("returns the default when index is out of range", () => {
+        const r = Ref.create([10, 20, 30]);
+        expect(r.getOr(99, -1)).toBe(-1);
+    });
+});

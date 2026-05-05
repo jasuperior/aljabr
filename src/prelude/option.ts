@@ -18,11 +18,16 @@ export abstract class Mappable<T> extends Bindable<T> {
         }) as Option<U>;
     }
 
-    getOrElse(defaultValue: T): T {
+    getOr(defaultValue: T): T {
         return match(this as unknown as Option<T>, {
             Some: ({ value }) => value,
             None: () => defaultValue,
         });
+    }
+
+    /** @deprecated Use {@link getOr} instead. Removed in a future release. */
+    getOrElse(defaultValue: T): T {
+        return this.getOr(defaultValue);
     }
 
     toResult<E>(error: () => Promise<E>): Result<T, E>;

@@ -94,7 +94,7 @@ export function memo<T>(fn: () => T): Getter<T, DerivedState<T>> {
         {
             state(): DerivedState<T> {
                 d.get(); // registers tracking + evaluates
-                return d.state;
+                return d.peekState();
             },
         },
     );
@@ -217,7 +217,7 @@ export function query<T, E = unknown>(
         },
         {
             state(): AsyncDerivedState<T, E> {
-                return d.state;
+                return d.peekState();
             },
         },
     );

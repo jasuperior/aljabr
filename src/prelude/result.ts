@@ -1,7 +1,48 @@
-import { union, Trait, type Variant } from "../union.ts";
+import { union, type Variant } from "../union.ts";
 import { match } from "../match.ts";
+import { Bindable } from "./traits.ts";
 
-export abstract class Thenable<T, E = never> extends Trait<{ value: unknown }> {
+export abstract class Thenable<T, E = never> extends Bindable<T> {
+    map<U>(fn: (value: T) => U): Result<U, E> {
+        return match(this as unknown as Result<T, E>, {
+            Accept: ({ value }) => Result.Accept(fn(value)),
+            Expect: ({ pending }) =>
+                Result.Expect<U, E>(
+                    (pending as PromiseLike<T>).then(fn) as PromiseLike<U>,
+                ),
+            Reject: ({ error }) =>
+                Result.Reject(error) as unknown as Result<U, E>,
+        }) as Result<U, E>;
+    }
+
+    flatMap<U>(fn: (value: T) => Result<U, E>): Result<U, E> {
+        return match(this as unknown as Result<T, E>, {
+            Accept: ({ value }) => fn(value),
+            Expect: ({ pending }) =>
+                Result.Expect<U, E>(
+                    (pending as PromiseLike<T>).then((v) => {
+                        const next = fn(v);
+                        return match(next, {
+                            Accept: ({ value }) => Promise.resolve(value),
+                            Expect: ({ pending: p }) => p,
+                            Reject: ({ error }) =>
+                                Promise.reject(error) as Promise<U>,
+                        });
+                    }) as PromiseLike<U>,
+                ),
+            Reject: ({ error }) =>
+                Result.Reject(error) as unknown as Result<U, E>,
+        }) as Result<U, E>;
+    }
+
+    getOr(defaultValue: T): T {
+        return match(this as unknown as Result<T, E>, {
+            Accept: ({ value }) => value as T,
+            Expect: () => defaultValue,
+            Reject: () => defaultValue,
+        });
+    }
+
     then<TResult1 = T, TResult2 = E>(
         onAccepted?:
             | ((value: T) => TResult1 | PromiseLike<TResult1>)

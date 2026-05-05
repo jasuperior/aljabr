@@ -178,6 +178,16 @@ export class Signal<T, S = never> {
     }
 
     /**
+     * Read the current value with a fallback default. Tracked.
+     * Returns `defaultValue` when the extracted value is `null`
+     * (Unset / Disposed / extracted-null state).
+     */
+    getOr(defaultValue: T): T {
+        const value = this.get();
+        return value === null ? defaultValue : value;
+    }
+
+    /**
      * Read the full state union and register this signal as a dependency.
      *
      * Unlike `get()` which extracts only `T | null`, `state()` returns the

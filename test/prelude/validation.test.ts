@@ -203,3 +203,51 @@ describe("Validation.toResult", () => {
         expect(r.error).toEqual([]);
     });
 });
+
+describe("Validation.flatMap", () => {
+    it("chains a Validation-returning function on Valid", () => {
+        const r = valid<number, string>(2).flatMap((n) =>
+            Validation.Valid<number, string>(n + 1),
+        );
+        expect(getTag(r)).toBe("Valid");
+        expect((r as { value: number }).value).toBe(3);
+    });
+
+    it("propagates Invalid without invoking fn", () => {
+        let called = false;
+        const r = invalid<number, string>("e").flatMap((n) => {
+            called = true;
+            return Validation.Valid<number, string>(n);
+        });
+        expect(called).toBe(false);
+        expect(getTag(r)).toBe("Invalid");
+    });
+
+    it("returns Invalid when the inner fn returns Invalid", () => {
+        const r = valid<number, string>(1).flatMap(() =>
+            Validation.Invalid<number, string>(["inner"]),
+        );
+        expect(getTag(r)).toBe("Invalid");
+    });
+
+    it("returns Unvalidated when input is Unvalidated", () => {
+        const r = Validation.Unvalidated<number, string>().flatMap((n) =>
+            Validation.Valid<number, string>(n),
+        );
+        expect(getTag(r)).toBe("Unvalidated");
+    });
+});
+
+describe("Validation.getOr", () => {
+    it("returns value on Valid", () => {
+        expect(valid<number, string>(42).getOr(0)).toBe(42);
+    });
+
+    it("returns default on Invalid", () => {
+        expect(invalid<number, string>("e").getOr(99)).toBe(99);
+    });
+
+    it("returns default on Unvalidated", () => {
+        expect(Validation.Unvalidated<number, string>().getOr(7)).toBe(7);
+    });
+});

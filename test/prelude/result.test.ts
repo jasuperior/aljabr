@@ -252,3 +252,68 @@ describe("Result.catch", () => {
         });
     });
 });
+
+// ---------------------------------------------------------------------------
+// map / flatMap / getOr (added in v0.3.10 Phase 5)
+// ---------------------------------------------------------------------------
+
+describe("Result.map", () => {
+    it("transforms the Accept value", () => {
+        const r = Result.Accept<number>(2).map((n) => n * 3);
+        expect(getTag(r)).toBe("Accept");
+        expect((r as Accepted<number>).value).toBe(6);
+    });
+
+    it("propagates Reject without invoking fn", () => {
+        let called = false;
+        const r: ResultType<number, string> = Result.Reject("err");
+        const out = r.map((n) => {
+            called = true;
+            return n + 1;
+        });
+        expect(called).toBe(false);
+        expect(getTag(out)).toBe("Reject");
+    });
+
+    it("threads through Expect via promise chaining", async () => {
+        const r = Result.Expect<number, never>(Promise.resolve(2)).map((n) => n * 5);
+        expect(getTag(r)).toBe("Expect");
+        const v = await (r as Expected<number, never>).pending;
+        expect(v).toBe(10);
+    });
+});
+
+describe("Result.flatMap", () => {
+    it("chains a Result-returning function on Accept", () => {
+        const r = Result.Accept<number>(2).flatMap((n) => Result.Accept(n + 1));
+        expect(getTag(r)).toBe("Accept");
+        expect((r as Accepted<number>).value).toBe(3);
+    });
+
+    it("propagates Reject without invoking fn", () => {
+        const r: ResultType<number, string> = Result.Reject("err");
+        const out = r.flatMap((n) => Result.Accept(n));
+        expect(getTag(out)).toBe("Reject");
+    });
+
+    it("returns Reject when the inner fn returns Reject", () => {
+        const r = Result.Accept<number>(1).flatMap(() => Result.Reject<string>("inner-err"));
+        expect(getTag(r)).toBe("Reject");
+    });
+});
+
+describe("Result.getOr", () => {
+    it("returns value on Accept", () => {
+        expect(Result.Accept<number>(42).getOr(0)).toBe(42);
+    });
+
+    it("returns default on Reject", () => {
+        const r: ResultType<number, string> = Result.Reject("err");
+        expect(r.getOr(99)).toBe(99);
+    });
+
+    it("returns default on Expect (pending)", () => {
+        const r = Result.Expect<number, never>(Promise.resolve(1));
+        expect(r.getOr(7)).toBe(7);
+    });
+});

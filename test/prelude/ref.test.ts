@@ -972,3 +972,15 @@ describe("PathValue type inference", () => {
         expectTypeOf(ref.get("user.name")).toEqualTypeOf<string | undefined>();
     });
 });
+
+describe("Ref.getOr (v0.3.10 Phase 5)", () => {
+    it("returns the value at path when defined", () => {
+        const r = Ref.create({ user: { name: "Ada" } });
+        expect(r.getOr("user.name", "anon")).toBe("Ada");
+    });
+
+    it("returns the default when path is undefined on an unset Ref", () => {
+        const r = Ref.create<{ user: { name: string } }>();
+        expect(r.getOr("user.name", "anon")).toBe("anon");
+    });
+});

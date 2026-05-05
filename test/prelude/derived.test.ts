@@ -10,6 +10,7 @@ import { Schedule, ScheduleError } from "../../src/prelude/schedule";
 import { Fault } from "../../src/prelude/fault";
 import { instanceOf, getTag, __ } from "../../src/union";
 import { match } from "../../src/match";
+import { createOwner, trackIn } from "../../src/prelude/context";
 
 // ===========================================================================
 // Derived<T>
@@ -18,7 +19,7 @@ import { match } from "../../src/match";
 describe("Derived — read-only form", () => {
     it("starts in Uncomputed state", () => {
         const d = Derived.create(() => 42);
-        expect(getTag(d.state)).toBe("Uncomputed");
+        expect(getTag(d.peekState())).toBe("Uncomputed");
     });
 
     it("evaluates lazily on first get()", () => {
@@ -32,7 +33,7 @@ describe("Derived — read-only form", () => {
     it("transitions to Computed after first get()", () => {
         const d = Derived.create(() => "hello");
         d.get();
-        expect(getTag(d.state)).toBe("Computed");
+        expect(getTag(d.peekState())).toBe("Computed");
     });
 
     it("does not re-evaluate when dependencies haven't changed", () => {
@@ -52,11 +53,11 @@ describe("Derived — read-only form", () => {
         expect(fn).toHaveBeenCalledOnce();
 
         sig.set(5);
-        expect(getTag(d.state)).toBe("Stale");
+        expect(getTag(d.peekState())).toBe("Stale");
 
         expect(d.get()).toBe(10);
         expect(fn).toHaveBeenCalledTimes(2);
-        expect(getTag(d.state)).toBe("Computed");
+        expect(getTag(d.peekState())).toBe("Computed");
     });
 });
 
@@ -93,7 +94,7 @@ describe("Derived — DerivedState lifecycle", () => {
         const sig = Signal.create(1);
         const d = Derived.create(() => sig.get()!);
 
-        const s0 = match(d.state, {
+        const s0 = match(d.peekState(), {
             Uncomputed: () => "uncomputed",
             Computed: () => "computed",
             Stale: () => "stale",
@@ -102,7 +103,7 @@ describe("Derived — DerivedState lifecycle", () => {
         expect(s0).toBe("uncomputed");
 
         d.get();
-        const s1 = match(d.state, {
+        const s1 = match(d.peekState(), {
             Uncomputed: () => "uncomputed",
             Computed: ({ value }) => `computed(${value})`,
             Stale: () => "stale",
@@ -111,7 +112,7 @@ describe("Derived — DerivedState lifecycle", () => {
         expect(s1).toBe("computed(1)");
 
         sig.set(2);
-        const s2 = match(d.state, {
+        const s2 = match(d.peekState(), {
             Uncomputed: () => "uncomputed",
             Computed: () => "computed",
             Stale: ({ value }) => `stale(${value})`,
@@ -124,7 +125,7 @@ describe("Derived — DerivedState lifecycle", () => {
         const d = Derived.create(() => 1);
         d.get();
         d.dispose();
-        expect(getTag(d.state)).toBe("Disposed");
+        expect(getTag(d.peekState())).toBe("Disposed");
     });
 
     it("dispose() causes get() to return null", () => {
@@ -172,7 +173,7 @@ describe("Derived — writable form", () => {
 describe("AsyncDerived — initial state", () => {
     it("starts in Uncomputed state", () => {
         const d = AsyncDerived.create(async () => 42);
-        expect(getTag(d.state)).toBe("Uncomputed");
+        expect(getTag(d.peekState())).toBe("Uncomputed");
     });
 
     it("peek() returns null before first evaluation", () => {
@@ -190,7 +191,7 @@ describe("AsyncDerived — successful evaluation", () => {
     it("transitions to Ready after get()", async () => {
         const d = AsyncDerived.create(async () => "hello");
         await d.get();
-        expect(getTag(d.state)).toBe("Ready");
+        expect(getTag(d.peekState())).toBe("Ready");
     });
 
     it("peek() returns the value in Ready state", async () => {
@@ -216,7 +217,7 @@ describe("AsyncDerived — Reloading (stale value preserved)", () => {
         await d.get(); // Ready(1)
         sig.set(2); // dirty() fires synchronously → Reloading(1)
 
-        expect(getTag(d.state)).toBe("Reloading");
+        expect(getTag(d.peekState())).toBe("Reloading");
         expect(d.peek()).toBe(1); // stale value preserved
     });
 
@@ -228,7 +229,7 @@ describe("AsyncDerived — Reloading (stale value preserved)", () => {
         sig.set(20); // dirty() → Reloading(10) synchronously
 
         // State is already Reloading — peek returns stale without triggering re-eval
-        expect(getTag(d.state)).toBe("Reloading");
+        expect(getTag(d.peekState())).toBe("Reloading");
         expect(d.peek()).toBe(10);
 
         // Now trigger re-evaluation and await completion
@@ -245,7 +246,7 @@ describe("AsyncDerived — failure (Fault.Defect)", () => {
         });
 
         await expect(d.get()).rejects.toMatchObject({ thrown: err });
-        expect(getTag(d.state)).toBe("Failed");
+        expect(getTag(d.peekState())).toBe("Failed");
     });
 
     it("Failed state carries a Fault.Defect", async () => {
@@ -253,7 +254,7 @@ describe("AsyncDerived — failure (Fault.Defect)", () => {
             throw new Error("boom");
         });
         await d.get().catch(() => {});
-        const fault = d.state.getFault();
+        const fault = d.peekState().getFault();
         expect(fault).not.toBeNull();
         expect(getTag(fault!)).toBe("Defect");
     });
@@ -267,7 +268,7 @@ describe("AsyncDerived — failure (Fault.Fail)", () => {
         });
 
         await d.get().catch(() => {});
-        const fault = d.state.getFault();
+        const fault = d.peekState().getFault();
         expect(fault).not.toBeNull();
         expect(getTag(fault!)).toBe("Fail");
         expect((fault as ReturnType<typeof Fault.Fail>).error).toBe(
@@ -281,7 +282,7 @@ describe("AsyncDerived — dispose", () => {
         const d = AsyncDerived.create(async () => 1);
         await d.get();
         d.dispose();
-        expect(getTag(d.state)).toBe("Disposed");
+        expect(getTag(d.peekState())).toBe("Disposed");
     });
 
     it("get() rejects on a disposed derived", async () => {
@@ -342,11 +343,11 @@ describe("AsyncDerived — retry with Schedule.Fixed", () => {
         // Let the first attempt fail
         await Promise.resolve();
         await Promise.resolve();
-        expect(getTag(d.state)).toBe("Failed");
+        expect(getTag(d.peekState())).toBe("Failed");
 
         // Advance past the retry delay — triggers retry 2 (fails again)
         await vi.advanceTimersByTimeAsync(100);
-        expect(getTag(d.state)).toBe("Failed");
+        expect(getTag(d.peekState())).toBe("Failed");
 
         // Advance again — triggers retry 3 (succeeds)
         await vi.advanceTimersByTimeAsync(100);
@@ -354,7 +355,7 @@ describe("AsyncDerived — retry with Schedule.Fixed", () => {
         // Now fetch the settled value
         const result = await d.get();
         expect(result).toBe("done");
-        expect(getTag(d.state)).toBe("Ready");
+        expect(getTag(d.peekState())).toBe("Ready");
         d.dispose();
     });
 });
@@ -385,9 +386,9 @@ describe("AsyncDerived — maxRetries exceeded", () => {
         }
 
         const caught = await promise;
-        expect(getTag(d.state)).toBe("Failed");
+        expect(getTag(d.peekState())).toBe("Failed");
 
-        const fault = d.state.getFault();
+        const fault = d.peekState().getFault();
         expect(fault).not.toBeNull();
         if (fault !== null) {
             const isMaxRetries = match(fault, {
@@ -431,7 +432,7 @@ describe("AsyncDerived — shouldRetry", () => {
 
         const result = await promise;
         expect(attempt).toBe(1);
-        expect(getTag(d.state)).toBe("Failed");
+        expect(getTag(d.peekState())).toBe("Failed");
         void result;
         d.dispose();
     });
@@ -497,7 +498,7 @@ describe("AsyncDerived — Interrupted fault", () => {
         await new Promise(r => setTimeout(r, 0));
 
         // #evaluate catch runs after dispose, overwriting Disposed with Failed(Interrupted)
-        const state = d.state;
+        const state = d.peekState();
         expect(["Failed", "Disposed"]).toContain(getTag(state));
         if (getTag(state) === "Failed") {
             const fault = state.getFault();
@@ -525,8 +526,8 @@ describe("AsyncDerived — Custom schedule returning null", () => {
 
         // No retry timer was set — only the initial attempt ran
         expect(attempt).toBe(1);
-        expect(getTag(d.state)).toBe("Failed");
-        const fault = d.state.getFault();
+        expect(getTag(d.peekState())).toBe("Failed");
+        const fault = d.peekState().getFault();
         // Fault should be the original Fail, NOT MaxRetriesExceeded
         expect(fault).not.toBeNull();
         expect(getTag(fault!)).toBe("Fail");
@@ -552,8 +553,8 @@ describe("AsyncDerived — timeout", () => {
         await vi.advanceTimersByTimeAsync(500);
 
         await promise;
-        expect(getTag(d.state)).toBe("Failed");
-        const state = d.state;
+        expect(getTag(d.peekState())).toBe("Failed");
+        const state = d.peekState();
 
         if (getTag(state) === "Failed") {
             // ScheduleError.TimedOut is thrown by the timeout wrapper and lands as a Defect
@@ -562,5 +563,40 @@ describe("AsyncDerived — timeout", () => {
             );
         }
         d.dispose();
+    });
+});
+
+describe("Derived state()/peekState() and getOr (v0.3.10 Phase 5)", () => {
+    it("peekState() returns the current state untracked", () => {
+        const d = Derived.create(() => 1);
+        expect(getTag(d.peekState())).toBe("Uncomputed");
+        d.get();
+        expect(getTag(d.peekState())).toBe("Computed");
+    });
+
+    it("state() returns the current state and registers a dependency", () => {
+        const src = Signal.create(0);
+        const d = Derived.create(() => src.get()! + 1);
+        d.get();
+
+        let stateChanges = 0;
+        const owner = createOwner(null);
+        owner.dirty = () => { stateChanges++; };
+        trackIn(owner, () => { d.state(); });
+        src.set(1);
+        expect(stateChanges).toBeGreaterThan(0);
+        owner.dispose();
+    });
+
+    it("getOr returns the value when Computed", () => {
+        const d = Derived.create(() => 42);
+        expect(d.getOr(0)).toBe(42);
+    });
+
+    it("getOr returns the default when Disposed", () => {
+        const d = Derived.create(() => 42);
+        d.get();
+        d.dispose();
+        expect(d.getOr(99)).toBe(99);
     });
 });

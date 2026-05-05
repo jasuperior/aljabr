@@ -64,6 +64,16 @@ describe("Option.getOrElse", () => {
     });
 });
 
+describe("Option.getOr", () => {
+    it("returns value for Some", () => {
+        expect(Option.Some("hello").getOr("default")).toBe("hello");
+    });
+    it("returns default for None", () => {
+        const n: Option<string> = Option.None();
+        expect(n.getOr("fallback")).toBe("fallback");
+    });
+});
+
 describe("Option.toResult", () => {
     it("Some becomes Accept", () => {
         const r = Option.Some(7).toResult("missing");

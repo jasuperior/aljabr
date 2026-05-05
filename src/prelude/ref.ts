@@ -459,6 +459,15 @@ export class RefArray<T> {
     }
 
     /**
+     * Read the item at index `i` with a fallback default. Tracked.
+     * Returns `defaultValue` when the index is out of bounds or unset.
+     */
+    getOr(i: number, defaultValue: T): T {
+        const value = this.get(i);
+        return value === undefined ? defaultValue : value;
+    }
+
+    /**
      * Returns a `Derived<T | undefined>` handle for index `i`.
      * Each call creates a new Derived — cache it if reused frequently.
      */
@@ -790,6 +799,18 @@ export class Ref<T extends object> {
         return path === undefined
             ? untrack(() => this.get())
             : untrack(() => this.get(path));
+    }
+
+    /**
+     * Read the value at `path` with a fallback default. Tracked.
+     * Returns `defaultValue` when the path is undefined or unset.
+     */
+    getOr<P extends Path<T>>(
+        path: P,
+        defaultValue: PathValue<T, P>,
+    ): PathValue<T, P> {
+        const value = this.get(path);
+        return value === undefined ? defaultValue : value;
     }
 
     /**

@@ -346,3 +346,21 @@ describe("Signal.subscribe", () => {
         expect(values).toEqual([42]);
     });
 });
+
+describe("Signal.getOr (v0.3.10 Phase 5)", () => {
+    it("returns the value when Active", () => {
+        const s = Signal.create(7);
+        expect(s.getOr(0)).toBe(7);
+    });
+
+    it("returns the default when Unset", () => {
+        const s = Signal.create<number>();
+        expect(s.getOr(99)).toBe(99);
+    });
+
+    it("returns the default when Disposed", () => {
+        const s = Signal.create(7);
+        s.dispose();
+        expect(s.getOr(99)).toBe(99);
+    });
+});

@@ -137,13 +137,31 @@ export class Dispatcher<T, S, Cmd> {
     }
 
     /**
-     * Read the extracted value (`T | null`) without registering a dependency.
+     * Read the extracted value (`T | null`) and register this dispatcher as a
+     * dependency in the active tracking context.
      */
     get(): T | null {
         const comp = getCurrentComputation();
         if (comp && !this.#subscribers.has(comp)) {
             this.#trackComputation(comp);
         }
+        return this.#protocol.extract(this.#state);
+    }
+
+    /**
+     * Read the extracted value with a fallback default. Tracked.
+     * Returns `defaultValue` when the extracted value is `null`.
+     */
+    getOr(defaultValue: T): T {
+        const value = this.get();
+        return value === null ? defaultValue : value;
+    }
+
+    /**
+     * Read the extracted value without registering a dependency.
+     * Safe to call outside reactive contexts.
+     */
+    peek(): T | null {
         return this.#protocol.extract(this.#state);
     }
 
