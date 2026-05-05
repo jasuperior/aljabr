@@ -258,3 +258,42 @@ describe("Dispatcher.peek and getOr (v0.3.10 Phase 5)", () => {
         expect(d.getOr(99)).toBe(99);
     });
 });
+
+describe("Dispatcher.subscribe (v0.3.10 Phase 5)", () => {
+    it("fires on successful dispatch with extracted value", () => {
+        const d = Dispatcher.create<number, number, number>(0, {
+            extract: (s) => s,
+            apply: (current, cmd) =>
+                Validation.Valid({ next: cmd, inverse: current }),
+        });
+        const seen: number[] = [];
+        d.subscribe((v) => { if (v !== null) seen.push(v); });
+        d.dispatch(5);
+        d.dispatch(7);
+        expect(seen).toEqual([5, 7]);
+    });
+
+    it("does not fire on rejected dispatch", () => {
+        const d = Dispatcher.create<number, number, number>(0, {
+            extract: (s) => s,
+            apply: () =>
+                Validation.Invalid([CommandError.Rejected("nope")]),
+        });
+        let count = 0;
+        d.subscribe(() => { count++; });
+        d.dispatch(5);
+        expect(count).toBe(0);
+    });
+
+    it("fires with null on dispose", () => {
+        const d = Dispatcher.create<number, number, number>(0, {
+            extract: (s) => s,
+            apply: (current, cmd) =>
+                Validation.Valid({ next: cmd, inverse: current }),
+        });
+        let lastValue: number | null = -1;
+        d.subscribe((v) => { lastValue = v; });
+        d.dispose();
+        expect(lastValue).toBeNull();
+    });
+});

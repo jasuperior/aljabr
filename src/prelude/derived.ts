@@ -114,6 +114,7 @@ export class Derived<T> {
     #state: DerivedState<T> = DerivedState.Uncomputed();
     #computation: Computation;
     readonly #subscribers = new Map<Computation, () => void>();
+    readonly #valueSubscribers = new Set<(value: T | null) => void>();
 
     private constructor(fn: () => T, setter?: (value: T) => void) {
         this.#fn = fn;
@@ -134,6 +135,11 @@ export class Derived<T> {
                 this.#state = DerivedState.Stale(this.#state.getValue() as T);
                 for (const comp of [...this.#subscribers.keys()]) {
                     scheduleNotification(comp);
+                }
+                // Push subscribers force eager re-evaluation so callbacks
+                // fire without an external pull.
+                if (this.#valueSubscribers.size > 0) {
+                    this.#evaluate();
                 }
             }
         };
@@ -231,6 +237,36 @@ export class Derived<T> {
     }
 
     /**
+     * Register a synchronous callback that fires every time this derived
+     * computes a new value. The callback receives the extracted `T | null`
+     * (same as `get()`/`peek()`).
+     *
+     * Push subscriptions trigger evaluation eagerly when a dependency changes
+     * — unlike `get()`, which is lazy. Use this when you need to observe
+     * values from outside the reactive graph (e.g. bridging to RxJS, devtools).
+     * Prefer `watch` for in-graph reactive coordination.
+     *
+     * Returns an unsubscribe function. Subscribers also receive `null` when
+     * this derived disposes, then are cleared.
+     */
+    subscribe(callback: (value: T | null) => void): () => void {
+        // Evaluate first (without firing the new callback) so source
+        // subscriptions are established — otherwise dirty() would never
+        // fire and the callback would never be invoked. Existing subscribers
+        // (if any) are notified by the eval, but the new callback is added
+        // afterward so it only sees future change notifications.
+        const isUncomputed = match(this.#state, {
+            Uncomputed: () => true,
+            Computed: () => false,
+            Stale: () => false,
+            Disposed: () => false,
+        });
+        if (isUncomputed) this.#evaluate();
+        this.#valueSubscribers.add(callback);
+        return () => this.#valueSubscribers.delete(callback);
+    }
+
+    /**
      * Dispose this derived value. Clears all subscriptions and transitions
      * to the `Disposed` state. Downstream computations that depend on this
      * derived will be notified as stale.
@@ -242,6 +278,8 @@ export class Derived<T> {
             scheduleNotification(comp);
         }
         this.#subscribers.clear();
+        for (const cb of this.#valueSubscribers) cb(null);
+        this.#valueSubscribers.clear();
     }
 
     /** @internal Remove a computation from this derived's subscriber set. */
@@ -263,6 +301,7 @@ export class Derived<T> {
 
         const value = trackIn(this.#computation, this.#fn);
         this.#state = DerivedState.Computed(value);
+        for (const cb of this.#valueSubscribers) cb(value);
     }
 }
 
@@ -404,6 +443,7 @@ export class AsyncDerived<T, E = unknown> {
     #currentScope: ScopeHandle | null = null;
     #retryTimer: ReturnType<typeof setTimeout> | null = null;
     readonly #subscribers = new Map<Computation, () => void>();
+    readonly #valueSubscribers = new Set<(value: T | null) => void>();
 
     private constructor(
         fn: (signal: AbortSignal, scope: ScopeHandle) => Promise<T>,
@@ -510,6 +550,20 @@ export class AsyncDerived<T, E = unknown> {
         return this.#state.getValue();
     }
 
+    /**
+     * Register a synchronous callback that fires every time this derived
+     * settles (`Ready` or `Failed`). The callback receives the extracted
+     * `T | null` (the value on `Ready`/`Reloading`, otherwise `null`).
+     *
+     * Push subscriptions trigger evaluation eagerly on dependency change.
+     * Use this when bridging to external systems; prefer `watch` for
+     * declarative reactive coordination.
+     */
+    subscribe(callback: (value: T | null) => void): () => void {
+        this.#valueSubscribers.add(callback);
+        return () => this.#valueSubscribers.delete(callback);
+    }
+
     /** Dispose this derived value and clear all subscriptions. */
     dispose(): void {
         this.#cancelRetryTimer();
@@ -519,6 +573,8 @@ export class AsyncDerived<T, E = unknown> {
         this.#state = AsyncDerivedState.Disposed();
         this.#notifySubscribers();
         this.#subscribers.clear();
+        for (const cb of this.#valueSubscribers) cb(null);
+        this.#valueSubscribers.clear();
     }
 
     /** @internal */
@@ -535,6 +591,8 @@ export class AsyncDerived<T, E = unknown> {
         for (const comp of [...this.#subscribers.keys()]) {
             scheduleNotification(comp);
         }
+        const value = this.#state.getValue();
+        for (const cb of this.#valueSubscribers) cb(value);
     }
 
     #cancelRetryTimer(): void {

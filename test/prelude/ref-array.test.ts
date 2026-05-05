@@ -658,3 +658,24 @@ describe("RefArray.getOr (v0.3.10 Phase 5)", () => {
         expect(r.getOr(99, -1)).toBe(-1);
     });
 });
+
+describe("RefArray.subscribe (v0.3.10 Phase 5)", () => {
+    it("fires on push/pop/splice with the current snapshot", () => {
+        const r = Ref.create([1, 2, 3]);
+        const seen: number[][] = [];
+        r.subscribe((arr) => seen.push([...arr]));
+        r.push(4);
+        r.pop();
+        expect(seen).toEqual([[1, 2, 3, 4], [1, 2, 3]]);
+    });
+
+    it("unsubscribe stops further callbacks", () => {
+        const r = Ref.create([1, 2]);
+        let count = 0;
+        const unsub = r.subscribe(() => { count++; });
+        r.push(3);
+        unsub();
+        r.push(4);
+        expect(count).toBe(1);
+    });
+});

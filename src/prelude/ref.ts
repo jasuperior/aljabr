@@ -81,6 +81,7 @@ type RefHolder = {
     handles: Map<string, Ref<any> | Derived<unknown> | RefArray<any>>;
     bindings: Map<string, () => void>;       // path → unsubscribe fn
     boundSignals: Map<string, Signal<unknown>>; // path → source signal
+    valueSubscribers: Map<string, Set<(value: unknown) => void>>; // prefix → push subscribers
     disposed: boolean;
 };
 
@@ -232,6 +233,15 @@ function cleanupOutOfRangeSignals(
     }
 }
 
+function notifyValueSubscribers(holder: RefHolder): void {
+    for (const [prefix, subs] of holder.valueSubscribers) {
+        const value = holder.unset
+            ? undefined
+            : getAtPath(holder.state, prefix);
+        for (const cb of subs) cb(value);
+    }
+}
+
 function applyArrayMutation(
     holder: RefHolder,
     fullPath: string,
@@ -267,6 +277,8 @@ function applyArrayMutation(
     if (newArr.length < oldArr.length) {
         cleanupOutOfRangeSignals(holder, fullPath, newArr.length);
     }
+
+    notifyValueSubscribers(holder);
 }
 
 // ---------------------------------------------------------------------------
@@ -326,6 +338,7 @@ export class RefArray<T> {
             handles: new Map(),
             bindings: new Map(),
             boundSignals: new Map(),
+            valueSubscribers: new Map(),
             disposed: false,
         };
         const refArray = new RefArray<T>(holder, "");
@@ -465,6 +478,29 @@ export class RefArray<T> {
     getOr(i: number, defaultValue: T): T {
         const value = this.get(i);
         return value === undefined ? defaultValue : value;
+    }
+
+    /**
+     * Register a synchronous callback that fires after every mutation to this
+     * RefArray. The callback receives the current array snapshot.
+     *
+     * Use this when bridging to external systems; prefer `watch` for
+     * declarative reactive coordination.
+     */
+    subscribe(callback: (value: T[]) => void): () => void {
+        let subs = this.#holder.valueSubscribers.get(this.#prefix);
+        if (!subs) {
+            subs = new Set();
+            this.#holder.valueSubscribers.set(this.#prefix, subs);
+        }
+        const wrapper = (v: unknown) => callback((v as T[]) ?? []);
+        subs.add(wrapper);
+        return () => {
+            subs!.delete(wrapper);
+            if (subs!.size === 0) {
+                this.#holder.valueSubscribers.delete(this.#prefix);
+            }
+        };
     }
 
     /**
@@ -650,6 +686,10 @@ export class RefArray<T> {
         for (const sig of this.#holder.lengthSignals.values()) sig.dispose();
         this.#holder.lengthSignals.clear();
         this.#holder.handles.clear();
+        for (const subs of this.#holder.valueSubscribers.values()) {
+            for (const cb of subs) cb(undefined);
+        }
+        this.#holder.valueSubscribers.clear();
     }
 
     // -------------------------------------------------------------------------
@@ -751,6 +791,7 @@ export class Ref<T extends object> {
             handles: new Map(),
             bindings: new Map(),
             boundSignals: new Map(),
+            valueSubscribers: new Map(),
             disposed: false,
         };
         const ref = new Ref<T>(holder, "");
@@ -840,6 +881,7 @@ export class Ref<T extends object> {
             : setAtPath(this.#holder.state, fullPath, value);
         this.#holder.unset = false;
         this.#notifyRelated(fullPath);
+        notifyValueSubscribers(this.#holder);
     }
 
     /**
@@ -881,6 +923,7 @@ export class Ref<T extends object> {
             const sig = this.#holder.signals.get(p);
             if (sig) sig.set(getAtPath(this.#holder.state, p));
         }
+        notifyValueSubscribers(this.#holder);
     }
 
     /**
@@ -1059,6 +1102,10 @@ export class Ref<T extends object> {
         for (const sig of this.#holder.lengthSignals.values()) sig.dispose();
         this.#holder.lengthSignals.clear();
         this.#holder.handles.clear();
+        for (const subs of this.#holder.valueSubscribers.values()) {
+            for (const cb of subs) cb(undefined);
+        }
+        this.#holder.valueSubscribers.clear();
     }
 
     /**
@@ -1109,6 +1156,33 @@ export class Ref<T extends object> {
         if (subRef instanceof Ref) {
             subRef.#holder.unset = true;
         }
+
+        notifyValueSubscribers(this.#holder);
+    }
+
+    /**
+     * Register a synchronous callback that fires after every mutation to this
+     * Ref's state. The callback receives the current snapshot at this Ref's
+     * scope (the whole object for the root, or the sub-object for an `at()`
+     * sub-Ref). Returns `undefined` if the path is unset.
+     *
+     * Use this when bridging to external systems; prefer `watch` for
+     * declarative reactive coordination.
+     */
+    subscribe(callback: (value: T | undefined) => void): () => void {
+        let subs = this.#holder.valueSubscribers.get(this.#prefix);
+        if (!subs) {
+            subs = new Set();
+            this.#holder.valueSubscribers.set(this.#prefix, subs);
+        }
+        const wrapper = (v: unknown) => callback(v as T | undefined);
+        subs.add(wrapper);
+        return () => {
+            subs!.delete(wrapper);
+            if (subs!.size === 0) {
+                this.#holder.valueSubscribers.delete(this.#prefix);
+            }
+        };
     }
 
     /**

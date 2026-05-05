@@ -85,6 +85,7 @@ export class Dispatcher<T, S, Cmd> {
     #state: S;
     #disposed = false;
     readonly #subscribers = new Map<Computation, () => void>();
+    readonly #valueSubscribers = new Set<(value: T | null) => void>();
 
     private constructor(initial: S, protocol: CommandProtocol<S, T, Cmd>) {
         this.#state = initial;
@@ -127,13 +128,29 @@ export class Dispatcher<T, S, Cmd> {
             if (this.#protocol.isTerminal?.(next)) {
                 this.#disposed = true;
                 this.#subscribers.clear();
+                for (const cb of this.#valueSubscribers) cb(null);
+                this.#valueSubscribers.clear();
                 return result;
             }
+            const extracted = this.#protocol.extract(next);
+            for (const cb of this.#valueSubscribers) cb(extracted);
             for (const comp of [...this.#subscribers.keys()]) {
                 scheduleNotification(comp);
             }
         }
         return result;
+    }
+
+    /**
+     * Register a synchronous callback that fires after every successful
+     * dispatch. The callback receives the extracted `T | null`.
+     *
+     * Use this when bridging to external systems; prefer `watch` for
+     * declarative reactive coordination.
+     */
+    subscribe(callback: (value: T | null) => void): () => void {
+        this.#valueSubscribers.add(callback);
+        return () => this.#valueSubscribers.delete(callback);
     }
 
     /**
@@ -189,6 +206,8 @@ export class Dispatcher<T, S, Cmd> {
     dispose(): void {
         this.#disposed = true;
         this.#subscribers.clear();
+        for (const cb of this.#valueSubscribers) cb(null);
+        this.#valueSubscribers.clear();
     }
 
     /** @internal */

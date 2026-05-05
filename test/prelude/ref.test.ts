@@ -984,3 +984,43 @@ describe("Ref.getOr (v0.3.10 Phase 5)", () => {
         expect(r.getOr("user.name", "anon")).toBe("anon");
     });
 });
+
+describe("Ref.subscribe (v0.3.10 Phase 5)", () => {
+    it("fires on root mutations with full snapshot", () => {
+        const r = Ref.create({ name: "Ada", age: 30 });
+        const seen: ({ name: string; age: number } | undefined)[] = [];
+        r.subscribe((v) => seen.push(v));
+        r.set("name", "Grace");
+        r.set("age", 31);
+        expect(seen.length).toBe(2);
+        expect(seen[1]).toEqual({ name: "Grace", age: 31 });
+    });
+
+    it("sub-Ref subscribes to its scope", () => {
+        const r = Ref.create({ user: { name: "Ada" } });
+        const userRef = r.at("user");
+        const seen: ({ name: string } | undefined)[] = [];
+        userRef.subscribe((v) => seen.push(v));
+        r.set("user.name", "Grace");
+        expect(seen.length).toBeGreaterThan(0);
+        expect(seen[seen.length - 1]).toEqual({ name: "Grace" });
+    });
+
+    it("unsubscribe stops further callbacks", () => {
+        const r = Ref.create({ x: 1 });
+        let count = 0;
+        const unsub = r.subscribe(() => { count++; });
+        r.set("x", 2);
+        unsub();
+        r.set("x", 3);
+        expect(count).toBe(1);
+    });
+
+    it("fires with undefined on dispose", () => {
+        const r = Ref.create({ x: 1 });
+        let lastValue: { x: number } | undefined = { x: 99 };
+        r.subscribe((v) => { lastValue = v; });
+        r.dispose();
+        expect(lastValue).toBeUndefined();
+    });
+});

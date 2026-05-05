@@ -600,3 +600,36 @@ describe("Derived state()/peekState() and getOr (v0.3.10 Phase 5)", () => {
         expect(d.getOr(99)).toBe(99);
     });
 });
+
+describe("Derived.subscribe (v0.3.10 Phase 5)", () => {
+    it("fires the callback when an upstream signal changes", () => {
+        const src = Signal.create(0);
+        const d = Derived.create(() => src.get()! * 2);
+        const seen: number[] = [];
+        const unsub = d.subscribe((v) => { if (v !== null) seen.push(v); });
+        src.set(1);
+        src.set(2);
+        expect(seen).toEqual([2, 4]);
+        unsub();
+    });
+
+    it("fires the callback with null on dispose", () => {
+        const src = Signal.create(1);
+        const d = Derived.create(() => src.get()! + 1);
+        let lastValue: number | null = -1;
+        d.subscribe((v) => { lastValue = v; });
+        d.dispose();
+        expect(lastValue).toBeNull();
+    });
+
+    it("unsubscribe stops further callbacks", () => {
+        const src = Signal.create(0);
+        const d = Derived.create(() => src.get()! + 1);
+        let count = 0;
+        const unsub = d.subscribe(() => { count++; });
+        src.set(1);
+        unsub();
+        src.set(2);
+        expect(count).toBe(1);
+    });
+});
