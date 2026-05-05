@@ -200,10 +200,10 @@ export function query<T, E = unknown>(
     );
 
     // Push-based re-evaluation: when d notifies subscribers (goes Reloading),
-    // evalOwner.dirty() fires and immediately calls d.get() to start the next fetch.
+    // evalOwner.dirty() fires and immediately calls d.run() to start the next fetch.
     const evalOwner = createOwner(getCurrentComputation());
     evalOwner.dirty = (): void => {
-        void d.get();
+        void d.run();
     };
 
     const getter = Object.assign(
@@ -211,7 +211,7 @@ export function query<T, E = unknown>(
             if (!isActive) {
                 isActive = true;
                 // Subscribe evalOwner to d so future dirty notifications auto-trigger.
-                trackIn(evalOwner, () => { void d.get(); });
+                trackIn(evalOwner, () => { void d.run(); });
             }
             return d.peek();
         },

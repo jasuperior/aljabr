@@ -183,28 +183,36 @@ describe("AsyncDerived — initial state", () => {
 });
 
 describe("AsyncDerived — successful evaluation", () => {
-    it("get() resolves to the computed value", async () => {
+    it("run() resolves to Done with the computed value", async () => {
         const d = AsyncDerived.create(async () => 42);
-        expect(await d.get()).toBe(42);
+        const r = await d.run();
+        expect(getTag(r)).toBe("Done");
+        expect((r as { value: number }).value).toBe(42);
     });
 
-    it("transitions to Ready after get()", async () => {
+    it("transitions to Ready after run()", async () => {
         const d = AsyncDerived.create(async () => "hello");
-        await d.get();
+        await d.run();
         expect(getTag(d.peekState())).toBe("Ready");
     });
 
     it("peek() returns the value in Ready state", async () => {
         const d = AsyncDerived.create(async () => 7);
-        await d.get();
+        await d.run();
         expect(d.peek()).toBe(7);
+    });
+
+    it("get() returns the value synchronously after evaluation", async () => {
+        const d = AsyncDerived.create(async () => 7);
+        await d.run();
+        expect(d.get()).toBe(7);
     });
 
     it("does not re-run when dependencies haven't changed", async () => {
         const fn = vi.fn(async () => 1);
         const d = AsyncDerived.create(fn);
-        await d.get();
-        await d.get();
+        await d.run();
+        await d.run();
         expect(fn).toHaveBeenCalledOnce();
     });
 });
@@ -214,7 +222,7 @@ describe("AsyncDerived — Reloading (stale value preserved)", () => {
         const sig = Signal.create(1);
         const d = AsyncDerived.create(async () => sig.get()!);
 
-        await d.get(); // Ready(1)
+        await d.run(); // Ready(1)
         sig.set(2); // dirty() fires synchronously → Reloading(1)
 
         expect(getTag(d.peekState())).toBe("Reloading");
@@ -225,7 +233,7 @@ describe("AsyncDerived — Reloading (stale value preserved)", () => {
         const sig = Signal.create(10);
         const d = AsyncDerived.create(async () => sig.get()!);
 
-        await d.get(); // Ready(10)
+        await d.run(); // Ready(10)
         sig.set(20); // dirty() → Reloading(10) synchronously
 
         // State is already Reloading — peek returns stale without triggering re-eval
@@ -233,7 +241,7 @@ describe("AsyncDerived — Reloading (stale value preserved)", () => {
         expect(d.peek()).toBe(10);
 
         // Now trigger re-evaluation and await completion
-        await d.get();
+        await d.run();
         expect(d.peek()).toBe(20);
     });
 });
@@ -245,7 +253,9 @@ describe("AsyncDerived — failure (Fault.Defect)", () => {
             throw err;
         });
 
-        await expect(d.get()).rejects.toMatchObject({ thrown: err });
+        const r = await d.run();
+        expect(getTag(r)).toBe("Failed");
+        expect((r as { fault: { thrown: unknown } }).fault.thrown).toBe(err);
         expect(getTag(d.peekState())).toBe("Failed");
     });
 
@@ -253,7 +263,7 @@ describe("AsyncDerived — failure (Fault.Defect)", () => {
         const d = AsyncDerived.create(async () => {
             throw new Error("boom");
         });
-        await d.get().catch(() => {});
+        await d.run();
         const fault = d.peekState().getFault();
         expect(fault).not.toBeNull();
         expect(getTag(fault!)).toBe("Defect");
@@ -267,7 +277,7 @@ describe("AsyncDerived — failure (Fault.Fail)", () => {
             throw Fault.Fail(domainError);
         });
 
-        await d.get().catch(() => {});
+        await d.run();
         const fault = d.peekState().getFault();
         expect(fault).not.toBeNull();
         expect(getTag(fault!)).toBe("Fail");
@@ -280,20 +290,21 @@ describe("AsyncDerived — failure (Fault.Fail)", () => {
 describe("AsyncDerived — dispose", () => {
     it("transitions to Disposed", async () => {
         const d = AsyncDerived.create(async () => 1);
-        await d.get();
+        await d.run();
         d.dispose();
         expect(getTag(d.peekState())).toBe("Disposed");
     });
 
-    it("get() rejects on a disposed derived", async () => {
+    it("run() returns Failed on a disposed derived", async () => {
         const d = AsyncDerived.create(async () => 1);
         d.dispose();
-        await expect(d.get()).rejects.toThrow(/disposed/);
+        const r = await d.run();
+        expect(getTag(r)).toBe("Failed");
     });
 
     it("peek() returns null after disposal", async () => {
         const d = AsyncDerived.create(async () => "x");
-        await d.get();
+        await d.run();
         d.dispose();
         expect(d.peek()).toBeNull();
     });
@@ -310,7 +321,7 @@ describe("AsyncDerived — dispose", () => {
             return 1;
         });
 
-        void d.get().catch(() => {});
+        void d.run();
         await new Promise((r) => setTimeout(r, 0)); // let evaluate() start
 
         d.dispose();
@@ -338,7 +349,7 @@ describe("AsyncDerived — retry with Schedule.Fixed", () => {
         );
 
         // Initial get() rejects on first failure; discard that rejection
-        void d.get().catch(() => {});
+        void d.run();
 
         // Let the first attempt fail
         await Promise.resolve();
@@ -353,8 +364,9 @@ describe("AsyncDerived — retry with Schedule.Fixed", () => {
         await vi.advanceTimersByTimeAsync(100);
 
         // Now fetch the settled value
-        const result = await d.get();
-        expect(result).toBe("done");
+        const result = await d.run();
+        expect(getTag(result)).toBe("Done");
+        expect((result as { value: string }).value).toBe("done");
         expect(getTag(d.peekState())).toBe("Ready");
         d.dispose();
     });
@@ -376,7 +388,7 @@ describe("AsyncDerived — maxRetries exceeded", () => {
             { schedule: Schedule.Fixed(50), maxRetries: 2 },
         );
 
-        const promise = d.get().catch((e) => e);
+        const promise = d.run();
 
         // Flush microtasks for initial attempt, then advance through all retries
         await Promise.resolve();
@@ -385,7 +397,7 @@ describe("AsyncDerived — maxRetries exceeded", () => {
             await vi.advanceTimersByTimeAsync(50);
         }
 
-        const caught = await promise;
+        await promise;
         expect(getTag(d.peekState())).toBe("Failed");
 
         const fault = d.peekState().getFault();
@@ -399,7 +411,6 @@ describe("AsyncDerived — maxRetries exceeded", () => {
             });
             expect(isMaxRetries).toBe(true);
         }
-        void caught;
         d.dispose();
     });
 });
@@ -426,14 +437,13 @@ describe("AsyncDerived — shouldRetry", () => {
             },
         );
 
-        const promise = d.get().catch((e) => e);
+        const promise = d.run();
         await Promise.resolve();
         await Promise.resolve();
 
-        const result = await promise;
+        await promise;
         expect(attempt).toBe(1);
         expect(getTag(d.peekState())).toBe("Failed");
-        void result;
         d.dispose();
     });
 });
@@ -460,13 +470,13 @@ describe("AsyncDerived — afterRetry callback", () => {
         );
 
         // Discard the initial rejection; retry runs internally
-        void d.get().catch(() => {});
+        void d.run();
         await Promise.resolve();
         await Promise.resolve();
         await vi.advanceTimersByTimeAsync(200);
 
         // Retry has now succeeded — fresh get() returns the value
-        await d.get();
+        await d.run();
 
         expect(afterRetry).toHaveBeenCalledOnce();
         const [attemptArg, , delayArg] = afterRetry.mock.calls[0]!;
@@ -490,7 +500,7 @@ describe("AsyncDerived — Interrupted fault", () => {
             return 1;
         });
 
-        void d.get().catch(() => {});
+        void d.run();
         await new Promise(r => setTimeout(r, 0)); // let #evaluate start
 
         d.dispose(); // aborts signal; async catch fires
@@ -522,7 +532,7 @@ describe("AsyncDerived — Custom schedule returning null", () => {
             },
         );
 
-        await d.get().catch(() => {});
+        await d.run();
 
         // No retry timer was set — only the initial attempt ran
         expect(attempt).toBe(1);
@@ -549,7 +559,7 @@ describe("AsyncDerived — timeout", () => {
             { timeout: 500 },
         );
 
-        const promise = d.get().catch((e) => e);
+        const promise = d.run();
         await vi.advanceTimersByTimeAsync(500);
 
         await promise;
@@ -646,5 +656,38 @@ describe("Derived/AsyncDerived Symbol.dispose (v0.3.10 Phase 5)", () => {
         const d = AsyncDerived.create(async () => 1);
         d[Symbol.dispose]();
         expect(getTag(d.peekState())).toBe("Disposed");
+    });
+});
+
+describe("AsyncDerived sync get / runOr (v0.3.10 Phase 5 step 6)", () => {
+    it("get() is synchronous and returns null until evaluated", () => {
+        const d = AsyncDerived.create(async () => 42);
+        // Sync — no await
+        expect(d.get()).toBeNull();
+    });
+
+    it("get() returns the value after run() completes", async () => {
+        const d = AsyncDerived.create(async () => 42);
+        await d.run();
+        expect(d.get()).toBe(42);
+    });
+
+    it("runOr returns the value when Ready", async () => {
+        const d = AsyncDerived.create(async () => 42);
+        expect(await d.runOr(0)).toBe(42);
+    });
+
+    it("runOr returns the default when Failed", async () => {
+        const d = AsyncDerived.create<number>(async () => {
+            throw Fault.Fail("err");
+        });
+        expect(await d.runOr(99)).toBe(99);
+    });
+
+    it("getOr returns the last-known value or the default", async () => {
+        const d = AsyncDerived.create(async () => "hello");
+        expect(d.getOr("default")).toBe("default"); // not yet evaluated
+        await d.run();
+        expect(d.getOr("default")).toBe("hello"); // value cached
     });
 });

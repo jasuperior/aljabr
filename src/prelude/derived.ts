@@ -11,6 +11,7 @@ import { type AsyncOptions, ScheduleError, computeDelay } from "./schedule.ts";
 import { getTag } from "../union.ts";
 import { type ScopeHandle, Scope, runInScope } from "./scope.ts";
 import { type Fault, Fault as FaultUnion } from "./fault.ts";
+import { Effect, type Done, type Failed } from "./effect.ts";
 
 // ---------------------------------------------------------------------------
 // DerivedState<T> — lifecycle union for computed values
@@ -504,13 +505,38 @@ export class AsyncDerived<T, E = unknown> {
     }
 
     /**
-     * Read the current value, triggering evaluation if the state is
-     * `Uncomputed`, `Reloading`, or `Failed`. Returns a Promise that
-     * resolves to the value on success or rejects on failure.
+     * Read the last-known extracted value synchronously and register this
+     * derived as a dependency in the active tracking context.
+     *
+     * Does NOT trigger evaluation. Returns `null` until the first successful
+     * evaluation completes via `run()`. After Ready/Reloading transitions
+     * the value is preserved and surfaced here.
+     */
+    get(): T | null {
+        const comp = getCurrentComputation();
+        if (comp && !this.#subscribers.has(comp)) {
+            this.#trackComputation(comp);
+        }
+        return this.#state.getValue();
+    }
+
+    /**
+     * Read the current value with a fallback default. Tracked.
+     * Returns `defaultValue` when no value is available yet.
+     */
+    getOr(defaultValue: T): T {
+        const value = this.get();
+        return value === null ? defaultValue : value;
+    }
+
+    /**
+     * Trigger evaluation if needed and resolve to the settled state
+     * (`Done<T, E>` on success, `Failed<T, E>` on failure). Mirrors
+     * `Effect.run()` so callers pattern-match with the same vocabulary.
      *
      * Registers this derived as a dependency in the active tracking context.
      */
-    async get(): Promise<T> {
+    async run(): Promise<Done<T, E> | Failed<T, E>> {
         const comp = getCurrentComputation();
         if (comp && !this.#subscribers.has(comp)) {
             this.#trackComputation(comp);
@@ -530,21 +556,43 @@ export class AsyncDerived<T, E = unknown> {
         }
 
         return match(this.#state, {
-            Uncomputed: () => {
-                throw new Error("AsyncDerived evaluation produced no value");
-            },
-            Loading: () => {
-                throw new Error("AsyncDerived evaluation produced no value");
-            },
-            Ready: ({ value }) => value,
-            Reloading: ({ value }) => value,
-            Failed: ({ fault }) => {
-                throw fault;
-            },
-            Disposed: () => {
-                throw new Error("AsyncDerived is disposed");
-            },
+            Uncomputed: () =>
+                Effect.Failed<T, E>(
+                    FaultUnion.Defect(
+                        new Error("AsyncDerived evaluation produced no value"),
+                    ),
+                    0,
+                    null,
+                ) as Failed<T, E>,
+            Loading: () =>
+                Effect.Failed<T, E>(
+                    FaultUnion.Defect(
+                        new Error("AsyncDerived evaluation produced no value"),
+                    ),
+                    0,
+                    null,
+                ) as Failed<T, E>,
+            Ready: ({ value }) => Effect.Done<T, E>(value) as Done<T, E>,
+            Reloading: ({ value }) => Effect.Done<T, E>(value) as Done<T, E>,
+            Failed: ({ fault, attempts, nextRetryAt }) =>
+                Effect.Failed<T, E>(fault, attempts, nextRetryAt) as Failed<T, E>,
+            Disposed: () =>
+                Effect.Failed<T, E>(
+                    FaultUnion.Defect(new Error("AsyncDerived is disposed")),
+                    0,
+                    null,
+                ) as Failed<T, E>,
         });
+    }
+
+    /**
+     * Run the derivation and return the resolved value, or `defaultValue` if
+     * evaluation fails. Mirrors `Effect.runOr` and the `getOr` family.
+     */
+    async runOr(defaultValue: T): Promise<T> {
+        const result = await this.run();
+        if (getTag(result) === "Failed") return defaultValue;
+        return (result as Done<T, E>).value;
     }
 
     /**
