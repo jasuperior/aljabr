@@ -1,7 +1,7 @@
-import { union, requirements, type Variant } from "../union.ts";
+import { union, Trait, type Variant } from "../union.ts";
 import { match } from "../match.ts";
 import { Result } from "./result.ts";
-import { Bindable } from "./traits.ts";
+import type { Bindable, Reducible } from "./traits.ts";
 
 type CombineValues<A, B> = A extends readonly unknown[] ? [...A, B] : [A, B]
 
@@ -12,9 +12,10 @@ type AllValues<Vs extends readonly Validation<unknown, unknown>[]> = {
 type AllError<Vs extends readonly Validation<unknown, unknown>[]> =
     Vs[number] extends Validation<unknown, infer E> ? E : never
 
-export abstract class Combinable<T, E> extends Bindable<T> {
-    declare readonly [requirements]: { value: T };
-
+export abstract class Combinable<T, E>
+    extends Trait<{ value: T }>
+    implements Bindable<T>, Reducible<T>
+{
     map<U>(fn: (value: T) => U): Validation<U, E> {
         return match(this as unknown as Validation<T, E>, {
             Unvalidated: () => Validation.Unvalidated(),
@@ -23,19 +24,31 @@ export abstract class Combinable<T, E> extends Bindable<T> {
         }) as Validation<U, E>;
     }
 
-    flatMap<U>(fn: (value: T) => Validation<U, E>): Validation<U, E> {
+    /**
+     * Chain a Validation-producing computation. The inner `Validation<U, F>`
+     * may widen the error channel — final type is `Validation<U, E | F>`.
+     */
+    flatMap<U, F>(
+        fn: (value: T) => Validation<U, F>,
+    ): Validation<U, E | F> {
         return match(this as unknown as Validation<T, E>, {
             Unvalidated: () => Validation.Unvalidated(),
             Valid: ({ value }) => fn(value),
-            Invalid: ({ errors }) => Validation.Invalid(errors),
-        }) as Validation<U, E>;
+            Invalid: ({ errors }) =>
+                Validation.Invalid(errors as unknown as (E | F)[]),
+        }) as Validation<U, E | F>;
     }
 
-    getOr(defaultValue: T): T {
+    /**
+     * Return the value on `Valid`, else `defaultValue`. The default's type
+     * is independent of `T` to allow widening on unions where one branch
+     * may carry `T = never`.
+     */
+    getOr<U = T>(defaultValue: U): T | U {
         return match(this as unknown as Validation<T, E>, {
-            Unvalidated: () => defaultValue,
-            Valid: ({ value }) => value as T,
-            Invalid: () => defaultValue,
+            Unvalidated: () => defaultValue as T | U,
+            Valid: ({ value }) => value as T | U,
+            Invalid: () => defaultValue as T | U,
         });
     }
 

@@ -277,7 +277,13 @@ describe("Dispatcher.subscribe (v0.3.10 Phase 5)", () => {
         const d = Dispatcher.create<number, number, number>(0, {
             extract: (s) => s,
             apply: () =>
-                Validation.Invalid([CommandError.Rejected("nope")]),
+                Validation.Invalid<
+                    import("../../src/prelude/dispatcher.ts").ApplyResult<
+                        number,
+                        number
+                    >,
+                    CommandError
+                >([CommandError.Rejected("nope")]),
         });
         let count = 0;
         d.subscribe(() => { count++; });

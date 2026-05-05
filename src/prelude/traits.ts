@@ -1,68 +1,68 @@
-import { Trait } from "../union.ts";
-
 // ---------------------------------------------------------------------------
-// Canonical reusable traits
+// Canonical reusable traits (interfaces — type-only)
 // ---------------------------------------------------------------------------
 //
-// These abstract trait classes are the single source of truth for the
-// fundamental operations on algebraic data types in aljabr. ADT-specific
-// trait classes (e.g. Option's Mappable, Effect's Computable) extend the
-// appropriate canonical trait here and provide concrete implementations.
+// These are *type-only* canonical trait declarations. ADT-specific concrete
+// trait classes (e.g. Option's Mappable, Validation's Combinable) declare
+// `implements Bindable<T>` to advertise conformance, while continuing to
+// extend `Trait<{value: ...}>` directly — which preserves the variant
+// payload constraint enforced at the union builder level.
 //
-// TypeScript has no higher-kinded types, so the abstract method declarations
-// here cannot enforce a precise `Self<U>` return type. Each concrete subclass
-// re-declares the precise return type for its monad. The win is documentation
-// and discoverability: searching for `extends Bindable` finds every monadic
-// type, and the trait hierarchy expresses the layered relationships
-// (Mappable → Bindable, etc.).
+// **Why interfaces instead of abstract classes:**
 //
-// **Payload requirements:** canonical traits intentionally carry no
-// `[requirements]` constraint so they can be extended by any ADT regardless
-// of payload shape (e.g. Effect's Idle has `thunk`, not `value`). Each
-// ADT-specific trait class re-declares `[requirements]` to assert its own
-// payload constraint — see Option's Mappable, Result's Thenable,
-// Validation's Combinable, Tree's Traversable.
+// An earlier draft made the canonical traits abstract classes with abstract
+// method declarations. Two problems surfaced:
+//
+//   1. Each concrete subclass had to widen its method signatures to satisfy
+//      the abstract `(value: T) => unknown` shape (no higher-kinded types
+//      means the abstract can't say `Self<U>`). This leaked `unknown` into
+//      the variant types.
+//
+//   2. To inherit a non-trivial `[requirements]` from a parameterised parent
+//      class, the parent itself had to take an extra parameter — making the
+//      canonical trait hierarchy awkward and asymmetric.
+//
+// Switching to interfaces lets ADT trait classes:
+//   - Continue to `extends Trait<{ value: T }>` (or whatever payload they
+//     require), preserving the union builder's payload enforcement.
+//   - Declare `implements Mappable<T>, Reducible<T>` to advertise canonical
+//     conformance — searchable, documented, type-checked.
+//
+// TypeScript still cannot enforce the `Self<U>` return type at the
+// canonical level (no HKT), so the interfaces declare each method with its
+// abstract shape and concrete classes refine.
 
 /**
- * The base trait for any type that supports the `map` operation:
- * given a function `T → U`, produce a `Self<U>`.
+ * A type that supports the `map` operation: given a function `T → U`,
+ * produce a `Self<U>`. Concrete implementers refine the return type.
  *
- * Subclasses declare their concrete `map` return type. Use this trait as the
- * superclass for any ADT that supports a covariant transform.
+ * Search for `implements Mappable` to find every monadic-shaped ADT.
  */
-export abstract class Mappable<T> extends Trait {
-    abstract map<U>(fn: (value: T) => U): unknown;
+export interface Mappable<T> {
+    map<U>(fn: (value: T) => U): unknown;
 }
 
 /**
- * Extends `Mappable<T>` with the `flatMap` operation: given a function
- * `T → Self<U>`, produce a `Self<U>`. Together, `map` and `flatMap` form a
- * monadic chain.
- *
- * Use this trait as the superclass for any ADT that sequences computations.
+ * A type that supports `flatMap` (monadic chaining) on top of `map`.
+ * Implementers must satisfy both `map` and `flatMap`. Concrete classes
+ * refine return types.
  */
-export abstract class Bindable<T> extends Mappable<T> {
-    abstract flatMap<U>(fn: (value: T) => unknown): unknown;
+export interface Bindable<T> extends Mappable<T> {
+    flatMap(fn: (value: T) => unknown): unknown;
 }
 
 /**
- * The trait for any type that can collapse to its success value, optionally
- * supplying a default if no value is present.
- *
- * Use this trait as the superclass for any ADT whose primary use is
- * "extract the value or fall back to a default."
+ * A type that can collapse to its success value with a supplied default.
+ * Concrete implementers declare `getOr(defaultValue: T): T`.
  */
-export abstract class Reducible<T> extends Trait {
-    abstract getOr(defaultValue: T): T;
+export interface Reducible<T> {
+    getOr(defaultValue: T): T;
 }
 
 /**
- * The trait for any structure that can be reduced via a left fold.
- *
- * Distinct from `Bindable` — folding is a catamorphism over an arbitrary
- * structure, not a monadic chain. Use this trait for tree-shaped or list-
- * shaped types where fold is the primary traversal.
+ * A structure reducible via a left fold (a catamorphism). Distinct from
+ * `Bindable` — fold traverses a structure rather than chaining computations.
  */
-export abstract class Foldable<T> extends Trait {
-    abstract fold<U>(fn: (acc: U, value: T) => U, initial: U): U;
+export interface Foldable<T> {
+    fold<U>(fn: (acc: U, value: T) => U, initial: U): U;
 }

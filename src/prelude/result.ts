@@ -1,6 +1,6 @@
-import { union, getTag, requirements, type Variant } from "../union.ts";
+import { union, getTag, Trait, type Variant } from "../union.ts";
 import { match } from "../match.ts";
-import { Bindable } from "./traits.ts";
+import type { Bindable, Reducible } from "./traits.ts";
 
 type AllValues<Rs extends readonly Result<unknown, unknown>[]> = {
     [K in keyof Rs]: Rs[K] extends Result<infer T, unknown> ? T : never;
@@ -9,9 +9,10 @@ type AllValues<Rs extends readonly Result<unknown, unknown>[]> = {
 type AnyError<Rs extends readonly Result<unknown, unknown>[]> =
     Rs[number] extends Result<unknown, infer E> ? E : never;
 
-export abstract class Thenable<T, E = never> extends Bindable<T> {
-    declare readonly [requirements]: { value: unknown };
-
+export abstract class Thenable<T, E = never>
+    extends Trait<{ value: unknown }>
+    implements Bindable<T>, Reducible<T>
+{
     map<U>(fn: (value: T) => U): Result<U, E> {
         return match(this as unknown as Result<T, E>, {
             Accept: ({ value }) => Result.Accept(fn(value)),
@@ -24,11 +25,16 @@ export abstract class Thenable<T, E = never> extends Bindable<T> {
         }) as Result<U, E>;
     }
 
-    flatMap<U>(fn: (value: T) => Result<U, E>): Result<U, E> {
+    /**
+     * Chain a Result-producing computation. The inner `Result<U, F>` may
+     * widen the error channel — final result type is `Result<U, E | F>`.
+     */
+    flatMap<U, F>(fn: (value: T) => Result<U, F>): Result<U, E | F> {
         return match(this as unknown as Result<T, E>, {
-            Accept: ({ value }) => fn(value),
+            Accept: ({ value }) =>
+                fn(value) as unknown as Result<U, E | F>,
             Expect: ({ pending }) =>
-                Result.Expect<U, E>(
+                Result.Expect<U, E | F>(
                     (pending as PromiseLike<T>).then((v) => {
                         const next = fn(v);
                         return match(next, {
@@ -40,15 +46,20 @@ export abstract class Thenable<T, E = never> extends Bindable<T> {
                     }) as PromiseLike<U>,
                 ),
             Reject: ({ error }) =>
-                Result.Reject(error) as unknown as Result<U, E>,
-        }) as Result<U, E>;
+                Result.Reject(error) as unknown as Result<U, E | F>,
+        }) as Result<U, E | F>;
     }
 
-    getOr(defaultValue: T): T {
+    /**
+     * Return the resolved value on `Accept`, else `defaultValue`. The
+     * default's type is independent of `T` to allow widening when called on a
+     * union (`Result<T, E>` whose `Rejected<E>` variant carries `T = never`).
+     */
+    getOr<U = T>(defaultValue: U): T | U {
         return match(this as unknown as Result<T, E>, {
-            Accept: ({ value }) => value as T,
-            Expect: () => defaultValue,
-            Reject: () => defaultValue,
+            Accept: ({ value }) => value as T | U,
+            Expect: () => defaultValue as T | U,
+            Reject: () => defaultValue as T | U,
         });
     }
 

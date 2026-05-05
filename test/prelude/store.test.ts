@@ -423,16 +423,16 @@ describe("ref.at — leaf path", () => {
         expect(dirty).toHaveBeenCalledTimes(1);
     });
 
-    it("Derived.set() writes back to the Store", () => {
+    it("WritableDerived.set() writes back to the Store", () => {
         const ref = makeState();
-        const handle = ref.at("active") as Derived<boolean | undefined>;
+        const handle = ref.at("active");
         handle.set(false);
         expect(ref.get("active")).toBe(false);
     });
 
-    it("Derived.get() reflects a set done on the root Store", () => {
+    it("WritableDerived.get() reflects a set done on the root Store", () => {
         const ref = makeState();
-        const handle = ref.at("active") as Derived<boolean | undefined>;
+        const handle = ref.at("active");
         ref.set("active", false);
         expect(handle.get()).toBe(false);
     });

@@ -1,5 +1,5 @@
 /** @jsxImportSource aljabr/ui/dom */
-import { union, match, type Union, Ref } from "aljabr";
+import { union, match, type Union, List } from "aljabr";
 import { signal } from "aljabr/signals";
 
 // ---------------------------------------------------------------------------
@@ -34,7 +34,7 @@ function taskId(task: Task): number {
 type Filter = "all" | "active" | "done";
 let nextId = 1;
 
-const tasks = Ref.create<Task[]>([]);
+const tasks = List.create<Task>([]);
 const [input, setInput] = signal("");
 const [filter, setFilter] = signal<Filter>("all");
 
@@ -145,7 +145,10 @@ export function Todo() {
                         const total = tasks.length();
                         const done = tasks
                             .filter((t) =>
-                                match(t, { Active: () => false, Done: () => true }),
+                                match(t, {
+                                    Active: () => false,
+                                    Done: () => true,
+                                }),
                             )
                             .length();
                         return `${done}/${total} done`;

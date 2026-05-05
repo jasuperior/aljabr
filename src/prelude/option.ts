@@ -1,14 +1,16 @@
-import { union, getTag, requirements, type Variant } from "../union.ts";
+import { union, getTag, Trait, type Variant } from "../union.ts";
 import { match } from "../match.ts";
 import { Result } from "./result.ts";
-import { Bindable } from "./traits.ts";
+import type { Bindable, Reducible } from "./traits.ts";
 
 type AllValues<Os extends readonly Option<unknown>[]> = {
     [K in keyof Os]: Os[K] extends Option<infer T> ? T : never;
 };
 
-export abstract class Mappable<T> extends Bindable<T> {
-    declare readonly [requirements]: { value: unknown };
+export abstract class Mappable<T>
+    extends Trait<{ value: unknown }>
+    implements Bindable<T>, Reducible<T>
+{
 
     map<U>(fn: (value: T) => U): Option<U> {
         return match(this as unknown as Option<T>, {

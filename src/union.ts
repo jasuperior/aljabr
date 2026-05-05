@@ -113,11 +113,29 @@ type ImplMixinFromImpl<Impl extends AbstractConstructor[]> =
  * type Circle = Union<typeof Shape, "Circle">  // Circle instance only
  */
 export type Union<
-    T extends Record<string, (...args: any[]) => any>,
-    VariantName extends keyof T | never = never,
+    T extends Record<string, any>,
+    VariantName extends VariantKeys<T> | never = never,
 > = [VariantName] extends [never]
-    ? { [K in keyof T]: ReturnType<T[K]> }[keyof T]
-    : ReturnType<T[VariantName]>;
+    ? {
+          [K in VariantKeys<T>]: T[K] extends (...args: any[]) => infer R
+              ? R
+              : never;
+      }[VariantKeys<T>]
+    : T[VariantName] extends (...args: any[]) => infer R ? R : never;
+
+/**
+ * Keys of `T` that resolve to a variant factory — i.e. a function whose return
+ * type carries the `[tag]` discriminant. Excludes algebra methods like
+ * `merge`/`extend`/`pick`/`omit` that share the same key namespace on the
+ * union result object.
+ *
+ * @internal
+ */
+type VariantKeys<T> = {
+    [K in keyof T]: T[K] extends (...args: any[]) => { [tag]: any }
+        ? K
+        : never;
+}[keyof T];
 
 /**
  * Derives the plain payload shape from an impl class or Trait instance,
