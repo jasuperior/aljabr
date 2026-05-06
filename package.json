@@ -84,6 +84,21 @@
             "import": "./dist/ui-canvas-jsx-dev-runtime.js",
             "require": "./dist/ui-canvas-jsx-dev-runtime.cjs",
             "types": "./dist/ui/canvas/jsx-dev-runtime.d.ts"
+        },
+        "./ui/prose": {
+            "import": "./dist/ui-prose.js",
+            "require": "./dist/ui-prose.cjs",
+            "types": "./dist/ui/prose/index.d.ts"
+        },
+        "./ui/prose/jsx-runtime": {
+            "import": "./dist/ui-prose-jsx-runtime.js",
+            "require": "./dist/ui-prose-jsx-runtime.cjs",
+            "types": "./dist/ui/prose/jsx-runtime.d.ts"
+        },
+        "./ui/prose/jsx-dev-runtime": {
+            "import": "./dist/ui-prose-jsx-dev-runtime.js",
+            "require": "./dist/ui-prose-jsx-dev-runtime.cjs",
+            "types": "./dist/ui/prose/jsx-dev-runtime.d.ts"
         }
     },
     "files": [
