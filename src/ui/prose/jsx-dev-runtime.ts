@@ -1,1 +1,1 @@
-export { jsx, jsxs, jsxDEV, Fragment, JSX } from "./jsx-runtime.ts";
+export * from "./jsx-runtime.ts";

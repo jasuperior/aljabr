@@ -28,3 +28,26 @@ export type {
     TextRange,
     NodeRange,
 } from "./editor-range.ts";
+
+export { BlockKind } from "./document-state.ts";
+export type { DocumentState } from "./document-state.ts";
+
+export { normalizeText } from "./tree-ops.ts";
+
+export {
+    ProseCommand,
+    defaultApply,
+    proseProtocol,
+} from "./commands.ts";
+export type {
+    SetCursorCmd,
+    InsertCmd,
+    DeleteBackwardCmd,
+    DeleteForwardCmd,
+    FormatCmd,
+    RemoveMarkCmd,
+    SplitBlockCmd,
+    MergeBlockCmd,
+    SetBlockKindCmd,
+    CompoundCmd,
+} from "./commands.ts";
