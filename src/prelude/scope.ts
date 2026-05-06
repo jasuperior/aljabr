@@ -32,17 +32,19 @@ export interface ResourceHandle<T> {
  * Resources are inert until consumed via `scope.acquire()` or the implicit `acquire()`.
  *
  * @example
- * const DbResource = Resource(
+ * const DbResource = Resource.create(
  *   () => connectToDb(url),
  *   (db) => db.disconnect(),
  * );
  */
-export function Resource<T>(
-    acquire: () => Promise<T>,
-    release: (value: T) => Promise<void> | void,
-): ResourceHandle<T> {
-    return { acquire, release };
-}
+export const Resource = {
+    create<T>(
+        acquire: () => Promise<T>,
+        release: (value: T) => Promise<void> | void,
+    ): ResourceHandle<T> {
+        return { acquire, release };
+    },
+} as const;
 
 // ---------------------------------------------------------------------------
 // Scope — structured resource lifetime
@@ -165,20 +167,20 @@ export function acquire<T>(resource: ResourceHandle<T>): Promise<T> {
  * rather than swallowed.
  *
  * @example Explicit lifecycle
- * const scope = Scope();
+ * const scope = Scope.create();
  * const db = await scope.acquire(DbResource);
  * await doWork(db);
  * const defects = await scope.dispose();
  *
  * @example TC39 explicit resource management
- * await using scope = Scope();
+ * await using scope = Scope.create();
  * const db = await scope.acquire(DbResource);
  * // scope[Symbol.asyncDispose]() called automatically on block exit — warns on defects
  *
  * @example Cascade defect capture
- * const scope = Scope({ catchDefect: (d) => logger.error(d.thrown) });
+ * const scope = Scope.create({ catchDefect: (d) => logger.error(d.thrown) });
  */
-export function Scope(options: ScopeOptions = {}): ScopeHandle {
+function createScope(options: ScopeOptions = {}): ScopeHandle {
     const finalizers: Array<() => Promise<void> | void> = [];
     let scopeState: ScopeState = ScopeState.Active();
 
@@ -243,3 +245,5 @@ export function Scope(options: ScopeOptions = {}): ScopeHandle {
 
     return handle;
 }
+
+export const Scope = { create: createScope } as const;

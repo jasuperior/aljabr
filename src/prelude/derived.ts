@@ -700,7 +700,7 @@ export class AsyncDerived<T, E = unknown> {
             ) {
                 void this.#currentScope.dispose();
             }
-            this.#currentScope = Scope();
+            this.#currentScope = Scope.create();
             const scope = this.#currentScope;
             const promise = runInScope(scope, () =>
                 trackIn(this.#computation, () => this.#fn(signal, scope)),

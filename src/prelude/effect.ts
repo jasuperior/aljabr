@@ -352,7 +352,7 @@ export function watch<T, E = never>(
         if (currentScope !== null && getTag(currentScope.state) !== "Disposed") {
             void currentScope.dispose();
         }
-        currentScope = Scope();
+        currentScope = Scope.create();
         const scope = currentScope;
         return runInScope(scope, () => trackIn(computation, () => thunk(signal, scope)));
     };

@@ -195,7 +195,7 @@ function reconcileViewNode<N, E extends N>(
 
             let mountedScope: ScopeHandle | null = null;
             if (mountedCb !== null) {
-                mountedScope = Scope();
+                mountedScope = Scope.create();
                 runInScope(mountedScope, () => mountedCb(el));
             }
 

@@ -44,7 +44,7 @@ describe("Resource", () => {
     it("returns an inert handle with acquire and release", () => {
         const acquire = vi.fn(async () => "connection");
         const release = vi.fn(async () => {});
-        const r = Resource(acquire, release);
+        const r = Resource.create(acquire, release);
         expect(r.acquire).toBe(acquire);
         expect(r.release).toBe(release);
         expect(acquire).not.toHaveBeenCalled();
@@ -57,20 +57,20 @@ describe("Resource", () => {
 
 describe("Scope — initial state", () => {
     it("starts Active", () => {
-        const scope = Scope();
+        const scope = Scope.create();
         expect(getTag(scope.state)).toBe("Active");
     });
 });
 
 describe("Scope.dispose — state transition", () => {
     it("transitions to Disposed after dispose()", async () => {
-        const scope = Scope();
+        const scope = Scope.create();
         await scope.dispose();
         expect(getTag(scope.state)).toBe("Disposed");
     });
 
     it("is idempotent — second dispose returns []", async () => {
-        const scope = Scope();
+        const scope = Scope.create();
         const fn = vi.fn();
         scope.defer(fn);
         await scope.dispose();
@@ -86,7 +86,7 @@ describe("Scope.dispose — state transition", () => {
 
 describe("Scope.defer", () => {
     it("runs the finalizer on dispose", async () => {
-        const scope = Scope();
+        const scope = Scope.create();
         const fn = vi.fn();
         scope.defer(fn);
         await scope.dispose();
@@ -94,7 +94,7 @@ describe("Scope.defer", () => {
     });
 
     it("runs multiple finalizers in LIFO order", async () => {
-        const scope = Scope();
+        const scope = Scope.create();
         const order: number[] = [];
         scope.defer(() => { order.push(1); });
         scope.defer(() => { order.push(2); });
@@ -104,7 +104,7 @@ describe("Scope.defer", () => {
     });
 
     it("async finalizer is awaited before the next one runs", async () => {
-        const scope = Scope();
+        const scope = Scope.create();
         const order: number[] = [];
 
         scope.defer(async () => {
@@ -126,7 +126,7 @@ describe("Scope.defer", () => {
 
 describe("Scope.dispose — defect collection", () => {
     it("collects thrown errors as Defect without aborting remaining finalizers", async () => {
-        const scope = Scope();
+        const scope = Scope.create();
         const afterThrowing = vi.fn();
 
         scope.defer(afterThrowing);            // registered first → runs last
@@ -141,7 +141,7 @@ describe("Scope.dispose — defect collection", () => {
     });
 
     it("collects multiple defects from multiple throwing finalizers", async () => {
-        const scope = Scope();
+        const scope = Scope.create();
         scope.defer(() => { throw new Error("a"); });
         scope.defer(() => { throw new Error("b"); });
         const defects = await scope.dispose();
@@ -155,10 +155,10 @@ describe("Scope.dispose — defect collection", () => {
 
 describe("Scope.acquire", () => {
     it("calls resource.acquire() and returns the value", async () => {
-        const scope = Scope();
+        const scope = Scope.create();
         const acquireFn = vi.fn(async () => "db");
         const releaseFn = vi.fn(async () => {});
-        const r = Resource(acquireFn, releaseFn);
+        const r = Resource.create(acquireFn, releaseFn);
 
         const result = await scope.acquire(r);
         expect(result).toBe("db");
@@ -166,9 +166,9 @@ describe("Scope.acquire", () => {
     });
 
     it("registers resource.release() as a defer finalizer", async () => {
-        const scope = Scope();
+        const scope = Scope.create();
         const releaseFn = vi.fn(async (_: string) => {});
-        const r = Resource(async () => "connection", releaseFn);
+        const r = Resource.create(async () => "connection", releaseFn);
 
         await scope.acquire(r);
         expect(releaseFn).not.toHaveBeenCalled();
@@ -178,10 +178,10 @@ describe("Scope.acquire", () => {
     });
 
     it("release runs after explicit defer finalizers registered after acquire (LIFO)", async () => {
-        const scope = Scope();
+        const scope = Scope.create();
         const order: string[] = [];
 
-        const r = Resource(async () => "res", async () => { order.push("release"); });
+        const r = Resource.create(async () => "res", async () => { order.push("release"); });
         await scope.acquire(r);
         scope.defer(() => { order.push("after"); });
 
@@ -197,7 +197,7 @@ describe("Scope.acquire", () => {
 describe("Scope[Symbol.asyncDispose]", () => {
     it("disposes cleanly without warnings for a clean scope", async () => {
         const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
-        const scope = Scope();
+        const scope = Scope.create();
         scope.defer(() => {});
         await scope[Symbol.asyncDispose]();
         expect(warnSpy).not.toHaveBeenCalled();
@@ -206,7 +206,7 @@ describe("Scope[Symbol.asyncDispose]", () => {
 
     it("warns for each defect from a throwing finalizer", async () => {
         const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
-        const scope = Scope();
+        const scope = Scope.create();
         scope.defer(() => { throw new Error("finalizer panic"); });
         await scope[Symbol.asyncDispose]();
         expect(warnSpy).toHaveBeenCalledOnce();
@@ -223,7 +223,7 @@ describe("Scope — catchDefect option", () => {
         const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
         const catchDefect = vi.fn();
 
-        const scope = Scope({ catchDefect });
+        const scope = Scope.create({ catchDefect });
         scope.defer(() => { throw new Error("direct defect"); });
 
         const defects = await scope.dispose();
@@ -239,10 +239,10 @@ describe("Scope — catchDefect option", () => {
         const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
         const catchDefect = vi.fn();
 
-        // Create a parent computation; Scope() auto-parents to getCurrentComputation().
+        // Create a parent computation; Scope.create() auto-parents to getCurrentComputation().
         const parent = createOwner(null);
         trackIn(parent, () => {
-            const scope = Scope({ catchDefect });
+            const scope = Scope.create({ catchDefect });
             scope.defer(() => { throw new Error("cascade defect"); });
         });
 
@@ -263,7 +263,7 @@ describe("Scope — catchDefect option", () => {
 
         const parent = createOwner(null);
         trackIn(parent, () => {
-            const scope = Scope(); // no catchDefect
+            const scope = Scope.create(); // no catchDefect
             scope.defer(() => { throw new Error("warn defect"); });
         });
 
@@ -285,7 +285,7 @@ describe("runInScope / getCurrentScope", () => {
     });
 
     it("getCurrentScope returns the active scope inside runInScope", () => {
-        const scope = Scope();
+        const scope = Scope.create();
         let captured: ScopeHandle | null = null;
         runInScope(scope, () => {
             captured = getCurrentScope();
@@ -294,14 +294,14 @@ describe("runInScope / getCurrentScope", () => {
     });
 
     it("getCurrentScope returns null again after runInScope exits", () => {
-        const scope = Scope();
+        const scope = Scope.create();
         runInScope(scope, () => {});
         expect(getCurrentScope()).toBeNull();
     });
 
     it("restores the outer scope when runInScope is nested", () => {
-        const outer = Scope();
-        const inner = Scope();
+        const outer = Scope.create();
+        const inner = Scope.create();
         let duringInner: ScopeHandle | null = null;
         let afterInner: ScopeHandle | null = null;
 
@@ -327,7 +327,7 @@ describe("implicit defer()", () => {
     });
 
     it("delegates to the ambient scope inside runInScope", async () => {
-        const scope = Scope();
+        const scope = Scope.create();
         const fn = vi.fn();
         runInScope(scope, () => {
             defer(fn);
@@ -339,14 +339,14 @@ describe("implicit defer()", () => {
 
 describe("implicit acquire()", () => {
     it("throws when called outside a scope context", () => {
-        const r = Resource(async () => "x", async () => {});
+        const r = Resource.create(async () => "x", async () => {});
         expect(() => acquire(r)).toThrow(/acquire\(\) called outside/);
     });
 
     it("delegates to the ambient scope inside runInScope", async () => {
-        const scope = Scope();
+        const scope = Scope.create();
         const releaseFn = vi.fn(async () => {});
-        const r = Resource(async () => "val", releaseFn);
+        const r = Resource.create(async () => "val", releaseFn);
 
         let result: string | undefined;
         runInScope(scope, () => {

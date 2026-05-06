@@ -66,7 +66,7 @@ match(input.state(), {
 // Cleanup is declared alongside acquisition — nothing leaks when the panel closes.
 // Guide 5 shows how Scope, Resource, and defer compose into a structured teardown.
 const scope = Scope.create()
-scope.acquire(Resource(
+scope.acquire(Resource.create(
   () => subscribeToInventoryUpdates(),
   (sub) => sub.unsubscribe(),
 ))

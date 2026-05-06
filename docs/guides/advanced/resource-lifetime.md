@@ -8,14 +8,14 @@ Without explicit lifetime management, that cleanup is a collection of individual
 
 ## Scope as a lifetime boundary
 
-`Scope()` creates a context for structured cleanup. Finalizers registered via `.defer()` run in LIFO order when the scope disposes. Resources acquired via `.acquire()` are released automatically — the release always mirrors the acquisition.
+`Scope.create()` creates a context for structured cleanup. Finalizers registered via `.defer()` run in LIFO order when the scope disposes. Resources acquired via `.acquire()` are released automatically — the release always mirrors the acquisition.
 
 The most direct way to use a scope is to create one explicitly and dispose it when the component's lifetime ends:
 
 ```ts
 import { Scope, watchEffect } from "aljabr/prelude"
 
-const panelScope = Scope()
+const panelScope = Scope.create()
 
 // The reactive graph from guide 3, now bounded by this scope
 const view = Ref.create<TableState>({ /* ... */ })
@@ -77,7 +77,7 @@ The detail loader from the reactive UI guide makes a fetch on every selection ch
 import { Resource } from "aljabr/prelude"
 
 // A resource for the order detail HTTP client
-const DetailClientResource = Resource(
+const DetailClientResource = Resource.create(
   async () => {
     const client = new ApiClient({ baseUrl: "/api/orders" })
     await client.authenticate()
@@ -108,7 +108,7 @@ import { Signal, watchEffect, Resource } from "aljabr/prelude"
 
 const roomId = Signal.create("orders")
 
-const WsResource = Resource(
+const WsResource = Resource.create(
   (id: string) => connectWebSocket(`/updates/${id}`),
   (ws) => ws.close(),
 )
@@ -142,7 +142,7 @@ Putting the full panel together with its scope:
 
 ```ts
 async function mountOrderPanel(): Promise<() => Promise<void>> {
-  const panelScope = Scope()
+  const panelScope = Scope.create()
 
   // State
   const view = Ref.create<TableState>({
@@ -222,7 +222,7 @@ A page with multiple panels has a natural scope hierarchy: each panel scope is a
 
 ```ts
 async function mountOrdersPage(): Promise<() => Promise<void>> {
-  const pageScope = Scope()
+  const pageScope = Scope.create()
 
   // Page-level resources — shared across all panels
   const pageClient = await pageScope.acquire(PageApiClientResource)
@@ -236,7 +236,7 @@ async function mountOrdersPage(): Promise<() => Promise<void>> {
     if (panelUnmount) await panelUnmount()
 
     // Each panel scope is independent — disposing the panel doesn't affect the page
-    const panelScope = Scope()
+    const panelScope = Scope.create()
     const ws = await panelScope.acquire(WsResource(`orders/${orderId}`))
 
     panelUnmount = () => panelScope.dispose()
@@ -265,7 +265,7 @@ If your environment supports the TC39 Explicit Resource Management proposal (Typ
 
 ```ts
 async function handleOrderRequest(req: Request): Promise<Response> {
-  await using scope = Scope()
+  await using scope = Scope.create()
 
   const db     = await scope.acquire(DbResource)
   const client = await scope.acquire(ApiClientResource)

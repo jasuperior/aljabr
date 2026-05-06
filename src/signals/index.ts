@@ -127,7 +127,7 @@ export function scope<T>(
     fn: (dispose: () => Promise<Defect[]>) => T,
 ): [T, () => Promise<Defect[]>] {
     const owner = createOwner(getCurrentComputation());
-    const s = runInContext(owner, () => Scope());
+    const s = runInContext(owner, () => Scope.create());
 
     const dispose = async (): Promise<Defect[]> => {
         const defects = await s.dispose();

@@ -256,10 +256,10 @@ import { Scope, Resource } from "aljabr/prelude";
 
 function DataStream({ url }: { url: string }) {
   const data = Signal.create<string | null>(null);
-  const scope = Scope();
+  const scope = Scope.create();
 
   scope.acquire(
-    Resource(
+    Resource.create(
       () => {
         const ws = new WebSocket(url);
         ws.onmessage = (e) => data.set(e.data);

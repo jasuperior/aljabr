@@ -56,7 +56,7 @@ The union is designed for extensibility — future phases may introduce addition
 
 ## `ScopeHandle`
 
-The interface returned by `Scope()`.
+The interface returned by `Scope.create()`.
 
 ```ts
 interface ScopeHandle {
@@ -70,15 +70,17 @@ interface ScopeHandle {
 
 ---
 
-## `Scope()`
+## `Scope.create()`
 
 ```ts
-function Scope(): ScopeHandle
+const Scope: {
+    create(options?: ScopeOptions): ScopeHandle
+}
 ```
 
 Create a new scope for structured resource management.
 
-When called inside a reactive computation (`watchEffect`, `AsyncDerived`), the scope auto-parents to the current reactive owner — disposing the owner also disposes the scope. When called at the top level (no active computation), creates a root scope managed entirely by the caller.
+When called inside a reactive computation (`watch`, `AsyncDerived`), the scope auto-parents to the current reactive owner — disposing the owner also disposes the scope. When called at the top level (no active computation), creates a root scope managed entirely by the caller.
 
 ### `scope.defer(fn)`
 
@@ -89,7 +91,7 @@ scope.defer(fn: () => Promise<void> | void): void
 Register a finalizer. Finalizers run in **LIFO order** on disposal. If `fn` returns a `Promise`, disposal awaits it before proceeding to the next finalizer.
 
 ```ts
-const scope = Scope()
+const scope = Scope.create()
 
 scope.defer(() => console.log("runs third"))
 scope.defer(() => console.log("runs second"))
@@ -111,12 +113,12 @@ scope.acquire<T>(resource: ResourceHandle<T>): Promise<T>
 Acquire a resource. Calls `resource.acquire()`, registers `resource.release(value)` as a `defer` finalizer, and returns the acquired value. The resource's lifetime is structurally tied to the scope — no manual cleanup needed.
 
 ```ts
-const DbResource = Resource(
+const DbResource = Resource.create(
     () => connectToDb(url),
     (db) => db.disconnect(),
 )
 
-const scope = Scope()
+const scope = Scope.create()
 const db = await scope.acquire(DbResource)
 await doWork(db)
 await scope.dispose()  // db.disconnect() called here
@@ -144,7 +146,7 @@ Non-reactive snapshot of the scope's lifecycle. Read it to inspect state without
 
 ```ts
 {
-    await using scope = Scope()
+    await using scope = Scope.create()
     const db = await scope.acquire(DbResource)
     await doWork(db)
 }  // scope.dispose() fires automatically — db released
@@ -154,13 +156,15 @@ Requires TypeScript 5.2+ and `"lib": ["ESNext.Disposable"]` in `tsconfig.json`.
 
 ---
 
-## `Resource<T>`
+## `Resource.create<T>()`
 
 ```ts
-function Resource<T>(
-    acquire: () => Promise<T>,
-    release: (value: T) => Promise<void> | void,
-): ResourceHandle<T>
+const Resource: {
+    create<T>(
+        acquire: () => Promise<T>,
+        release: (value: T) => Promise<void> | void,
+    ): ResourceHandle<T>
+}
 
 interface ResourceHandle<T> {
     readonly acquire: () => Promise<T>
@@ -168,17 +172,17 @@ interface ResourceHandle<T> {
 }
 ```
 
-Pair an async acquisition with a release. `Resource(...)` is a pure description — it does not open any connection or allocate anything until consumed via `scope.acquire()`.
+Pair an async acquisition with a release. `Resource.create(...)` is a pure description — it does not open any connection or allocate anything until consumed via `scope.acquire()`.
 
 ```ts
 // Database connection
-const DbResource = Resource(
+const DbResource = Resource.create(
     () => connectToDb(process.env.DB_URL),
     (db) => db.disconnect(),
 )
 
 // HTTP client with async teardown
-const ClientResource = Resource(
+const ClientResource = Resource.create(
     async () => {
         const client = new ApiClient()
         await client.authenticate()
@@ -188,7 +192,7 @@ const ClientResource = Resource(
 )
 
 // WebSocket
-const WsResource = Resource(
+const WsResource = Resource.create(
     (url: string) => new Promise<WebSocket>((resolve, reject) => {
         const ws = new WebSocket(url)
         ws.onopen  = () => resolve(ws)
@@ -270,7 +274,7 @@ import { watchEffect, Resource, Signal } from "aljabr/prelude"
 
 const roomId = Signal.create("lobby")
 
-const WsResource = Resource(
+const WsResource = Resource.create(
     (id: string) => connectWebSocket(`/rooms/${id}`),
     (ws) => ws.close(),
 )
@@ -298,7 +302,7 @@ const handle = watchEffect(
 ### Manual lifecycle
 
 ```ts
-const scope = Scope()
+const scope = Scope.create()
 
 scope.defer(async () => {
     await cache.flush()
@@ -317,7 +321,7 @@ await scope.dispose()
 
 ```ts
 async function handleRequest(req: Request): Promise<Response> {
-    await using scope = Scope()
+    await using scope = Scope.create()
 
     const db      = await scope.acquire(DbResource)
     const session = await scope.acquire(SessionResource)
