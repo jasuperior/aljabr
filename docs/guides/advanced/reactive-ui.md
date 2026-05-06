@@ -92,10 +92,10 @@ const summary = Derived.create(() => {
 
 ### Writable derived for two-way binding
 
-A filter input needs to both read and write the `"filter"` path. `Derived.create({ get, set })` creates a writable derived that routes writes back upstream:
+A filter input needs to both read and write the `"filter"` path. `Derived.writable({ get, set })` creates a writable derived (a `WritableDerived<T>`) that routes writes back upstream:
 
 ```ts
-const filterText = Derived.create({
+const filterText = Derived.writable({
   get: () => view.get("filter") ?? "",
   set: (v) => {
     batch(() => {
@@ -141,7 +141,7 @@ import { match } from "aljabr"
 import { Fault } from "aljabr/prelude"
 
 function renderDetailPanel(): HTMLElement {
-  return match(orderDetail.state, {
+  return match(orderDetail.state(), {
     Uncomputed: () => renderEmpty("Select an order to view details"),
     Loading:    () => renderSpinner(),
     Ready:      ({ value }) => renderOrderDetail(value),

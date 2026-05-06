@@ -18,7 +18,7 @@ aljabr ships independent entry points. Use what you need; ignore what you don't.
 | Entry point        | What it gives you                                                                                            |
 | ------------------ | ------------------------------------------------------------------------------------------------------------ |
 | `aljabr`           | Tagged unions, exhaustive `match()`, structural patterns, `is.*` wildcards, `select()` extraction            |
-| `aljabr/prelude`   | Result, Option, Validation, Signal, Derived, Ref, RefArray, DerivedArray, Scope, Resource, watchEffect       |
+| `aljabr/prelude`   | Result, Option, Validation, Signal, Derived, Store, List, DerivedArray, Dispatcher, Scope, Resource, watch, Effect |
 | `aljabr/schema`    | Type-safe decode/encode pipeline for external data; errors surface as a `Validation`                         |
 | `aljabr/signals`   | SolidJS-style convenience layer over the reactive primitives                                                 |
 | `aljabr/ui`        | Reactive UI layer — JSX, function components, pluggable renderer host                                        |
@@ -36,7 +36,7 @@ A small reactive shape editor — touches unions, exhaustive matching, reactive 
 ```tsx
 /** @jsxImportSource aljabr/ui */
 import { union, match, type Union } from "aljabr";
-import { Ref, Derived } from "aljabr/prelude";
+import { Store, Derived } from "aljabr/prelude";
 import { createRenderer } from "aljabr/ui";
 import { domHost } from "aljabr/ui/dom";
 
@@ -51,7 +51,7 @@ const area = (s: Shape) => match(s, {
     Rect:   ({ w, h })   => w * h,
 });
 
-const shapes = Ref.create<Shape[]>([Shape.Circle(1, 5), Shape.Rect(2, 3, 4)]);
+const shapes = Store.create<Shape[]>([Shape.Circle(1, 5), Shape.Rect(2, 3, 4)]);
 const total  = Derived.create(() => shapes.reduce((sum, s) => sum + area(s), 0));
 
 const rows = shapes.map(
@@ -72,13 +72,13 @@ mount(() =>
 );
 ```
 
-`Shape` is the substrate. `match` checks exhaustively. `Ref.create<Shape[]>([...])` returns a `RefArray` — a reactive list with per-index subscriptions. `.map(fn, { key })` produces a keyed `DerivedArray`, so the renderer reconciles by `id` instead of position. `Derived.create(...)` recomputes the total only when the list changes. The `() => total.get()?.toFixed(2)` child is a reactive region: only that one text node updates when `total` changes.
+`Shape` is the substrate. `match` checks exhaustively. `Store.create<Shape[]>([...])` returns a `List` — a reactive root-level array with per-index subscriptions and pathless mutations (`push`, `pop`, `splice`, `move`, `set`). `.map(fn, { key })` produces a keyed `DerivedArray`, so the renderer reconciles by `id` instead of position. `Derived.create(...)` recomputes the total only when the list changes. The `() => total.get()?.toFixed(2)` child is a reactive region: only that one text node updates when `total` changes.
 
 ---
 
 ## Try the demo
 
-A small todo app lives at [`public/`](public/) — unions, `Ref`, `RefArray`, the iterator chain, and the DOM renderer wired together end-to-end. It runs against the local source build, so it's also the fastest way to poke at the library while hacking on it.
+A small todo app lives at [`public/`](public/) — unions, `Store`, `List`, the iterator chain, and the DOM renderer wired together end-to-end. It runs against the local source build, so it's also the fastest way to poke at the library while hacking on it.
 
 ```sh
 git clone https://github.com/jasuperior/aljabr.git
@@ -105,7 +105,7 @@ aljabr's surface area now overlaps with several other libraries. None of them ar
 
 **vs. [React](https://react.dev) / [Solid](https://www.solidjs.com).** aljabr's UI layer has no virtual DOM and no diff cycle; it renders a static tree once and surgically updates only the regions whose signal dependencies change — closer to Solid than React. Unlike either, the renderer host is pluggable: DOM, canvas, SSR, or anything you implement against `RendererHost<N, E>` are equal peers. Components are plain functions; there are no hooks, no rules-of-hooks, and no registration.
 
-**vs. [Preact Signals](https://preactjs.com/guide/v10/signals/) / standalone signal libraries.** Signals are the smallest piece of aljabr's reactive system. The prelude also ships `Ref` (per-path subscriptions over structured objects), `RefArray` / `DerivedArray` (per-index reactive lists with keyed reconciliation), `Scope` / `Resource` (structured cleanup), and `watchEffect` (retry policies, timeouts, cancellation). If you want signals only, a dedicated signals library is lighter; if you want the reactive substrate to extend to structured state and resource lifetimes, that's what aljabr is for.
+**vs. [Preact Signals](https://preactjs.com/guide/v10/signals/) / standalone signal libraries.** Signals are the smallest piece of aljabr's reactive system. The prelude also ships `Store` (per-path subscriptions over structured objects), `List` / `DerivedArray` (per-index reactive arrays with keyed reconciliation), `Dispatcher` (validated transactional state), `Scope` / `Resource` (structured cleanup), and `watch` / `Effect` (reactive async with retry policies, timeouts, cancellation). If you want signals only, a dedicated signals library is lighter; if you want the reactive substrate to extend to structured state and resource lifetimes, that's what aljabr is for.
 
 **vs. [Awaitly](https://github.com/jagreehal/awaitly).** Workflow-first vs. ADT-first. Awaitly orients around typed async step composition; aljabr orients around tagged unions, with async and reactive as things that compose through them. Worth reading the author's [post on algebraic thinking in TypeScript](https://arrangeactassert.com/posts/algebraic-thinking-without-the-ceremony/).
 
@@ -168,15 +168,17 @@ npm install aljabr
 - [`Validation<T, E>`](docs/api/prelude/validation.md)
 - [`Signal<T, S>`](docs/api/prelude/signal.md) — reactive mutable container; custom state protocols
 - [`Derived<T>` / `AsyncDerived<T, E>`](docs/api/prelude/derived.md) — lazy computed reactive values
-- [`Ref<T>`](docs/api/prelude/ref.md) — structured reactive objects and arrays
-- [`RefArray<T>`](docs/api/prelude/ref.md#refarrayt) — reactive root-level array; pathless mutations, per-index reads, iterator methods
+- [`Store<T>`](docs/api/prelude/store.md) — structured reactive objects with per-path subscriptions
+- [`List<T>`](docs/api/prelude/list.md) — reactive root-level array; pathless mutations, per-index reads, iterator methods
 - [`DerivedArray<T>`](docs/api/prelude/derived-array.md) — read-only per-index reactive view; key-based incremental diffing; chainable `map` / `filter` / `sort`
-- [`Scope` / `Resource`](docs/api/prelude/scope.md) — structured resource lifetimes
-- [`Effect<T, E>` / `watchEffect`](docs/api/prelude/effect.md) — reactive async effects
+- [`Dispatcher<T, S, Cmd>`](docs/api/prelude/dispatcher.md) — reactive container whose writes route through a typed `apply` returning `Validation`
+- [`Scope` / `Resource`](docs/api/prelude/scope.md) — structured resource lifetimes (constructed via `.create()`, `Symbol.dispose` / `Symbol.asyncDispose`)
+- [`Effect<T, E>` / `watch`](docs/api/prelude/effect.md) — reactive async effects (`watch` replaces `watchEffect`)
+- [`CommandError`](docs/api/prelude/command-error.md) — extensible error union for `Dispatcher.apply` failures
 - [`Fault<E>`](docs/api/prelude/fault.md) — classify async failures
 - [`Schedule` / `AsyncOptions`](docs/api/prelude/schedule.md) — retry policies and timeouts
 - [`Tree<T>`](docs/api/prelude/tree.md) — recursive binary tree
-- [Persistence](docs/api/prelude/persist.md) — `persistedSignal`, `syncToStore`
+- [Persistence](docs/api/prelude/persist.md) — `Signal.persisted`, `signal.persist(opts)` returning a `WatchHandle`
 - [Reactive context](docs/api/prelude/context.md) — `batch`, `untrack`, `createOwner`
 
 ---

@@ -24,7 +24,7 @@ const profile = AsyncDerived.create<UserProfile, ApiError>(async (signal) => {
 
 Throwing `Fault.Fail(e)` marks `e` as an expected domain error. Any other throw (an uncaught `TypeError`, a null dereference) becomes `Fault.Defect`. Explicit `Fault.Fail` is required to distinguish "the API said 503" from "there is a bug in the code."
 
-If the request fails, `profile.state` immediately transitions to `Failed` with `nextRetryAt: null` — the derived has given up. The user sees an error with no recovery path.
+If the request fails, `profile.state()` immediately transitions to `Failed` with `nextRetryAt: null` — the derived has given up. The user sees an error with no recovery path.
 
 ---
 
@@ -56,7 +56,7 @@ You can show retry state to users:
 ```ts
 import { match } from "aljabr"
 
-match(profile.state, {
+match(profile.state(), {
     Loading:    () => showSpinner(),
     Ready:      ({ value }) => renderProfile(value),
     Reloading:  ({ value }) => renderProfile(value, { stale: true }),
@@ -91,7 +91,7 @@ After the 5th failed attempt, the scheduler emits `ScheduleError.MaxRetriesExcee
 import { match, getTag } from "aljabr"
 import { ScheduleError, Fault } from "aljabr/prelude"
 
-match(profile.state, {
+match(profile.state(), {
     Failed: ({ fault }) => {
         match(fault, {
             Fail: ({ error }) => {

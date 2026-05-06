@@ -158,7 +158,16 @@ function watch<T, E = never>(
     thunk: (signal: AbortSignal, scope: ScopeHandle) => Promise<T>,
     onChange: (result: Done<T, E> | Stale<T, E> | Failed<T, E>) => void,
     options?: WatchOptions<E>,
-): { stop(): void }
+): WatchHandle
+```
+
+Where `WatchHandle` is:
+
+```ts
+type WatchHandle = {
+    dispose(): void
+    [Symbol.dispose](): void
+}
 ```
 
 Run an async thunk with automatic reactive dependency tracking. Any `Signal.get()` calls inside `thunk` are recorded as dependencies. When a dependency changes, `onChange` is called with a `Stale` (lazy mode) or a new `Done`/`Failed` (eager mode).
@@ -167,7 +176,7 @@ The thunk runs immediately on creation. The `onChange` callback is **not** calle
 
 Failures are classified as [`Fault<E>`](./fault.md): `Fault.Fail<E>` when the thunk throws `Fault.Fail(e)`, `Fault.Interrupted` when the `AbortSignal` fires, and `Fault.Defect` for any other thrown value. Only `Fault.Fail` is retried by default — override via `shouldRetry`.
 
-Returns a handle with `stop()` to cancel tracking, abort any in-flight request, and dispose the underlying computation.
+Returns a `WatchHandle` whose `.dispose()` cancels tracking, aborts any in-flight request, and disposes the underlying computation. `Symbol.dispose` is implemented, so the handle can be managed via a `using` block.
 
 ### `AbortSignal` threading
 

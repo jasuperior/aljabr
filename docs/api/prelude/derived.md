@@ -39,19 +39,21 @@ name.set("grace")
 upper.get() // "GRACE" — re-evaluated
 ```
 
-### `Derived.create({ get, set })`
+### `Derived.writable({ get, set })`
 
 ```ts
-Derived.create<T>(options: { get: () => T; set: (value: T) => void }): Derived<T>
+Derived.writable<T>(options: { get: () => T; set: (value: T) => void }): WritableDerived<T>
 ```
 
-Create a writable derived value. The `set` handler must update the upstream `Signal`(s) that feed into this derivation; calling `derived.set()` does not bypass the getter. The derived re-evaluates on the next `.get()` after those upstream signals change.
+Create a writable derived value. Returns `WritableDerived<T>`, which extends `Derived<T>` and adds `.set(value)`. A variable typed `Derived<T>` accepts either factory's return; only `WritableDerived<T>` exposes the setter — calling `.set()` on a read-only `Derived<T>` is a compile-time error.
+
+The `set` handler must update the upstream `Signal`(s) that feed into this derivation; calling `derived.set()` does not bypass the getter. The derived re-evaluates on the next `.get()` after those upstream signals change.
 
 ```ts
 const firstName = Signal.create("ada")
 const lastName  = Signal.create("lovelace")
 
-const fullName = Derived.create({
+const fullName = Derived.writable({
     get: () => `${firstName.get()} ${lastName.get()}`,
     set: (v) => {
         const [f, l] = v.split(" ")
@@ -74,6 +76,14 @@ derived.get(): T | null
 
 Read the current value. Re-evaluates lazily if the state is `Uncomputed` or `Stale`. Registers this derived as a dependency of the current reactive context.
 
+### `.getOr(default)`
+
+```ts
+derived.getOr(defaultValue: T): T
+```
+
+Read the current value with a fallback. Tracked. Returns `defaultValue` when the value is `null` (not yet computed or disposed).
+
 ### `.peek()`
 
 ```ts
@@ -82,31 +92,38 @@ derived.peek(): T | null
 
 Read the last known value without triggering re-evaluation or registering a dependency. Returns `null` if never computed or disposed.
 
-### `.set(value)`
+### `.subscribe(callback)`
 
 ```ts
-derived.set(value: T): void
+derived.subscribe(callback: (value: T | null) => void): () => void
 ```
 
-Write a value via the `set` handler provided to `Derived.create({ get, set })`.
+Register a synchronous callback that fires every time this derived computes a new value. Push subscribers force eager re-evaluation when a dependency changes — unlike `.get()`, which is lazy. Returns an unsubscribe function. Subscribers also receive `null` when this derived is disposed. Prefer `watch` for in-graph reactive coordination; reserve `subscribe` for bridging to non-reactive sinks.
 
-Throws if called on a read-only derived (created without a `set` handler).
+### `.set(value)` (`WritableDerived` only)
 
-### `.dispose()`
+```ts
+writableDerived.set(value: T): void
+```
+
+Write a value via the `set` handler provided to `Derived.writable({ get, set })`. Calling `.set()` on a read-only `Derived<T>` is a **compile-time error**.
+
+### `.dispose()` / `[Symbol.dispose]()`
 
 ```ts
 derived.dispose(): void
 ```
 
-Dispose this derived and clear all subscriptions. Downstream computations that depend on this derived will be notified as stale.
+Dispose this derived and clear all subscriptions. Downstream computations that depend on this derived will be notified as stale. `Symbol.dispose` is also implemented, so a `Derived` can be managed with a `using` block.
 
-### `.state`
+### `.state()` / `.peekState()`
 
 ```ts
-derived.state: DerivedState<T>
+derived.state(): DerivedState<T>
+derived.peekState(): DerivedState<T>
 ```
 
-The current lifecycle state. Pattern-match to distinguish not-yet-computed, fresh, stale, and disposed.
+Read the current lifecycle state. `.state()` registers a dependency in the active tracking context; `.peekState()` does not. Pattern-match to distinguish not-yet-computed, fresh, stale, and disposed.
 
 ---
 
@@ -122,7 +139,7 @@ The current lifecycle state. Pattern-match to distinguish not-yet-computed, fres
 Both `Computed` and `Stale` carry `{ value: T }`. The stale value is accessible via `.peek()` or by matching `state` directly — useful for rendering stale-while-revalidating.
 
 ```ts
-match(derived.state, {
+match(derived.state(), {
     Uncomputed: () => "never computed",
     Computed:   ({ value }) => `fresh: ${value}`,
     Stale:      ({ value }) => `stale (was: ${value}), recomputing...`,
@@ -199,42 +216,77 @@ const data = AsyncDerived.create(
 ### `.get()`
 
 ```ts
-async derived.get(): Promise<T>
+asyncDerived.get(): T | null
 ```
 
-Read the current value, triggering evaluation if the state is `Uncomputed`, `Reloading`, or `Failed`. Registers this derived as a dependency in the active tracking context.
+Read the last-known extracted value **synchronously**. Tracked — registers this derived as a dependency in the active tracking context, but does **not** trigger evaluation. Returns `null` until the first successful evaluation completes via `.run()`. After `Ready`/`Reloading` transitions, the value is preserved here. Mirrors `Signal.get()` semantics.
 
-Rejects with a `Fault<E>` if the computation failed (state transitions to `Failed`). Rejects with an `Error` if the derived is `Disposed`.
+> **Migration:** prior to v0.3.10, `get()` was async (`Promise<T>`). For the awaitable form, use `.run()` (or `.runOr(default)`).
+
+### `.run()`
 
 ```ts
-const user = await profile.get() // triggers fetch on first call
-userId.set(2)
-const user2 = await profile.get() // re-fetches for user 2
+asyncDerived.run(): Promise<Done<T, E> | Failed<T, E>>
 ```
 
-To handle failure without throwing, match on `.state` before calling `.get()`, or use `.peek()` for the last known value.
+Trigger evaluation if needed and resolve to the settled state. Mirrors `Effect.run()` so callers pattern-match with the same vocabulary. Tracked.
+
+```ts
+const user = await profile.run() // triggers fetch on first call
+match(user, {
+    Done:   ({ value }) => render(value),
+    Failed: ({ fault }) => showError(fault),
+})
+```
+
+### `.runOr(default)`
+
+```ts
+asyncDerived.runOr(defaultValue: T): Promise<T>
+```
+
+Awaitable form with a fallback. Resolves to the produced value on `Done`, or `defaultValue` on `Failed`. Tracked.
+
+### `.getOr(default)`
+
+```ts
+asyncDerived.getOr(defaultValue: T): T
+```
+
+Synchronous read with a fallback. Tracked. Returns `defaultValue` until a value is available.
 
 ### `.peek()`
 
 ```ts
-derived.peek(): T | null
+asyncDerived.peek(): T | null
 ```
 
-Read the last known value synchronously without triggering re-evaluation or registering a dependency.
+Read the last known value synchronously without registering a dependency.
 
-### `.dispose()`
+### `.subscribe(callback)`
 
 ```ts
-derived.dispose(): void
+asyncDerived.subscribe(callback: (value: T | null) => void): () => void
 ```
 
-Dispose the derived and clear all subscriptions.
+Register a synchronous callback that fires when this derived's extracted value changes. Returns an unsubscribe function.
 
-### `.state`
+### `.dispose()` / `[Symbol.dispose]()`
 
 ```ts
-derived.state: AsyncDerivedState<T, E>
+asyncDerived.dispose(): void
 ```
+
+Dispose the derived, abort any in-flight thunk, and clear all subscriptions.
+
+### `.state()` / `.peekState()`
+
+```ts
+asyncDerived.state(): AsyncDerivedState<T, E>
+asyncDerived.peekState(): AsyncDerivedState<T, E>
+```
+
+Read the lifecycle state. `.state()` is tracked; `.peekState()` is not.
 
 ---
 
@@ -257,7 +309,7 @@ derived.state: AsyncDerivedState<T, E>
 import { match } from "aljabr"
 import { Fault } from "aljabr/prelude"
 
-match(profile.state, {
+match(profile.state(), {
     Uncomputed: () => null,
     Loading:    () => <Spinner />,
     Ready:      ({ value }) => <Profile user={value} />,
@@ -283,11 +335,12 @@ state.getFault(): Fault<E> | null  // the fault for Failed, null otherwise
 These are useful as guards when you need a quick null-check without a full `match`:
 
 ```ts
-if (profile.state.hasValue()) {
-    renderProfile(profile.state.getValue()!)
+const state = profile.state()
+if (state.hasValue()) {
+    renderProfile(state.getValue()!)
 }
 
-const fault = profile.state.getFault()
+const fault = state.getFault()
 if (fault) handleFault(fault)
 ```
 
@@ -331,10 +384,10 @@ const results = AsyncDerived.create(async (signal) => {
     return searchApi(q, signal)
 })
 
-await results.get() // []
+await results.run() // Done([])
 query.set("hello")
-results.state       // Reloading (prior empty array preserved)
-await results.get() // [...search results for "hello"]
+results.peekState() // Reloading (prior empty array preserved)
+await results.run() // Done([...search results for "hello"])
 ```
 
 ### Handling failures
@@ -349,7 +402,7 @@ const user = AsyncDerived.create<User, ApiError>(async (signal) => {
     return res.json()
 })
 
-match(user.state, {
+match(user.state(), {
     Loading:  () => showSpinner(),
     Ready:    ({ value }) => render(value),
     Reloading:({ value }) => render(value, /* stale */ true),

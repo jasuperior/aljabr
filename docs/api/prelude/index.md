@@ -36,7 +36,9 @@ A fine-grained push/pull reactive system with explicit lifecycle states.
 | [`Store<T>`](./store.md) | A reactive container for structured objects and arrays. Tracks subscriptions per dot-separated path — `get("user.name")` subscribes to exactly that path. Supports deletion and live signal bindings; array mutations route through [`List`](./list.md) via `store.at(arrayPath)`. |
 | [`List<T>`](./list.md) | A reactive container for a root-level array. Returned by `Store.create([...])` and `store.at()` for array paths. Per-index reactive reads + pathless mutation methods (`push`, `pop`, `splice`, `move`, `set`). Iterator methods (`map`/`filter`/`sort`) return `DerivedArray`. |
 | [`Derived<T>`](./derived.md) | A lazy computed value. Re-evaluates only when read after a dependency changes. Supports a writable form. |
-| [`AsyncDerived<T, E>`](./derived.md#asyncderivedT-E) | Like `Derived`, but async. Preserves the last known value in `Reloading` state for stale-while-revalidating. |
+| [`AsyncDerived<T, E>`](./derived.md#asyncderivedT-E) | Like `Derived`, but async. `.get()` is sync (last-known value, tracked); awaitable form is `.run()` returning `Promise<Done \| Failed>` (or `.runOr(default)`). Preserves the last known value in `Reloading` state for stale-while-revalidating. |
+| [`Dispatcher<T, S, Cmd>`](./dispatcher.md) | A reactive container whose writes route through a typed `apply` function returning `Validation<ApplyResult, CommandError>`. Foundation for command-pattern state with built-in inverse-command production for undo/history. |
+| [`CommandError`](./command-error.md) | Standard error union for `Dispatcher.apply` failures: `IllegalTransition`, `IllegalNode`, `SchemaViolation`, `Custom`. Extensible via `CommandError.merge({...})`. |
 
 ### Effects
 
