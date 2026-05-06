@@ -369,7 +369,7 @@ match(user.state, {
 
 - [`Signal`](./signal.md) — the mutable source values deriveds subscribe to
 - [`Fault`](./fault.md) — the three-variant error union carried by `Failed`
-- [`watchEffect`](./effect.md#watcheffect) — run async side effects reactively
+- [`watch`](./effect.md#watch) — run async side effects reactively
 - [`Schedule`](./schedule.md) — retry-delay policies for `AsyncOptions`
 - [`batch`](./context.md#batch) — coalesce multiple signal writes
 - [`runInContext`](./context.md#runincontext) — preserve reactive ownership across async boundaries

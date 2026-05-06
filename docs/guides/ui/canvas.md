@@ -4,7 +4,7 @@ Aljabr's canvas renderer is a retained-mode 2D scene graph that targets `<canvas
 
 This guide builds up incrementally: a single static rect, then reactive props, then a panning/zooming viewport, then layout-driven labels, then events. By the end you'll have authored a minimal interactive diagramming surface and know exactly which v0.3.8 affordances you're standing on.
 
-> If you're new to the renderer-agnostic core (`view`, `createRenderer`, `RendererHost`, `Signal`/`Ref`), read the [DOM guide](./dom.md) first. The reactive layer is identical; this guide assumes you're past that and want canvas specifics.
+> If you're new to the renderer-agnostic core (`view`, `createRenderer`, `RendererHost`, `Signal`/`Store`), read the [DOM guide](./dom.md) first. The reactive layer is identical; this guide assumes you're past that and want canvas specifics.
 
 ---
 

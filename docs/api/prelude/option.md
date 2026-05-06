@@ -8,7 +8,7 @@ import { Option, Some, None } from "aljabr/prelude"
 
 ## Overview
 
-`Option<T>` is a two-variant union that models the presence or absence of a value. It eliminates `null`/`undefined` checks by making the "maybe nothing" case explicit and chainable. All variants share `map`, `flatMap`, `getOrElse`, and `toResult` via the `Mappable<T>` impl mixin.
+`Option<T>` is a two-variant union that models the presence or absence of a value. It eliminates `null`/`undefined` checks by making the "maybe nothing" case explicit and chainable. All variants share `map`, `flatMap`, `getOr`, and `toResult` via the `Mappable<T>` impl mixin.
 
 ---
 
@@ -94,17 +94,17 @@ Option.Some("abc").flatMap(parseAge)  // None
 Option.None<string>().flatMap(parseAge) // None
 ```
 
-### `.getOrElse(defaultValue)`
+### `.getOr(defaultValue)`
 
 Extract the value, or return a default if absent.
 
 ```ts
-.getOrElse(defaultValue: T): T
+.getOr(defaultValue: T): T
 ```
 
 ```ts
-Option.Some("grace").getOrElse("anonymous")  // "grace"
-Option.None<string>().getOrElse("anonymous") // "anonymous"
+Option.Some("grace").getOr("anonymous")  // "grace"
+Option.None<string>().getOr("anonymous") // "anonymous"
 ```
 
 ### `.toResult<E>(error)`
@@ -161,7 +161,7 @@ function getCity(user: User | null): Option<string> {
 
 const city = getCity(currentUser)
     .map(c => c.toUpperCase())
-    .getOrElse("UNKNOWN")
+    .getOr("UNKNOWN")
 ```
 
 ### Chaining optional lookups
@@ -178,7 +178,7 @@ const timeout = Option.Some(config)
         const n = parseInt(s)
         return isNaN(n) ? Option.None() : Option.Some(n)
     })
-    .getOrElse(30_000)
+    .getOr(30_000)
 ```
 
 ### Converting to Result for error propagation

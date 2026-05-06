@@ -274,7 +274,7 @@ store.getOr("path", default)
 list.getOr(i, default)
 ```
 
-(`Option.getOrElse` is renamed to `Option.getOr` as part of v0.3.10.)
+(`Option.getOr` is renamed to `Option.getOr` as part of v0.3.10.)
 
 ### Static aggregators
 

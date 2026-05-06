@@ -8,7 +8,7 @@ import { Fault, type Fail, type Defect, type Interrupted } from "aljabr/prelude"
 
 ## Overview
 
-`Fault<E>` is a three-variant union that classifies every failure in an async reactive pipeline. It replaces raw thrown values as the carrier of failure information in [`Effect.Failed`](./effect.md#variants), [`AsyncDerivedState.Failed`](./derived.md#asyncderivedstatet-e), and [`watchEffect`](./effect.md#watcheffect)'s `onChange` callback.
+`Fault<E>` is a three-variant union that classifies every failure in an async reactive pipeline. It replaces raw thrown values as the carrier of failure information in [`Effect.Failed`](./effect.md#variants), [`AsyncDerivedState.Failed`](./derived.md#asyncderivedstatet-e), and [`watch`](./effect.md#watch)'s `onChange` callback.
 
 The three variants cover every failure mode:
 
@@ -75,7 +75,7 @@ Fault.Interrupted(reason?: unknown): Interrupted
 Signals that the `AbortSignal` was fired before the thunk finished. This happens when:
 
 - A reactive dependency changed and the previous computation was aborted
-- `.dispose()` was called on the `AsyncDerived` or `watchEffect` handle
+- `.dispose()` was called on the `AsyncDerived` or `watch` handle
 - A timeout fired (the controller is aborted before the timeout error rejects)
 
 Not retried by default. The `reason` field carries whatever value was passed to `controller.abort(reason)`.
@@ -182,6 +182,6 @@ type Fault<E> = Fail<E> | Defect | Interrupted
 
 - [`AsyncDerived`](./derived.md#asyncderivedstatet-e) — `state.getFault()` and `AsyncDerivedState.Failed`
 - [`Effect`](./effect.md#variants) — `Effect.Failed` carries `Fault<E>`
-- [`watchEffect`](./effect.md#watcheffect) — `Failed.fault` in `onChange`
+- [`watch`](./effect.md#watch) — `Failed.fault` in `onChange`
 - [`AsyncOptions`](./schedule.md#asyncoptionse) — `shouldRetry` and `afterRetry` receive `Fault<E>`
 - [Resilient async guide](../../guides/resilient-async.md) — error classification in practice

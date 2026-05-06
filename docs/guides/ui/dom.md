@@ -101,7 +101,7 @@ isLoggedIn.set(true);
 
 ## Part 3: Reactive props
 
-For **host elements**, any prop value that is a `Signal`, `Derived`, or other readable (anything with a `.get()` method that is not a `DerivedArray` or `RefArray`) is automatically normalised into a reactive getter before the element is mounted. You can also pass an explicit function — both are equivalent.
+For **host elements**, any prop value that is a `Signal`, `Derived`, or other readable (anything with a `.get()` method that is not a `DerivedArray` or `List`) is automatically normalised into a reactive getter before the element is mounted. You can also pass an explicit function — both are equivalent.
 
 ```ts
 const theme = Signal.create<"light" | "dark">("light");
@@ -323,14 +323,14 @@ function Diagram() {
 
 ## Part 6: Reactive lists
 
-Pass a `DerivedArray<ViewNode>` directly as a child to render a reactive list. `DerivedArray` is the read-only view returned by `RefArray.map`, `.filter`, or `.sort`.
+Pass a `DerivedArray<ViewNode>` directly as a child to render a reactive list. `DerivedArray` is the read-only view returned by `List.map`, `.filter`, or `.sort`.
 
 ```ts
-import { Ref, Signal } from "aljabr/prelude";
+import { Store, Signal } from "aljabr/prelude";
 
 type Task = { id: number; text: string; done: boolean };
 
-const tasks = Ref.create<{ list: Task[] }>({
+const tasks = Store.create<{ list: Task[] }>({
   list: [
     { id: 1, text: "Buy groceries", done: false },
     { id: 2, text: "Write docs", done: true },
@@ -340,7 +340,7 @@ const tasks = Ref.create<{ list: Task[] }>({
 const filter = Signal.create<"all" | "active" | "done">("all");
 ```
 
-Build the reactive list view by chaining from the `RefArray`:
+Build the reactive list view by chaining from the `List`:
 
 ```ts
 const visibleRows = tasks.at("list")
@@ -373,7 +373,7 @@ When `filter` changes, the renderer re-evaluates `visibleRows` and replaces the 
 
 ### Adding and removing items
 
-`RefArray` mutations — `push`, `pop`, `splice`, `move` — trigger the reactive list to re-render:
+`List` mutations — `push`, `pop`, `splice`, `move` — trigger the reactive list to re-render:
 
 ```ts
 tasks.push("list", { id: 3, text: "Ship it", done: false });
@@ -392,14 +392,14 @@ A complete task app with add, toggle, and filter — all reactive, all component
 ```ts
 import { createRenderer, view, Fragment } from "aljabr/ui";
 import { domHost } from "aljabr/ui/dom";
-import { Ref, Signal } from "aljabr/prelude";
+import { Store, Signal } from "aljabr/prelude";
 
 const { mount } = createRenderer(domHost);
 
 type Task = { id: number; text: string; done: boolean };
 let nextId = 1;
 
-const state = Ref.create<{
+const state = Store.create<{
   tasks: Task[];
   filter: "all" | "active" | "done";
   input: string;
@@ -446,7 +446,7 @@ function App() {
           if (e.key !== "Enter") return;
           const text = state.get("input")?.trim();
           if (!text) return;
-          state.push("tasks", { id: nextId++, text, done: false });
+          state.at("tasks").push({ id: nextId++, text, done: false });
           state.set("input", "");
         },
       }),
@@ -454,7 +454,7 @@ function App() {
         onClick: () => {
           const text = state.get("input")?.trim();
           if (!text) return;
-          state.push("tasks", { id: nextId++, text, done: false });
+          state.at("tasks").push({ id: nextId++, text, done: false });
           state.set("input", "");
         },
       }, "Add"),
@@ -532,7 +532,7 @@ A few implementation details worth knowing as a consumer:
 
 - [API Reference: `aljabr/ui` (DOM renderer)](../../api/ui/dom.md) — full reference for `view`, `createRenderer`, `RendererHost`, `domHost`, JSX
 - [Guide: Canvas renderer](./canvas.md) — sibling guide for retained-mode 2D canvas authoring
-- [Reactive UI patterns](../advanced/reactive-ui.md) — deep dive into `Ref`, `Derived`, `AsyncDerived` composition for complex state
+- [Reactive UI patterns](../advanced/reactive-ui.md) — deep dive into `Store`, `Derived`, `AsyncDerived` composition for complex state
 - [Resource Lifetime](../advanced/resource-lifetime.md) — `Scope`, `Resource`, and bracket patterns for cleanup
-- [API Reference: `Ref` / `RefArray` / `DerivedArray`](../../api/prelude/ref.md)
+- [API Reference: `Store` / `List` / `DerivedArray`](../../api/prelude/store.md)
 - [API Reference: `Signal` / `Derived`](../../api/prelude/signal.md)

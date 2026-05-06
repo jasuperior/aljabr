@@ -1,6 +1,6 @@
 # DerivedArray\<T\>
 
-A read-only, per-index reactive view of an array. Returned by the iterator methods (`map`, `filter`, `sort`) on [`RefArray<T>`](./ref.md#refarrayt) and `DerivedArray<T>` itself.
+A read-only, per-index reactive view of an array. Returned by the iterator methods (`map`, `filter`, `sort`) on [`List<T>`](./store.md#refarrayt) and `DerivedArray<T>` itself.
 
 Each index is backed by a dedicated `Signal<T | undefined>`. When the underlying source changes, only the positions whose values actually changed (by reference, or by key for `filter`/`sort`) notify their subscribers. `length()` is a dedicated signal that fires only when the output size changes.
 
@@ -12,12 +12,12 @@ Iterator methods are chainable — each call returns a new `DerivedArray`.
 import { DerivedArray, IteratorOptions } from "aljabr/prelude";
 ```
 
-`DerivedArray` is not constructed directly. Obtain one via iterator methods on [`RefArray<T>`](./ref.md#refarrayt):
+`DerivedArray` is not constructed directly. Obtain one via iterator methods on [`List<T>`](./store.md#refarrayt):
 
 ```ts
-import { Ref } from "aljabr/prelude";
+import { Store } from "aljabr/prelude";
 
-const nums = Ref.create([1, 2, 3, 4, 5]); // RefArray<number>
+const nums = Store.create([1, 2, 3, 4, 5]); // List<number>
 
 const evens   = nums.filter(x => x % 2 === 0);   // DerivedArray<number>
 const doubled = nums.map(x => x * 2);             // DerivedArray<number>
@@ -33,7 +33,7 @@ Returns a reactive snapshot of the entire array and registers a coarse dependenc
 Use `get()` when you need the full array as a value — for example, to pass to a non-reactive consumer or to serialize. For fine-grained per-index tracking, use `get(i)` instead.
 
 ```ts
-const evens = Ref.create([1, 2, 3, 4, 5]).filter(x => x % 2 === 0);
+const evens = Store.create([1, 2, 3, 4, 5]).filter(x => x % 2 === 0);
 
 evens.get(); // [2, 4] — tracked; re-runs when any element or length changes
 ```
@@ -43,7 +43,7 @@ evens.get(); // [2, 4] — tracked; re-runs when any element or length changes
 Reads the item at index `i` and registers it as a reactive dependency in the active tracking context. Returns `undefined` for out-of-bounds indices and after disposal.
 
 ```ts
-const evens = Ref.create([1, 2, 3, 4, 5]).filter(x => x % 2 === 0);
+const evens = Store.create([1, 2, 3, 4, 5]).filter(x => x % 2 === 0);
 
 evens.get(0); // 2
 evens.get(1); // 4
@@ -57,7 +57,7 @@ Fine-grained: only the subscriber that called `get(i)` is notified when index `i
 Returns an untracked snapshot of the entire array. Does not register any reactive dependency. Mirrors `get()` but wrapped in `untrack()` — consistent with `Signal.peek()`.
 
 ```ts
-const evens = Ref.create([1, 2, 3, 4, 5]).filter(x => x % 2 === 0);
+const evens = Store.create([1, 2, 3, 4, 5]).filter(x => x % 2 === 0);
 
 evens.peek(); // [2, 4] — no dependency registered
 ```
@@ -75,7 +75,7 @@ evens.peek(0); // 2 — no dependency registered
 Returns a stable [`Derived<T | undefined>`](./derived.md) handle for index `i`. Useful when you need to pass a reactive reference to a single element downstream.
 
 ```ts
-const items = Ref.create([10, 20, 30]).map(x => x);
+const items = Store.create([10, 20, 30]).map(x => x);
 const first = items.at(0); // Derived<number | undefined>
 
 first.get(); // 10
@@ -88,7 +88,7 @@ The returned `Derived` remains valid until it or its owning `DerivedArray` is di
 Returns the current output length and registers it as a dependency. Notified only when the output size changes — not on element-only mutations.
 
 ```ts
-const evens = Ref.create([1, 2, 3]).filter(x => x % 2 === 0);
+const evens = Store.create([1, 2, 3]).filter(x => x % 2 === 0);
 
 evens.length(); // 1
 
@@ -111,7 +111,7 @@ Transforms each element 1:1. No key function is required because output indices 
 | `fn` | Transform function. Receives the item and its index. |
 
 ```ts
-const nums   = Ref.create([1, 2, 3, 4, 5]);
+const nums   = Store.create([1, 2, 3, 4, 5]);
 const labels = nums.map((x, i) => `${i}: ${x}`);
 
 labels.get(0); // "0: 1"
@@ -128,7 +128,7 @@ Keeps only items for which `fn` returns `true`. The output preserves source orde
 | `opts.key` | Key function for surgical per-index invalidation (see [`IteratorOptions`](#iteratoroptionst)). |
 
 ```ts
-const nums  = Ref.create([1, 2, 3, 4, 5]);
+const nums  = Store.create([1, 2, 3, 4, 5]);
 const evens = nums.filter(x => x % 2 === 0);
 
 evens.length(); // 2
@@ -139,7 +139,7 @@ evens.get(1);   // 4
 **Object arrays — always provide a key:**
 
 ```ts
-const items = Ref.create([
+const items = Store.create([
     { id: 1, name: "Alice" },
     { id: 2, name: "Bob" },
     { id: 3, name: "Carol" },
@@ -151,7 +151,7 @@ const selected = items.filter(
 );
 ```
 
-Without a `key`, a dev-mode warning is emitted when items are objects, because reference equality is unreliable under `Ref`'s immutable-update model.
+Without a `key`, a dev-mode warning is emitted when items are objects, because reference equality is unreliable under `Store`'s immutable-update model.
 
 ### `sort(comparator: (a: T, b: T) => number, opts?: IteratorOptions<T>): DerivedArray<T>`
 
@@ -163,7 +163,7 @@ Returns a sorted view of the array using `comparator`. The source array is not m
 | `opts.key` | Key function for surgical per-index invalidation (see [`IteratorOptions`](#iteratoroptionst)). |
 
 ```ts
-const nums   = Ref.create([3, 1, 4, 1, 5]);
+const nums   = Store.create([3, 1, 4, 1, 5]);
 const sorted = nums.sort((a, b) => a - b);
 
 sorted.get(0); // 1
@@ -173,7 +173,7 @@ sorted.get(4); // 5
 **Sorting objects:**
 
 ```ts
-const people = Ref.create([
+const people = Store.create([
     { id: 3, name: "Charlie" },
     { id: 1, name: "Alice" },
     { id: 2, name: "Bob" },
@@ -192,7 +192,7 @@ byId.get(0); // { id: 1, name: "Alice" }
 Iterator methods can be composed arbitrarily:
 
 ```ts
-const nums = Ref.create([1, 2, 3, 4, 5]);
+const nums = Store.create([1, 2, 3, 4, 5]);
 
 const result = nums
     .filter(x => x > 1)        // [2, 3, 4, 5]
@@ -216,7 +216,7 @@ Disposes this `DerivedArray` and all internal reactive nodes. After disposal:
 - No subscribers are notified
 
 ```ts
-const doubled = Ref.create([1, 2, 3]).map(x => x * 2);
+const doubled = Store.create([1, 2, 3]).map(x => x * 2);
 
 doubled.get(0); // 2
 doubled.dispose();
@@ -224,7 +224,7 @@ doubled.get(0); // undefined
 doubled.get();  // []
 ```
 
-Disposing a `DerivedArray` does not dispose the source `RefArray` or `DerivedArray` it was created from.
+Disposing a `DerivedArray` does not dispose the source `List` or `DerivedArray` it was created from.
 
 ## IteratorOptions\<T\>
 
@@ -234,13 +234,13 @@ type IteratorOptions<T> = {
 };
 ```
 
-Passed as the second argument to `filter` and `sort` (on both `RefArray` and `DerivedArray`).
+Passed as the second argument to `filter` and `sort` (on both `List` and `DerivedArray`).
 
 ### `key?: (item: T) => unknown`
 
 A function that extracts a stable identity key from an item. Used for surgical per-index invalidation:
 
-- **Without `key`**: falls back to reference equality (`item => item`). Correct for primitives; unreliable for objects under `Ref`'s immutable-update model.
+- **Without `key`**: falls back to reference equality (`item => item`). Correct for primitives; unreliable for objects under `Store`'s immutable-update model.
 - **With `key`**: only output positions whose key changed are notified, regardless of reference identity.
 
 ```ts
@@ -280,7 +280,7 @@ Before any signal notifications are dispatched, the internal `#items` snapshot i
 
 ## See Also
 
-- [`RefArray<T>`](./ref.md#refarrayt) — mutable root reactive array; source of `DerivedArray` instances
-- [`Ref<T>`](./ref.md) — reactive object state; use `Ref.create(T[])` to get a `RefArray<T>`
+- [`List<T>`](./store.md#refarrayt) — mutable root reactive array; source of `DerivedArray` instances
+- [`Store<T>`](./store.md) — reactive object state; use `Store.create(T[])` to get a `List<T>`
 - [`Derived<T>`](./derived.md) — reactive computed value; returned by `at(i)`
 - [`Signal<T>`](./signal.md) — low-level reactive primitive underlying per-index tracking

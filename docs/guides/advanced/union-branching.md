@@ -93,7 +93,7 @@ The advantage over `User | null` isn't ergonomics alone — it's that `Option<Us
 const displayName = findUser("u-1")
   .flatMap(user => user.profile ? Option.Some(user.profile) : Option.None())
   .map(profile => profile.displayName.toUpperCase())
-  .getOrElse("ANONYMOUS")
+  .getOr("ANONYMOUS")
 ```
 
 Each `.flatMap` returns an `Option`, so the chain short-circuits to `None` at the first absent step — no null pointer exceptions, no nested conditionals.
@@ -248,12 +248,12 @@ async function findSetting(key: string): Promise<Result<Option<string>, DbError>
 
 // Chain: treat None as a fallback, not an error
 const setting = await findSetting("theme")
-  .then(option => option.getOrElse("light"))
+  .then(option => option.getOr("light"))
 
 // → string: "dark" or "light"
 ```
 
-`.then()` on the outer `Result` gets the `Option`, and `.getOrElse()` unwraps it. Two layers, composed without a nested `match`.
+`.then()` on the outer `Result` gets the `Option`, and `.getOr()` unwraps it. Two layers, composed without a nested `match`.
 
 ### When nesting is load-bearing
 
@@ -300,7 +300,7 @@ The heuristic: **chain when transforming, match when branching**.
 const name = findUser(id)
   .map(user => user.name)
   .map(name => name.toUpperCase())
-  .getOrElse("UNKNOWN")
+  .getOr("UNKNOWN")
 
 // Branching — match
 match(findUser(id), {
@@ -432,7 +432,7 @@ async function placeOrder(raw: RawOrderInput): Promise<Result<OrderLifecycle, st
 ## See also
 
 - [Parser Construction](./parser-construction.md) — using these containers with schema decode pipelines
-- [Reactive UI](./reactive-ui.md) — flowing domain unions through Ref and Derived
+- [Reactive UI](./reactive-ui.md) — flowing domain unions through Store and Derived
 - [API Reference: Result](../../api/prelude/result.md)
 - [API Reference: Option](../../api/prelude/option.md)
 - [API Reference: Validation](../../api/prelude/validation.md)

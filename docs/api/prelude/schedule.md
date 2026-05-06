@@ -8,7 +8,7 @@ import { Schedule, ScheduleError, type AsyncOptions } from "aljabr/prelude"
 
 ## Overview
 
-The scheduling module provides declarative retry-delay policies for [`AsyncDerived`](./derived.md#asyncderivedt-e) and [`watchEffect`](./effect.md#watcheffect). Instead of wiring `setTimeout` chains manually, you describe the retry behavior as data — a `Schedule` variant — and pass it through `AsyncOptions`. The scheduler reads the policy after each failed attempt, computes the next delay, and queues the retry automatically.
+The scheduling module provides declarative retry-delay policies for [`AsyncDerived`](./derived.md#asyncderivedt-e) and [`watch`](./effect.md#watch). Instead of wiring `setTimeout` chains manually, you describe the retry behavior as data — a `Schedule` variant — and pass it through `AsyncOptions`. The scheduler reads the policy after each failed attempt, computes the next delay, and queues the retry automatically.
 
 ---
 
@@ -150,7 +150,7 @@ function describeFault<E>(fault: Fault<E>): string {
 
 ## `AsyncOptions<E>`
 
-Shared configuration bag accepted by both `AsyncDerived.create` and `watchEffect`. All fields are optional. Omitting `schedule` disables automatic retry entirely — the thunk runs once and any failure transitions directly to `Failed` with `nextRetryAt: null`.
+Shared configuration bag accepted by both `AsyncDerived.create` and `watch`. All fields are optional. Omitting `schedule` disables automatic retry entirely — the thunk runs once and any failure transitions directly to `Failed` with `nextRetryAt: null`.
 
 ```ts
 type AsyncOptions<E = unknown> = {
@@ -213,6 +213,6 @@ Use `Custom` when the decision to stop should be based on the fault itself (e.g.
 
 - [`Fault`](./fault.md) — the three-variant error union passed to `shouldRetry` and `afterRetry`
 - [`AsyncDerived`](./derived.md#asyncderivedt-e) — pass `AsyncOptions` as the second argument to `create`
-- [`watchEffect`](./effect.md#watcheffect) — same `AsyncOptions` apply via `WatchOptions`
+- [`watch`](./effect.md#watch) — same `AsyncOptions` apply via `WatchOptions`
 - [`Effect.Failed`](./effect.md#variants) — the variant that surfaces retry context at read time
 - [Resilient async guide](../../guides/resilient-async.md) — walkthrough of retry, backoff, and timeout patterns

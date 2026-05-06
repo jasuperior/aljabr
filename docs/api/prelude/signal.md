@@ -8,7 +8,7 @@ import { Signal, SignalState, type SignalProtocol, type Active, type Unset, type
 
 ## Overview
 
-`Signal<T>` is a reactive mutable value container. Reading a signal inside a reactive context (a [`Derived`](./derived.md) computation or a [`watchEffect`](./effect.md#watcheffect) callback) automatically registers it as a dependency — writing via `set()` notifies all current dependents.
+`Signal<T>` is a reactive mutable value container. Reading a signal inside a reactive context (a [`Derived`](./derived.md) computation or a [`watch`](./effect.md#watch) callback) automatically registers it as a dependency — writing via `set()` notifies all current dependents.
 
 By default the lifecycle state is `SignalState<T>` — a `Unset | Active<T> | Disposed` union. You can replace this with **any domain union** by providing a `SignalProtocol<S, T>` to `Signal.create()`, giving you a `Signal<T, S>` whose state is entirely your own.
 
@@ -74,7 +74,7 @@ signal.state(): S                       // custom Signal<T, S>
 Read the **full state union** and register a dependency. Unlike `get()`, which extracts only `T | null`, `state()` gives you the complete state — use it inside reactive contexts when you need to pattern-match on all variants (e.g. to access `Invalid` errors).
 
 ```ts
-watchEffect(
+watch(
     async () => match(field.state(), {
         Unvalidated: () => null,
         Valid:       ({ value })  => submit(value),
@@ -125,7 +125,7 @@ signal.subscribe(callback: (value: T | null) => void): () => void
 
 Register a **synchronous** callback that fires on every value change. The callback receives the same extracted `T | null` value as `get()`. Returns an unsubscribe function.
 
-Unlike `get()`, `subscribe()` does **not** register a reactive dependency — it is a raw push subscription intended for bridging signals into external systems (e.g. [`Ref.bind()`](./ref.md#bindpath-signal)).
+Unlike `get()`, `subscribe()` does **not** register a reactive dependency — it is a raw push subscription intended for bridging signals into external systems (e.g. [`Store.bind()`](./store.md#bindpath-signal)).
 
 When the signal is **disposed**, the callback fires once with `null` before being cleared — allowing subscribers to react to lifecycle termination.
 
@@ -271,7 +271,7 @@ Signal reads are tracked implicitly via the computation stack. A read inside any
 
 - A `Derived` computation's getter function
 - An `AsyncDerived` computation's async getter function
-- A `watchEffect` thunk
+- A `watch` thunk
 
 Reads outside these contexts (at the top level, in event handlers, or after `await`) are not tracked. Use [`runInContext`](./context.md#runincontext) to restore a reactive owner across async boundaries.
 
@@ -354,7 +354,7 @@ email.set(Validation.Invalid(["bad format"]))
 email.get()    // null          — extract returns null for Invalid
 
 // Use state() inside reactive contexts to access the full state:
-watchEffect(
+watch(
     async () => match(email.state(), {
         Unvalidated: () => null,
         Valid:       ({ value })  => submit(value),
@@ -369,7 +369,7 @@ watchEffect(
 ## See also
 
 - [`Derived`](./derived.md) — lazy computed values derived from signals
-- [`Ref<T>`](./ref.md) — structured reactive container built on top of `Signal`; uses `.subscribe()` for live bindings
-- [`watchEffect`](./effect.md#watcheffect) — run async effects reactively
+- [`Store<T>`](./store.md) — structured reactive container built on top of `Signal`; uses `.subscribe()` for live bindings
+- [`watch`](./effect.md#watch) — run async effects reactively
 - [`batch`](./context.md#batch) — coalesce multiple writes into a single notification pass
-- [`persistedSignal`](./persist.md#persistedsignal) — automatically persist a signal to storage
+- [`Signal.persisted`](./persist.md#signalpersisted) — automatically persist a signal to storage

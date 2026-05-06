@@ -191,4 +191,4 @@ userScope.dispose() // cleans up user, name, and all subscriptions
 
 - [`Signal`](./signal.md) — the reactive source values that notifications propagate through
 - [`Derived`](./derived.md) — lazy computed values that subscribe to signals
-- [`watchEffect`](./effect.md#watcheffect) — reactive async effect runner
+- [`watch`](./effect.md#watch) — reactive async effect runner

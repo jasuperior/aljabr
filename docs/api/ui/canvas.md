@@ -1,6 +1,6 @@
 # Canvas Renderer (`aljabr/ui/canvas`)
 
-A retained-mode 2D canvas renderer that implements `RendererHost<CanvasNode, CanvasElementNode>`. It composes with the same reconciler that drives `aljabr/ui/dom`, so JSX, function components, signals, `Ref`, and lifecycle scopes all work identically — the only difference is the host's tag vocabulary and per-frame paint pass.
+A retained-mode 2D canvas renderer that implements `RendererHost<CanvasNode, CanvasElementNode>`. It composes with the same reconciler that drives `aljabr/ui/dom`, so JSX, function components, signals, `Store`, and lifecycle scopes all work identically — the only difference is the host's tag vocabulary and per-frame paint pass.
 
 > Reading this document assumes familiarity with the renderer-agnostic core (`view`, `createRenderer`, `RendererHost`, `RendererProtocol`, `ViewNode`, function components, reactive props). Those live in the [DOM reference](./dom.md); only the canvas-specific surface is covered here.
 
@@ -410,4 +410,4 @@ The `on` prefix is intentional — it's what makes the reconciler treat the func
 - [Renderer Protocol guide](../../guides/advanced/renderer-protocol.md) — bringing your own batching scheduler
 - [v0.3.9 roadmap](../../roadmap/v0.3.9.md) — pending bounds-completeness work for `<path>`, `<group>`, `<text>`
 - [Prelude: `Signal` / `Derived`](../prelude/signal.md) — reactive primitives every prop accepts
-- [Prelude: `Ref` / `RefArray`](../prelude/ref.md) — structured state and reactive lists
+- [Prelude: `Store` / `List`](../prelude/store.md) — structured state and reactive lists

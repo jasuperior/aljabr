@@ -34,4 +34,4 @@ For an architectural deep-dive on the canvas renderer (paint pass, hit-test inve
 
 - [Guides: UI](../../guides/ui/) — narrative walkthroughs for both renderers
 - [Renderer Protocol guide](../../guides/advanced/renderer-protocol.md) — custom batching schedulers
-- [Prelude: `Signal`/`Derived`/`Ref`](../prelude/) — the reactive primitives both renderers consume
+- [Prelude: `Signal`/`Derived`/`Store`](../prelude/) — the reactive primitives both renderers consume

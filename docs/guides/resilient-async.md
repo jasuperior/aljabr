@@ -1,6 +1,6 @@
 # Guide: Resilient Async Lifecycles
 
-> This guide covers `Schedule`, `Fault`, retry policies, and cancellation for `AsyncDerived` and `watchEffect`. For patterns that compose async effects with `Ref`, `Derived`, and a real UI concern, see [Reactive UI](./advanced/reactive-ui.md). For resource cleanup and structured lifetime management, see [Resource Lifetime](./advanced/resource-lifetime.md).
+> This guide covers `Schedule`, `Fault`, retry policies, and cancellation for `AsyncDerived` and `watch`. For patterns that compose async effects with `Store`, `Derived`, and a real UI concern, see [Reactive UI](./advanced/reactive-ui.md). For resource cleanup and structured lifetime management, see [Resource Lifetime](./advanced/resource-lifetime.md).
 
 Network requests fail. APIs go down. Rate limits hit. This guide walks through aljabr's retry, backoff, timeout, and cancellation primitives — starting from a bare `AsyncDerived`, then progressively hardening it against real-world failure.
 
@@ -240,16 +240,16 @@ When the signal fires, `fetch` throws a `DOMException` with `name === "AbortErro
 
 ---
 
-## Using `watchEffect` for side effects
+## Using `watch` for side effects
 
-Everything above applies equally to `watchEffect`. The main difference: `watchEffect` calls a callback when results settle rather than exposing a pull-based `.get()`.
+Everything above applies equally to `watch`. The main difference: `watch` calls a callback when results settle rather than exposing a pull-based `.get()`.
 
 ```ts
-import { watchEffect, Schedule, Fault } from "aljabr/prelude"
+import { watch, Schedule, Fault } from "aljabr/prelude"
 
 const query = Signal.create("")
 
-const handle = watchEffect(
+const handle = watch(
     async (signal) => {
         const q = query.get()!
         if (!q) return []
@@ -281,7 +281,7 @@ const handle = watchEffect(
 query.set("aljabr")
 
 // Stop tracking and abort any pending request
-handle.stop()
+handle.dispose()
 ```
 
 Use `eager: true` if you want the effect to re-run automatically on every dependency change, without manual `.run()` calls on stale values.
@@ -306,5 +306,5 @@ Jitter is strongly recommended for any production schedule that may be exercised
 - [`Fault`](../api/prelude/fault.md) — error classification: Fail, Defect, and Interrupted
 - [`Schedule`](../api/prelude/schedule.md) — full API reference for all schedule variants and `AsyncOptions`
 - [`AsyncDerived`](../api/prelude/derived.md#asyncderivedt-e) — pull-based async computed values
-- [`watchEffect`](../api/prelude/effect.md#watcheffect) — push-based reactive async side effects
+- [`watch`](../api/prelude/effect.md#watch) — push-based reactive async side effects
 - [`ScheduleError`](../api/prelude/schedule.md#scheduleerror) — matching on timeout and max-retries-exceeded errors

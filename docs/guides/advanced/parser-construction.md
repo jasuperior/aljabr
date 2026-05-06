@@ -375,6 +375,6 @@ The schema is a first-class value you can inspect, transform, and serialize — 
 ## See also
 
 - [Union Branching](./union-branching.md) — Result/Validation patterns for handling decode errors downstream
-- [Reactive UI](./reactive-ui.md) — flowing decoded values through Ref and AsyncDerived
+- [Reactive UI](./reactive-ui.md) — flowing decoded values through Store and AsyncDerived
 - [Working with External Data](../schema.md) — full `aljabr/schema` mechanics reference
 - [API Reference: schema](../../api/schema.md)

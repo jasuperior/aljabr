@@ -22,7 +22,7 @@ import {
 
 A `Scope` holds a list of finalizers that execute in LIFO (last-in, first-out) order when the scope disposes. A `Resource` pairs an async acquisition function with a release function, ensuring release always mirrors acquisition.
 
-Both integrate with `watchEffect` and `AsyncDerived`: every thunk execution receives a fresh `Scope` that disposes automatically when the thunk re-runs or the effect stops.
+Both integrate with `watch` and `AsyncDerived`: every thunk execution receives a fresh `Scope` that disposes automatically when the thunk re-runs or the effect stops.
 
 > **Error handling — Phase 4:** Finalizer errors and failed releases are handled best-effort in this release. A rejected finalizer logs a warning via `console.warn` and the disposal chain continues. A rejected `acquire` propagates as a rejected `Promise`. Structured defect tracking — distinguishing domain errors from runtime panics — is planned for a future phase.
 
@@ -206,7 +206,7 @@ const WsResource = Resource.create(
 
 ## Implicit hooks
 
-Inside a `watchEffect` or `AsyncDerived` thunk, two standalone functions operate on the thunk's ambient scope — the same `Scope` passed as the explicit second argument. Use whichever reads more naturally.
+Inside a `watch` or `AsyncDerived` thunk, two standalone functions operate on the thunk's ambient scope — the same `Scope` passed as the explicit second argument. Use whichever reads more naturally.
 
 > Both throw if called outside an active Scope context. This is intentional — silent no-ops would hide misuse.
 
@@ -221,7 +221,7 @@ function defer(fn: () => Promise<void> | void): void
 Register a finalizer on the current scope. Equivalent to `scope.defer(fn)`.
 
 ```ts
-watchEffect(async (signal, scope) => {
+watch(async (signal, scope) => {
     const ws = new WebSocket(wsUrl)
     defer(() => ws.close())            // same as scope.defer(() => ws.close())
     return receiveMessage(ws, signal)
@@ -237,7 +237,7 @@ function acquire<T>(resource: ResourceHandle<T>): Promise<T>
 Acquire a resource via the current scope. Must be called before the first `await` in the thunk (the scope reference is captured synchronously).
 
 ```ts
-watchEffect(async (signal, scope) => {
+watch(async (signal, scope) => {
     const db = await acquire(DbResource)  // implicit — same as scope.acquire(DbResource)
     return db.query("SELECT * FROM users", { signal })
 }, onChange)
@@ -249,7 +249,7 @@ watchEffect(async (signal, scope) => {
 function runInScope<T>(scope: ScopeHandle, fn: () => T): T
 ```
 
-Run `fn` with `scope` as the active context. Implicit `defer()` and `acquire()` calls inside `fn` resolve to this scope. Used internally by `watchEffect` and `AsyncDerived`; exposed for advanced composition.
+Run `fn` with `scope` as the active context. Implicit `defer()` and `acquire()` calls inside `fn` resolve to this scope. Used internally by `watch` and `AsyncDerived`; exposed for advanced composition.
 
 ### `getCurrentScope()`
 
@@ -261,16 +261,16 @@ Read the ambient scope without consuming it. Returns `null` outside any scope co
 
 ---
 
-## Integration with `watchEffect` and `AsyncDerived`
+## Integration with `watch` and `AsyncDerived`
 
 Both primitives create a **fresh `Scope` for each thunk execution**. The scope is passed as the explicit second argument and also activates the implicit hooks.
 
 **Per-run lifecycle:**
 1. Before a new run starts, the previous run's scope disposes — resources from stale runs always clean up before the next begins.
-2. When the effect stops (`handle.stop()`) or its owning computation disposes, the current scope disposes automatically.
+2. When the effect stops (`handle.dispose()`) or its owning computation disposes, the current scope disposes automatically.
 
 ```ts
-import { watchEffect, Resource, Signal } from "aljabr/prelude"
+import { watch, Resource, Signal } from "aljabr/prelude"
 
 const roomId = Signal.create("lobby")
 
@@ -280,7 +280,7 @@ const WsResource = Resource.create(
 )
 
 // Each time roomId changes, the old connection closes before the new one opens.
-const handle = watchEffect(
+const handle = watch(
     async (signal, scope) => {
         const ws = await scope.acquire(WsResource(roomId.get()!))
         ws.send(JSON.stringify({ type: "subscribe" }))
@@ -337,7 +337,7 @@ async function handleRequest(req: Request): Promise<Response> {
 ```ts
 const emitter = getEventEmitter()
 
-watchEffect(async (signal, scope) => {
+watch(async (signal, scope) => {
     const handler = (e: AppEvent) => processEvent(e)
     emitter.on("event", handler)
     defer(() => emitter.off("event", handler))  // removed when effect re-runs or stops
@@ -349,6 +349,6 @@ watchEffect(async (signal, scope) => {
 
 ## See also
 
-- [`watchEffect`](./effect.md#watcheffect) — reactive async effects; each run receives a fresh scope
+- [`watch`](./effect.md#watch) — reactive async effects; each run receives a fresh scope
 - [`AsyncDerived`](./derived.md#asyncderivedt-e) — pull-based async computed values; each evaluation receives a fresh scope
 - [`context`](./context.md) — the reactive owner tree that scopes participate in

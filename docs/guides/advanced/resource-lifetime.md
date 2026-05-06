@@ -1,6 +1,6 @@
 # Resource Lifetime
 
-The reactive graph from the [Reactive UI](./reactive-ui.md) guide — a `Ref` for view state, `Derived` computations, an `AsyncDerived` for detail loading, a `watchEffect` for URL sync — has a lifetime. At some point the panel it belongs to is removed from the screen. When that happens, the signals should stop notifying, the in-flight fetch should abort, the URL sync should stop, and any external subscriptions should be released.
+The reactive graph from the [Reactive UI](./reactive-ui.md) guide — a `Store` for view state, `Derived` computations, an `AsyncDerived` for detail loading, a `watch` for URL sync — has a lifetime. At some point the panel it belongs to is removed from the screen. When that happens, the signals should stop notifying, the in-flight fetch should abort, the URL sync should stop, and any external subscriptions should be released.
 
 Without explicit lifetime management, that cleanup is a collection of individual teardown calls scattered wherever the component was created. With `Scope`, it's a single boundary that guarantees everything inside it tears down together, in the right order.
 
@@ -13,22 +13,22 @@ Without explicit lifetime management, that cleanup is a collection of individual
 The most direct way to use a scope is to create one explicitly and dispose it when the component's lifetime ends:
 
 ```ts
-import { Scope, watchEffect } from "aljabr/prelude"
+import { Scope, watch } from "aljabr/prelude"
 
 const panelScope = Scope.create()
 
 // The reactive graph from guide 3, now bounded by this scope
-const view = Ref.create<TableState>({ /* ... */ })
+const view = Store.create<TableState>({ /* ... */ })
 const visibleOrders = Derived.create(/* ... */)
 const orderDetail = AsyncDerived.create(/* ... */)
 
 // Register cleanup for anything not auto-owned by the scope
-const urlSync = watchEffect(async () => {
+const urlSync = watch(async () => {
   const filter = view.get("filter") ?? ""
   history.replaceState(null, "", `?filter=${filter}`)
 })
 
-panelScope.defer(() => urlSync.stop())
+panelScope.defer(() => urlSync.dispose())
 panelScope.defer(() => view.dispose())
 
 // When the panel is removed
@@ -38,7 +38,7 @@ async function unmount() {
 }
 ```
 
-LIFO order matters: things acquired last are released first. `urlSync` was registered after `view`, so it stops before `view` disposes. A component that reads `view` inside `watchEffect` won't fire on a stale signal after disposal.
+LIFO order matters: things acquired last are released first. `urlSync` was registered after `view`, so it stops before `view` disposes. A component that reads `view` inside `watch` won't fire on a stale signal after disposal.
 
 ---
 
@@ -99,12 +99,12 @@ const orderDetail = AsyncDerived.create(async (signal) => {
 
 `client.close()` is now tied to `panelScope`. When the panel unmounts, `panelScope.dispose()` closes the client — regardless of whether the `AsyncDerived` is mid-fetch, stale, or idle.
 
-### Resources inside watchEffect
+### Resources inside watch
 
-`watchEffect` and `AsyncDerived` each receive a fresh `Scope` on every run. Resources acquired inside a thunk's scope are released before the next run begins — so the previous connection always closes before a new one opens:
+`watch` and `AsyncDerived` each receive a fresh `Scope` on every run. Resources acquired inside a thunk's scope are released before the next run begins — so the previous connection always closes before a new one opens:
 
 ```ts
-import { Signal, watchEffect, Resource } from "aljabr/prelude"
+import { Signal, watch, Resource } from "aljabr/prelude"
 
 const roomId = Signal.create("orders")
 
@@ -114,7 +114,7 @@ const WsResource = Resource.create(
 )
 
 // Each time roomId changes, the stale connection closes before the new one opens
-const wsHandle = watchEffect(
+const wsHandle = watch(
   async (signal, scope) => {
     const id = roomId.get()!
     const ws = await scope.acquire(WsResource(id))
@@ -129,7 +129,7 @@ const wsHandle = watchEffect(
   { eager: true },
 )
 
-panelScope.defer(() => wsHandle.stop())
+panelScope.defer(() => wsHandle.dispose())
 ```
 
 The inner scope (per-run) handles the connection lifecycle. The outer scope (`panelScope`) handles the effect itself. These are independent lifetimes with a clear containment relationship.
@@ -145,7 +145,7 @@ async function mountOrderPanel(): Promise<() => Promise<void>> {
   const panelScope = Scope.create()
 
   // State
-  const view = Ref.create<TableState>({
+  const view = Store.create<TableState>({
     filter: "",
     sortField: "confirmedAt",
     sortDir: "desc",
@@ -166,13 +166,13 @@ async function mountOrderPanel(): Promise<() => Promise<void>> {
   })
 
   // Side effect — URL sync
-  const urlSync = watchEffect(async () => {
+  const urlSync = watch(async () => {
     const params = buildParams(view)
     history.replaceState(null, "", `?${params}`)
   })
 
   // WebSocket for live order updates
-  const wsHandle = watchEffect(
+  const wsHandle = watch(
     async (signal, scope) => {
       const ws = await scope.acquire(WsResource("orders"))
       ws.send(JSON.stringify({ type: "subscribe" }))
@@ -193,8 +193,8 @@ async function mountOrderPanel(): Promise<() => Promise<void>> {
   document.addEventListener("keydown", keyHandler)
 
   // Register all teardown in the scope
-  panelScope.defer(() => wsHandle.stop())
-  panelScope.defer(() => urlSync.stop())
+  panelScope.defer(() => wsHandle.dispose())
+  panelScope.defer(() => urlSync.dispose())
   panelScope.defer(() => document.removeEventListener("keydown", keyHandler))
   panelScope.defer(() => view.dispose())
 
@@ -295,10 +295,10 @@ match(panelScope.state, {
 })
 ```
 
-**Registering defer inside watchEffect.** The `defer` implicit hook registers on the thunk's per-run scope, not on any enclosing scope. Use the explicit `scope` argument when you need a finalizer tied to the effect's *outer* scope:
+**Registering defer inside watch.** The `defer` implicit hook registers on the thunk's per-run scope, not on any enclosing scope. Use the explicit `scope` argument when you need a finalizer tied to the effect's *outer* scope:
 
 ```ts
-const handle = watchEffect(async (signal, runScope) => {
+const handle = watch(async (signal, runScope) => {
   const ws = new WebSocket(url)
   runScope.defer(() => ws.close())  // closed before each re-run
 
@@ -306,7 +306,7 @@ const handle = watchEffect(async (signal, runScope) => {
   return receiveMessage(ws, signal)
 })
 
-panelScope.defer(() => handle.stop())  // stops the entire effect
+panelScope.defer(() => handle.dispose())  // stops the entire effect
 ```
 
 ---
@@ -317,4 +317,4 @@ panelScope.defer(() => handle.stop())  // stops the entire effect
 - [Signal Protocols](./signal-protocols.md) — protocol signals that are owned by a scope
 - [Resilient Async](../resilient-async.md) — Schedule, Fault, and retry policies for async effects
 - [API Reference: Scope & Resource](../../api/prelude/scope.md)
-- [API Reference: watchEffect](../../api/prelude/effect.md)
+- [API Reference: watch](../../api/prelude/effect.md)

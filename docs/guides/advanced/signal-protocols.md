@@ -10,7 +10,7 @@ A plain `Signal<T>` has three lifecycle states: `Unset`, `Active<T>`, and `Dispo
 
 Before building a custom protocol, it helps to understand why these two methods exist.
 
-`.get()` extracts `T | null` from the current state — the readable value, or `null` if there is none. It's what `Derived` and `watchEffect` depend on.
+`.get()` extracts `T | null` from the current state — the readable value, or `null` if there is none. It's what `Derived` and `watch` depend on.
 
 `.state()` returns the full state union — whatever `S` is — and also registers a dependency. It's for reactive contexts where you need to distinguish between states that all return the same `T` from `.get()`, or where the interesting information is in the state variant itself, not the extracted value.
 
@@ -381,6 +381,6 @@ For simpler cases — a boolean toggle, a nullable value, a value that's either 
 
 ## See also
 
-- [Reactive UI](./reactive-ui.md) — composing protocol signals in a reactive graph with Ref and AsyncDerived
+- [Reactive UI](./reactive-ui.md) — composing protocol signals in a reactive graph with Store and AsyncDerived
 - [Resource Lifetime](./resource-lifetime.md) — disposing protocol signals when their owner unmounts
 - [API Reference: Signal](../../api/prelude/signal.md)

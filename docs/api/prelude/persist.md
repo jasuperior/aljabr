@@ -2,8 +2,7 @@
 
 ```ts
 import {
-    persistedSignal,
-    syncToStore,
+    Signal,
     localStorageAdapter,
     sessionStorageAdapter,
     type PersistAdapter,
@@ -15,14 +14,21 @@ import {
 
 ## Overview
 
-The persistence helpers connect `Signal<T>` values to an external key-value store (localStorage, sessionStorage, or any custom adapter). They return plain `Signal<T>` instances — no special wrapper type — so the rest of your reactive graph works without any knowledge of persistence.
+Persistence connects `Signal<T>` values to an external key-value store (localStorage, sessionStorage, or any custom adapter). The two entry points are static and instance methods on `Signal` itself — there is no separate `persistedSignal` / `syncToStore` namespace.
+
+| Use case | API |
+|---|---|
+| Create a fresh signal that rehydrates and persists | [`Signal.persisted(initial, options)`](#signalpersisted) |
+| Mirror an existing signal's writes to a store | [`signal.persist(options)`](#signalpersist) |
+
+Both paths return interoperable handles — a `Signal<T>` from `Signal.persisted`, a `WatchHandle` from `signal.persist`. Disposal of the `WatchHandle` stops syncing; disposal of the persisted `Signal` stops both reads and writes.
 
 ---
 
-## `persistedSignal<T>`
+## `Signal.persisted`
 
 ```ts
-function persistedSignal<T>(
+Signal.persisted<T>(
     initialValue: T,
     options: PersistOptions<T>,
 ): Signal<T>
@@ -32,12 +38,10 @@ Create a `Signal<T>` that is automatically persisted to and rehydrated from an e
 
 **On creation:** the store is read via `adapter.get(key)`. If a stored value exists, it is deserialized and used as the signal's initial value; `initialValue` is only used as a fallback when nothing is stored or deserialization fails.
 
-**On every `set()`:** the new value is serialized and written to the store via `watchEffect`.
+**On every `set()`:** the new value is serialized and written to the store via an internal `watch`.
 
 ```ts
-import { persistedSignal } from "aljabr/prelude"
-
-const theme = persistedSignal<"light" | "dark">("light", {
+const theme = Signal.persisted<"light" | "dark">("light", {
     key: "app.theme",
 })
 
@@ -62,27 +66,24 @@ If the stored value fails to deserialize (throws), it is silently ignored and `i
 
 ---
 
-## `syncToStore<T>`
+## `signal.persist`
 
 ```ts
-function syncToStore<T>(
-    signal: Signal<T>,
-    options: PersistOptions<T>,
-): () => void
+signal.persist(options: PersistOptions<T>): WatchHandle
 ```
 
-Mirror an existing `Signal<T>` to an external store for its entire lifetime. Unlike `persistedSignal`, this does **not** rehydrate — use it when you already have a signal and want to persist its writes out-of-band.
+Instance method on `Signal<T>`. Mirrors the signal's writes to an external store for the lifetime of the returned `WatchHandle`. Unlike `Signal.persisted`, this does **not** rehydrate — use it when you already have a signal whose value you want to persist out-of-band.
 
-Returns a cleanup function that stops syncing.
+`WatchHandle` is the standard reactive disposal handle. Call `.dispose()` (or rely on `Symbol.dispose` via `using`) to stop syncing.
 
 ```ts
 const cursor = Signal.create({ line: 0, col: 0 })
 
-const stop = syncToStore(cursor, { key: "editor.cursor" })
+const handle = cursor.persist({ key: "editor.cursor" })
 
 cursor.set({ line: 10, col: 5 }) // written to localStorage["editor.cursor"]
 
-stop() // stop syncing; future writes are not persisted
+handle.dispose() // stop syncing; future writes are not persisted
 ```
 
 ---
@@ -118,12 +119,12 @@ type PersistOptions<T> = {
 
 ### `localStorageAdapter`
 
-Backed by `window.localStorage`. The default adapter for `persistedSignal` and `syncToStore`.
+Backed by `window.localStorage`. The default adapter for both persistence entry points.
 
 ```ts
 import { localStorageAdapter } from "aljabr/prelude"
 
-persistedSignal("default", {
+Signal.persisted("default", {
     key: "my.key",
     adapter: localStorageAdapter, // this is the default; optional
 })
@@ -136,7 +137,7 @@ Backed by `window.sessionStorage`. Values are cleared when the browser tab close
 ```ts
 import { sessionStorageAdapter } from "aljabr/prelude"
 
-const sessionToken = persistedSignal<string | null>(null, {
+const sessionToken = Signal.persisted<string | null>(null, {
     key: "auth.token",
     adapter: sessionStorageAdapter,
 })
@@ -149,11 +150,9 @@ const sessionToken = persistedSignal<string | null>(null, {
 ### Custom serialization
 
 ```ts
-import { persistedSignal } from "aljabr/prelude"
-
 type DateRange = { from: Date; to: Date }
 
-const range = persistedSignal<DateRange>(
+const range = Signal.persisted<DateRange>(
     { from: new Date(), to: new Date() },
     {
         key: "filter.dateRange",
@@ -170,7 +169,7 @@ const range = persistedSignal<DateRange>(
 ### Custom adapter (in-memory, for testing)
 
 ```ts
-import { type PersistAdapter, persistedSignal } from "aljabr/prelude"
+import { type PersistAdapter, Signal } from "aljabr/prelude"
 
 function memoryAdapter(): PersistAdapter {
     const store = new Map<string, string>()
@@ -181,26 +180,26 @@ function memoryAdapter(): PersistAdapter {
     }
 }
 
-const sig = persistedSignal("initial", {
+const sig = Signal.persisted("initial", {
     key: "test.key",
     adapter: memoryAdapter(),
 })
 ```
 
-### Syncing a derived document state
+### Mirroring an existing signal
 
 ```ts
-import { Signal, Derived, syncToStore } from "aljabr/prelude"
+import { Signal } from "aljabr/prelude"
 
 const title   = Signal.create("Untitled")
 const content = Signal.create("")
 
-// title is persisted directly
-const stopTitle = syncToStore(title, { key: "doc.title" })
+// title is mirrored out-of-band
+const titleHandle = title.persist({ key: "doc.title" })
 
 // content is not persisted (volatile scratch area)
 // Stop sync when navigating away
-window.addEventListener("beforeunload", () => stopTitle())
+window.addEventListener("beforeunload", () => titleHandle.dispose())
 ```
 
 ---
@@ -208,4 +207,4 @@ window.addEventListener("beforeunload", () => stopTitle())
 ## See also
 
 - [`Signal`](./signal.md) — the reactive container these helpers persist
-- [`watchEffect`](./effect.md#watcheffect) — the mechanism used internally to track signal writes
+- [`watch`](./effect.md#watch) — the mechanism used internally to track signal writes; `signal.persist` returns the same `WatchHandle` shape

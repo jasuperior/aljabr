@@ -1,9 +1,9 @@
-# API Reference: Effect / watchEffect
+# API Reference: Effect / watch
 
 ```ts
 import {
     Effect,
-    watchEffect,
+    watch,
     type Idle,
     type Running,
     type Done,
@@ -20,7 +20,7 @@ import {
 
 `Effect<T, E>` is a five-variant union representing the lifecycle of an async computation: not yet run (`Idle`), currently executing (`Running`), completed successfully (`Done`), previously completed but with stale dependencies (`Stale`), or failed (`Failed`). All variants share `.run()`, `.map()`, `.flatMap()`, and `.recover()` via the `Computable<T, E>` impl mixin.
 
-`watchEffect` is the reactive runner: it executes an async thunk with automatic dependency tracking and calls a callback whenever a tracked dependency changes or the thunk settles.
+`watch` is the reactive runner: it executes an async thunk with automatic dependency tracking and calls a callback whenever a tracked dependency changes or the thunk settles.
 
 Failures in both APIs are represented as [`Fault<E>`](./fault.md) — a three-variant union that distinguishes expected domain errors (`Fail<E>`), unexpected panics (`Defect`), and aborted computations (`Interrupted`).
 
@@ -151,10 +151,10 @@ const data = Effect.Idle<Data, ApiError>(async (signal) => fetchData(signal))
 
 ---
 
-## `watchEffect`
+## `watch`
 
 ```ts
-function watchEffect<T, E = never>(
+function watch<T, E = never>(
     thunk: (signal: AbortSignal, scope: ScopeHandle) => Promise<T>,
     onChange: (result: Done<T, E> | Stale<T, E> | Failed<T, E>) => void,
     options?: WatchOptions<E>,
@@ -174,7 +174,7 @@ Returns a handle with `stop()` to cancel tracking, abort any in-flight request, 
 The thunk receives an `AbortSignal` as its first argument. The signal is aborted automatically before each new attempt (dep change or retry), preventing stale in-flight requests from resolving into current state.
 
 ```ts
-watchEffect(
+watch(
     async (signal) => {
         const res = await fetch("/api/data", { signal })
         return res.json()
@@ -188,7 +188,7 @@ watchEffect(
 The thunk receives a fresh `Scope` as its second argument on every execution. Use it to register cleanup logic that runs when the effect re-runs or stops. The previous run's scope disposes before each new run begins.
 
 ```ts
-watchEffect(
+watch(
     async (signal, scope) => {
         const db = await scope.acquire(DbResource)  // released when scope disposes
         return db.query("SELECT * FROM items", { signal })
@@ -217,11 +217,11 @@ See [`Scope & Resource`](./scope.md) for the full resource management API.
 `onChange` receives a `Stale` value. The caller controls when the thunk re-runs by calling `.run()` on it.
 
 ```ts
-import { Signal, watchEffect } from "aljabr/prelude"
+import { Signal, watch } from "aljabr/prelude"
 
 const src = Signal.create("hello")
 
-const handle = watchEffect(
+const handle = watch(
     async (signal) => {
         const q = src.get()!
         return fetch(`/api/search?q=${q}`, { signal }).then(r => r.json())
@@ -242,7 +242,7 @@ const handle = watchEffect(
 )
 
 src.set("world")  // onChange called with Stale
-handle.stop()     // stop tracking
+handle.dispose()     // stop tracking
 ```
 
 ### Eager mode
@@ -250,7 +250,7 @@ handle.stop()     // stop tracking
 `onChange` receives `Done` or `Failed` — the thunk has already re-run by the time `onChange` fires.
 
 ```ts
-const handle = watchEffect(
+const handle = watch(
     async (signal) => fetch("/api/data", { signal }).then(r => r.json()),
     (result) => {
         match(result, {
@@ -322,11 +322,11 @@ match(result, {
 ### Reactive fetch with stale-while-revalidating
 
 ```ts
-import { Signal, watchEffect } from "aljabr/prelude"
+import { Signal, watch } from "aljabr/prelude"
 
 const userId = Signal.create(1)
 
-const handle = watchEffect(
+const handle = watch(
     async (signal) => {
         const id = userId.get()!
         return fetch(`/api/users/${id}`, { signal }).then(r => r.json())
@@ -355,9 +355,9 @@ userId.set(2)  // stale user 1 data still shown while user 2 loads
 ## See also
 
 - [`Fault`](./fault.md) — the three-variant error union carried by `Failed`
-- [`Signal`](./signal.md) — the reactive sources that `watchEffect` tracks
+- [`Signal`](./signal.md) — the reactive sources that `watch` tracks
 - [`AsyncDerived`](./derived.md#asyncderivedt-e) — pull-based async computed values with the same retry API
-- [`Scope & Resource`](./scope.md) — structured resource management; each `watchEffect` run gets a fresh scope
+- [`Scope & Resource`](./scope.md) — structured resource management; each `watch` run gets a fresh scope
 - [`Schedule`](./schedule.md) — retry-delay policies (`Fixed`, `Linear`, `Exponential`, `Custom`)
 - [`batch`](./context.md#batch) — coalesce multiple signal writes before the effect re-runs
 - [Resilient async guide](../../guides/resilient-async.md) — walkthrough of retry, backoff, and timeout patterns

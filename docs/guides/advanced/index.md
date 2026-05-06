@@ -12,7 +12,7 @@ A search-as-you-type feature sounds simple. In practice it involves at least fiv
 
 ```ts
 import { union, match, Union } from "aljabr"
-import { Signal, Ref, Derived, AsyncDerived, Validation, Scope, Resource } from "aljabr/prelude"
+import { Signal, Store, Derived, AsyncDerived, Validation, Scope, Resource } from "aljabr/prelude"
 
 // The domain state is a typed union — not a status string, not a boolean flag.
 // Guide 1 covers how to model these, chain them, and compose them with Result and Option.
@@ -38,8 +38,8 @@ function parseQuery(raw: string): Validation<string, string> {
 
 ```ts
 // The reactive graph is backed by fine-grained structured state.
-// Guide 3 shows how Ref, Derived, and AsyncDerived compose around a real UI concern.
-const store = Ref.create({ query: "", results: [] as Product[], page: 1 })
+// Guide 3 shows how Store, Derived, and AsyncDerived compose around a real UI concern.
+const store = Store.create({ query: "", results: [] as Product[], page: 1 })
 const summary = Derived.create(() =>
   `${store.get("results").length} results for "${store.get("query")}"`
 )
@@ -85,7 +85,7 @@ The guides form a natural reading order. Union branching establishes the shared 
 |---|---|
 | [1. Union Branching](./union-branching.md) | Result chaining, Option as a null discipline, Validation accumulation, cross-container composition, and modeling domain state as a typed union |
 | [2. Parser Construction](./parser-construction.md) | Token and AST unions, recursive match evaluation, and decoding external data through the schema pipeline into typed domain models |
-| [3. Reactive UI](./reactive-ui.md) | Composing Ref, Derived, AsyncDerived, and Effect around a real UI concern — structured state, lazy computation, and async data |
+| [3. Reactive UI](./reactive-ui.md) | Composing Store, Derived, AsyncDerived, and Effect around a real UI concern — structured state, lazy computation, and async data |
 | [4. Signal Protocols](./signal-protocols.md) | Custom SignalProtocol implementations — debounce, optimistic updates, and any temporal state that lives inside the reactive primitive itself |
 | [5. Resource Lifetime](./resource-lifetime.md) | Scope, Resource, acquire, and defer — structured teardown for signals, effects, subscriptions, and async work tied to the same lifetime |
 

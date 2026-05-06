@@ -23,7 +23,7 @@ Types for modeling values that may be absent, failed, or require validation.
 | Export | Description |
 |---|---|
 | [`Result<T, E>`](./result.md) | Synchronous success (`Accept`), async pending (`Expect`), or failure (`Reject`). Implements `.then()` — directly awaitable. |
-| [`Option<T>`](./option.md) | Present (`Some`) or absent (`None`). Chainable via `.map()`, `.flatMap()`, `.getOrElse()`. |
+| [`Option<T>`](./option.md) | Present (`Some`) or absent (`None`). Chainable via `.map()`, `.flatMap()`, `.getOr()`. |
 | [`Validation<T, E>`](./validation.md) | Three states: unvalidated (`Unvalidated`), valid (`Valid`), or invalid with accumulated errors (`Invalid`). Combine independent checks without short-circuiting. |
 
 ### Reactive primitives
@@ -33,7 +33,8 @@ A fine-grained push/pull reactive system with explicit lifecycle states.
 | Export | Description |
 |---|---|
 | [`Signal<T, S>`](./signal.md) | A mutable reactive container. Default lifecycle is `SignalState<T>`; pass a `SignalProtocol<S, T>` to use any custom union as the state. Reads inside computations auto-subscribe; writes notify dependents. Supports raw push subscriptions via `.subscribe()`. |
-| [`Ref<T>`](./ref.md) | A reactive container for structured objects and arrays. Tracks subscriptions per dot-separated path — `get("user.name")` subscribes to exactly that path. Supports deletion, live signal bindings, and array mutation methods. |
+| [`Store<T>`](./store.md) | A reactive container for structured objects and arrays. Tracks subscriptions per dot-separated path — `get("user.name")` subscribes to exactly that path. Supports deletion and live signal bindings; array mutations route through [`List`](./list.md) via `store.at(arrayPath)`. |
+| [`List<T>`](./list.md) | A reactive container for a root-level array. Returned by `Store.create([...])` and `store.at()` for array paths. Per-index reactive reads + pathless mutation methods (`push`, `pop`, `splice`, `move`, `set`). Iterator methods (`map`/`filter`/`sort`) return `DerivedArray`. |
 | [`Derived<T>`](./derived.md) | A lazy computed value. Re-evaluates only when read after a dependency changes. Supports a writable form. |
 | [`AsyncDerived<T, E>`](./derived.md#asyncderivedT-E) | Like `Derived`, but async. Preserves the last known value in `Reloading` state for stale-while-revalidating. |
 
@@ -44,7 +45,7 @@ Tools for running async computations inside the reactive graph.
 | Export | Description |
 |---|---|
 | [`Effect<T, E>`](./effect.md) | A composable async computation union: `Idle`, `Running`, `Done`, `Stale`, `Failed`. Supports `.map()`, `.flatMap()`, `.recover()`. |
-| [`watchEffect`](./effect.md#watcheffect) | Run an async thunk reactively. Tracks signal reads automatically; calls a callback on dependency changes or failure. Each run receives a fresh `Scope`. |
+| [`watch`](./effect.md#watch) | Run an async thunk reactively. Tracks signal reads automatically; calls a callback on dependency changes or failure. Each run receives a fresh `Scope`. |
 | [`Fault<E>`](./fault.md) | Three-variant error union carried by `Effect.Failed` and `AsyncDerivedState.Failed`: `Fail<E>` (domain error), `Defect` (unexpected panic), `Interrupted` (aborted run). |
 
 ### Resource management
@@ -55,18 +56,18 @@ Primitives for structured resource lifetime — guaranteed teardown on success, 
 |---|---|
 | [`Scope`](./scope.md) | Create a scoped resource context. Finalizers registered via `.defer()` run in LIFO order on disposal. Auto-parents to the current reactive owner. |
 | [`Resource`](./scope.md#resourcet) | Pair an async `acquire` function with a `release` function. Inert until consumed via `scope.acquire()`. |
-| [`defer`](./scope.md#implicit-hooks) | Implicit hook — register a finalizer on the current scope inside a `watchEffect` or `AsyncDerived` thunk. |
-| [`acquire`](./scope.md#implicit-hooks) | Implicit hook — acquire a resource via the current scope inside a `watchEffect` or `AsyncDerived` thunk. |
+| [`defer`](./scope.md#implicit-hooks) | Implicit hook — register a finalizer on the current scope inside a `watch` or `AsyncDerived` thunk. |
+| [`acquire`](./scope.md#implicit-hooks) | Implicit hook — acquire a resource via the current scope inside a `watch` or `AsyncDerived` thunk. |
 
 ### Scheduling
 
-Declarative retry-delay policies for `AsyncDerived` and `watchEffect`.
+Declarative retry-delay policies for `AsyncDerived` and `watch`.
 
 | Export | Description |
 |---|---|
 | [`Schedule`](./schedule.md) | Tagged union of retry policies: `Fixed`, `Linear`, `Exponential`, `Custom`. Pass to `AsyncOptions.schedule`. |
 | [`ScheduleError`](./schedule.md#scheduleerror) | Errors emitted by the scheduler itself: `TimedOut` and `MaxRetriesExceeded`. Fully matchable. |
-| [`AsyncOptions<E>`](./schedule.md#asyncoptionse) | Shared options bag for retry, timeout, and observability. Accepted by `AsyncDerived.create` and `watchEffect`. |
+| [`AsyncOptions<E>`](./schedule.md#asyncoptionse) | Shared options bag for retry, timeout, and observability. Accepted by `AsyncDerived.create` and `watch`. |
 
 ### Data structures
 
@@ -78,8 +79,8 @@ Declarative retry-delay policies for `AsyncDerived` and `watchEffect`.
 
 | Export | Description |
 |---|---|
-| [`persistedSignal`](./persist.md#persistedsignal) | Create a `Signal<T>` that rehydrates from and syncs to an external store (localStorage by default). |
-| [`syncToStore`](./persist.md#synctostore) | Mirror an existing signal to a store; returns a stop function. |
+| [`Signal.persisted`](./persist.md#signalpersisted) | Create a `Signal<T>` that rehydrates from and syncs to an external store (localStorage by default). |
+| [`signal.persist`](./persist.md#signalpersist) | Instance method on any `Signal<T>`; mirrors writes to a store and returns a `WatchHandle`. |
 | [`localStorageAdapter`](./persist.md#built-in-adapters) | Built-in adapter backed by `localStorage`. |
 | [`sessionStorageAdapter`](./persist.md#built-in-adapters) | Built-in adapter backed by `sessionStorage`. |
 
@@ -117,7 +118,7 @@ import { Option } from "aljabr/prelude"
 const city = Option.Some(user)
     .flatMap(u => u.address ? Option.Some(u.address) : Option.None())
     .map(a => a.city.toUpperCase())
-    .getOrElse("UNKNOWN")
+    .getOr("UNKNOWN")
 ```
 
 ### Validation — accumulate all errors
@@ -149,12 +150,12 @@ batch(() => { x.set(10); y.set(20) })
 sum.get() // 30
 ```
 
-### Ref — fine-grained structured state
+### Store — fine-grained structured state
 
 ```ts
-import { Ref } from "aljabr/prelude"
+import { Store } from "aljabr/prelude"
 
-const state = Ref.create({
+const state = Store.create({
     user: { name: "Alice", age: 30 },
     scores: [1, 2, 3],
 })
@@ -163,7 +164,7 @@ const state = Ref.create({
 const nameDisplay = Derived.create(() => `Hello, ${state.get("user.name")}`)
 
 state.patch("user", { name: "Bob", age: 30 })  // only name subscribers notified
-state.push("scores", 4)                          // array mutation, no full-array diff
+state.at("scores").push(4)                       // array mutation through List<number>, no full-array diff
 
 // Live binding — formField drives state.user.name
 const formField = Signal.create("Carol")
@@ -172,14 +173,14 @@ formField.set("Dave")
 state.get("user.name")  // "Dave"
 ```
 
-### watchEffect — reactive async side effects
+### watch — reactive async side effects
 
 ```ts
-import { watchEffect } from "aljabr/prelude"
+import { watch } from "aljabr/prelude"
 
 const userId = Signal.create(1)
 
-const handle = watchEffect(
+const handle = watch(
     async (signal, scope) => {
         const id = userId.get()!
         return fetch(`/api/users/${id}`, { signal }).then(r => r.json())
@@ -189,15 +190,15 @@ const handle = watchEffect(
 )
 
 userId.set(2)    // re-fetches and calls updateUI automatically
-handle.stop()    // stop tracking
+handle.dispose()    // stop tracking
 ```
 
-### persistedSignal — survive page reloads
+### Signal.persisted — survive page reloads
 
 ```ts
-import { persistedSignal } from "aljabr/prelude"
+import { Signal } from "aljabr/prelude"
 
-const theme = persistedSignal<"light" | "dark">("light", { key: "app.theme" })
+const theme = Signal.persisted<"light" | "dark">("light", { key: "app.theme" })
 theme.set("dark") // written to localStorage; restored on next load
 ```
 

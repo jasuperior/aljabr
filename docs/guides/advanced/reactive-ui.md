@@ -1,6 +1,6 @@
 # Reactive UI
 
-`Ref`, `Derived`, `AsyncDerived`, and `watchEffect` are four different answers to the same question: how does state flow through a UI? Each one occupies a distinct position in the reactive graph, and the patterns that emerge from composing them are more than the sum of their parts.
+`Store`, `Derived`, `AsyncDerived`, and `watch` are four different answers to the same question: how does state flow through a UI? Each one occupies a distinct position in the reactive graph, and the patterns that emerge from composing them are more than the sum of their parts.
 
 This guide walks through those patterns using a data table with filtering, sorting, and on-demand async loading. The table is the vehicle — what matters is how each primitive fits, why it fits there, and what the composition looks like. The domain type throughout is `OrderLifecycle` from the [Union Branching](./union-branching.md) guide.
 
@@ -11,10 +11,10 @@ This guide walks through those patterns using a data table with filtering, sorti
 Before any code: a map of responsibilities.
 
 - **`Signal<T>`** is a mutable value that notifies dependents when it changes. It's the input to everything else — user events, external data, URL params.
-- **`Ref<T>`** is a `Signal` for structured objects. It tracks subscriptions per dot-separated path, so a change to one field only re-runs computations that read that field.
+- **`Store<T>`** is a `Signal` for structured objects. It tracks subscriptions per dot-separated path, so a change to one field only re-runs computations that read that field.
 - **`Derived<T>`** is a lazy computed value. It reads signals and other deriveds, re-evaluates only when read after a dependency changes, and preserves a stale value in the interim.
 - **`AsyncDerived<T, E>`** is `Derived` with an async computation. It knows about the four states of async work — uncomputed, loading, ready, reloading — and hands them to you as matchable variants.
-- **`watchEffect`** is for side effects that run in response to reactive state: writing to a URL, posting to an API, syncing to external storage.
+- **`watch`** is for side effects that run in response to reactive state: writing to a URL, posting to an API, syncing to external storage.
 
 The data flow is unidirectional: signals → deriveds → effects. Effects never write to signals that feed into their own computation.
 
@@ -22,10 +22,10 @@ The data flow is unidirectional: signals → deriveds → effects. Effects never
 
 ## Setting up state
 
-The table has two kinds of state: **view state** (filter text, sort column, selected row) and **data state** (the loaded orders). View state belongs in a `Ref` — it's structured, multiple fields change independently, and individual components subscribe to only the paths they care about.
+The table has two kinds of state: **view state** (filter text, sort column, selected row) and **data state** (the loaded orders). View state belongs in a `Store` — it's structured, multiple fields change independently, and individual components subscribe to only the paths they care about.
 
 ```ts
-import { Ref, Derived, AsyncDerived, batch } from "aljabr/prelude"
+import { Store, Derived, AsyncDerived, batch } from "aljabr/prelude"
 import type { OrderLifecycle } from "./domain"  // from the Union Branching guide
 
 type SortField = "orderId" | "confirmedAt" | "status"
@@ -39,7 +39,7 @@ type TableState = {
   selected:  string | null  // orderId
 }
 
-const view = Ref.create<TableState>({
+const view = Store.create<TableState>({
   filter:    "",
   sortField: "confirmedAt",
   sortDir:   "desc",
@@ -187,12 +187,12 @@ When the fetch fails, the scheduler queues the next attempt automatically. `stat
 
 ## Syncing to the URL
 
-`watchEffect` runs an async side effect whenever its dependencies change. Here it syncs the view state to URL search params — so filter, sort, and page survive a page reload:
+`watch` runs an async side effect whenever its dependencies change. Here it syncs the view state to URL search params — so filter, sort, and page survive a page reload:
 
 ```ts
-import { watchEffect } from "aljabr/prelude"
+import { watch } from "aljabr/prelude"
 
-const urlSync = watchEffect(async () => {
+const urlSync = watch(async () => {
   const filter    = view.get("filter") ?? ""
   const sortField = view.get("sortField") ?? "confirmedAt"
   const sortDir   = view.get("sortDir") ?? "desc"
@@ -208,12 +208,12 @@ The reads inside the thunk register as dependencies. Any time `filter`, `sortFie
 Stopping the sync is one call:
 
 ```ts
-urlSync.stop()
+urlSync.dispose()
 ```
 
 ### Restoring from URL on load
 
-The reverse direction — URL → `Ref` — runs once at startup and isn't reactive (the URL doesn't change externally once the page is live):
+The reverse direction — URL → `Store` — runs once at startup and isn't reactive (the URL doesn't change externally once the page is live):
 
 ```ts
 function restoreFromUrl(): void {
@@ -237,11 +237,11 @@ restoreFromUrl()
 ## The reactive graph, assembled
 
 ```
-view (Ref)
+view (Store)
   ├── "filter"    ─┐
   ├── "sortField" ─┼──→ visibleOrders (Derived) ──→ summary (Derived)
   ├── "sortDir"   ─┘
-  ├── "page"      ──────────────────────────────────→ urlSync (watchEffect)
+  ├── "page"      ──────────────────────────────────→ urlSync (watch)
   └── "selected"  ──────────────────────────────────→ orderDetail (AsyncDerived)
 ```
 
@@ -312,7 +312,7 @@ const selectedDetail = view.maybeAt("selected")
 // Some(orderId) when selected, None when cleared
 ```
 
-**`bind` for form-driven paths.** When a form field should drive a path on a `Ref`, `.bind()` creates a live connection that releases automatically when the signal is disposed:
+**`bind` for form-driven paths.** When a form field should drive a path on a `Store`, `.bind()` creates a live connection that releases automatically when the signal is disposed:
 
 ```ts
 const searchInput = Signal.create("")
@@ -327,6 +327,6 @@ view.bind("filter", searchInput)
 - [Union Branching](./union-branching.md) — the OrderLifecycle union used here
 - [Signal Protocols](./signal-protocols.md) — encoding debounce and temporal state inside the signal itself
 - [Resource Lifetime](./resource-lifetime.md) — disposing this reactive graph when the component unmounts
-- [API Reference: Ref](../../api/prelude/ref.md)
+- [API Reference: Store](../../api/prelude/store.md)
 - [API Reference: Derived / AsyncDerived](../../api/prelude/derived.md)
-- [API Reference: Effect / watchEffect](../../api/prelude/effect.md)
+- [API Reference: Effect / watch](../../api/prelude/effect.md)

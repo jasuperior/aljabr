@@ -621,7 +621,7 @@ abstract class Mappable<T, E> extends Trait {
         }) as RemoteData<U, E>;
     }
 
-    getOrElse(fallback: T): T {
+    getOr(fallback: T): T {
         return match(this as unknown as RemoteData<T, E>, {
             NotAsked: () => fallback,
             Loading:  () => fallback,
@@ -660,8 +660,8 @@ RemoteData.Success<number, string>(42)
     .map(n => n * 2)
     // → RemoteData.Success<number, string> { data: 84 } ✓
 
-// getOrElse() provides a safe fallback
-RemoteData.Failure<string, Error>(new Error()).getOrElse("default")
+// getOr() provides a safe fallback
+RemoteData.Failure<string, Error>(new Error()).getOr("default")
 // → "default" ✓
 
 // Exhaustive match with full narrowing
