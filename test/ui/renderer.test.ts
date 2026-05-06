@@ -339,7 +339,7 @@ describe("createRenderer", () => {
                 1,
             );
 
-            ref.push("items", "b");
+            ref.at("items").push("b");
             expect(visibleElements(visibleElements(host.root)[0])).toHaveLength(
                 2,
             );
@@ -352,7 +352,7 @@ describe("createRenderer", () => {
             const rows = ref.at("items").map((item) => view("li", null, item));
 
             mount(() => view("ul", null, rows), host.root);
-            ref.splice("items", 1, 2);
+            ref.at("items").splice(1, 2);
 
             expect(visibleElements(visibleElements(host.root)[0])).toHaveLength(
                 1,

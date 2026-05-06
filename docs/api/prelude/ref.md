@@ -311,69 +311,25 @@ ref.boundAt("user.age")   // null
 
 ---
 
-### Array mutation methods
+### Array mutations
 
-First-class methods that notify only the affected signals — no full-array diff needed.
-
-#### `.push(path, ...items)`
+`Store` does not expose array mutation methods directly. To mutate an array at a path, traverse to it with `.at(path)` — when the path resolves to an array, `.at()` returns a `List<T>` whose `push` / `pop` / `splice` / `move` / `set` methods notify only the affected signals (no full-array diff).
 
 ```ts
-ref.push<P extends ArrayPath<T>>(path: P, ...items: ArrayItem<T, P>[]): void
-```
+const scores = ref.at("scores")    // List<number>
+scores.push(4)
+scores.push(5, 6)
 
-Append one or more items to the end of the array at `path`. Notifies signals at the new indices and ancestor paths.
-
-```ts
-ref.push("scores", 4)
-ref.push("scores", 5, 6)
-```
-
-#### `.pop(path)`
-
-```ts
-ref.pop<P extends ArrayPath<T>>(path: P): Option<ArrayItem<T, P>>
-```
-
-Remove and return the last element of the array at `path` as an `Option`. Returns `Option.Some(value)` on success or `Option.None()` if the array is empty.
-
-```ts
-import { match } from "aljabr"
-
-match(ref.pop("scores"), {
+match(scores.pop(), {
     Some: ({ value }) => console.log("removed", value),
     None: ()          => console.warn("array was empty"),
 })
+
+scores.splice(1, 1)    // remove 1 element at index 1
+scores.move(0, 2)      // swap first and last
 ```
 
-#### `.splice(path, start, deleteCount, ...items)`
-
-```ts
-ref.splice<P extends ArrayPath<T>>(
-    path: P,
-    start: number,
-    deleteCount: number,
-    ...items: ArrayItem<T, P>[]
-): void
-```
-
-Remove and/or insert elements in the array at `path`, starting at `start`. Signals for indices that no longer exist after a shrink are disposed.
-
-```ts
-ref.splice("scores", 1, 1)        // remove 1 element at index 1
-ref.splice("scores", 0, 0, 10)    // insert 10 at the front
-```
-
-#### `.move(path, from, to)`
-
-```ts
-ref.move<P extends ArrayPath<T>>(path: P, from: number, to: number): void
-```
-
-Swap the elements at indices `from` and `to`. Only signals at those two indices and ancestor paths are notified.
-
-```ts
-ref.move("scores", 0, 2)  // swap first and last
-```
+See [List](#list) below for the full pathless mutation API.
 
 ---
 

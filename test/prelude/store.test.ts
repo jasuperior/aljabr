@@ -439,20 +439,18 @@ describe("ref.at — leaf path", () => {
 });
 
 // ---------------------------------------------------------------------------
-// push
+// Array mutations via ref.at(path) → List
 // ---------------------------------------------------------------------------
+// `Store` has no array mutation methods of its own — array writes go through
+// the `List` returned by `ref.at(path)`. These tests confirm the integration:
+// notifications to ancestor and per-index signals on the parent Store fire
+// when the sub-List mutates.
 
-describe("ref.push", () => {
+describe("ref.at(arrayPath).push", () => {
     it("appends an item to the array", () => {
         const ref = makeState();
-        ref.push("scores", 4);
+        ref.at("scores").push(4);
         expect(ref.get("scores")).toEqual([1, 2, 3, 4]);
-    });
-
-    it("appends multiple items", () => {
-        const ref = makeState();
-        ref.push("scores", 4, 5);
-        expect(ref.get("scores")).toEqual([1, 2, 3, 4, 5]);
     });
 
     it("notifies the array path signal", () => {
@@ -463,7 +461,7 @@ describe("ref.push", () => {
 
         trackIn(comp, () => ref.get("scores"));
 
-        ref.push("scores", 4);
+        ref.at("scores").push(4);
         expect(dirty).toHaveBeenCalledTimes(1);
     });
 
@@ -475,28 +473,19 @@ describe("ref.push", () => {
 
         trackIn(comp, () => ref.get("user.name"));
 
-        ref.push("scores", 4);
+        ref.at("scores").push(4);
         expect(dirty).not.toHaveBeenCalled();
     });
 });
 
-// ---------------------------------------------------------------------------
-// pop
-// ---------------------------------------------------------------------------
-
-describe("ref.pop", () => {
+describe("ref.at(arrayPath).pop", () => {
     it("removes and returns the last element", () => {
         const ref = makeState();
-        const val = ref.pop("scores");
+        const val = ref.at("scores").pop();
         expect(val.getOr(-1)).toBe(3);
         expect(ref.get("scores")).toEqual([1, 2]);
     });
 
-    it("returns None on an empty array", () => {
-        const ref = Store.create({ items: [] as number[] });
-        expect(ref.pop("items").getOr(-1)).toBe(-1);
-    });
-
     it("notifies the array path signal", () => {
         const ref = makeState();
         const comp = createOwner(null);
@@ -505,46 +494,12 @@ describe("ref.pop", () => {
 
         trackIn(comp, () => ref.get("scores"));
 
-        ref.pop("scores");
+        ref.at("scores").pop();
         expect(dirty).toHaveBeenCalledTimes(1);
-    });
-
-    it("is a no-op on an empty array and does not notify", () => {
-        const ref = Store.create({ items: [] as number[] });
-        const comp = createOwner(null);
-        const dirty = vi.fn();
-        comp.dirty = dirty;
-
-        trackIn(comp, () => ref.get("items"));
-
-        ref.pop("items");
-        expect(dirty).not.toHaveBeenCalled();
     });
 });
 
-// ---------------------------------------------------------------------------
-// splice
-// ---------------------------------------------------------------------------
-
-describe("ref.splice", () => {
-    it("removes elements at start index", () => {
-        const ref = makeState();
-        ref.splice("scores", 1, 1);
-        expect(ref.get("scores")).toEqual([1, 3]);
-    });
-
-    it("inserts elements at index without removing", () => {
-        const ref = makeState();
-        ref.splice("scores", 1, 0, 10, 20);
-        expect(ref.get("scores")).toEqual([1, 10, 20, 2, 3]);
-    });
-
-    it("replaces elements", () => {
-        const ref = makeState();
-        ref.splice("scores", 0, 2, 99, 98);
-        expect(ref.get("scores")).toEqual([99, 98, 3]);
-    });
-
+describe("ref.at(arrayPath).splice", () => {
     it("notifies the array path signal", () => {
         const ref = makeState();
         const comp = createOwner(null);
@@ -553,35 +508,13 @@ describe("ref.splice", () => {
 
         trackIn(comp, () => ref.get("scores"));
 
-        ref.splice("scores", 0, 1);
+        ref.at("scores").splice(0, 1);
         expect(dirty).toHaveBeenCalledTimes(1);
+        expect(ref.get("scores")).toEqual([2, 3]);
     });
 });
 
-// ---------------------------------------------------------------------------
-// move
-// ---------------------------------------------------------------------------
-
-describe("ref.move", () => {
-    it("swaps two elements", () => {
-        const ref = makeState();
-        ref.move("scores", 0, 2);
-        expect(ref.get("scores")).toEqual([3, 2, 1]);
-    });
-
-    it("is a no-op when from === to", () => {
-        const ref = makeState();
-        const comp = createOwner(null);
-        const dirty = vi.fn();
-        comp.dirty = dirty;
-
-        trackIn(comp, () => ref.get("scores"));
-
-        ref.move("scores", 1, 1);
-        expect(dirty).not.toHaveBeenCalled();
-        expect(ref.get("scores")).toEqual([1, 2, 3]);
-    });
-
+describe("ref.at(arrayPath).move", () => {
     it("only notifies signals at the two swapped indices", () => {
         const ref = makeState();
 
@@ -601,7 +534,7 @@ describe("ref.move", () => {
         trackIn(idx1, () => ref.get("scores.1"));
         trackIn(idx2, () => ref.get("scores.2"));
 
-        ref.move("scores", 0, 2); // swap index 0 and 2
+        ref.at("scores").move(0, 2); // swap index 0 and 2
 
         expect(dirty0).toHaveBeenCalledTimes(1);
         expect(dirty2).toHaveBeenCalledTimes(1);

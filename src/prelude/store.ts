@@ -54,21 +54,6 @@ export type PathValue<T, P extends string> = P extends `${infer K}.${infer Rest}
 // Array path helpers
 // ---------------------------------------------------------------------------
 
-/**
- * All paths into `T` whose resolved value type is an array.
- * Use with Store's array mutation methods (`push`, `pop`, `splice`, `move`).
- */
-export type ArrayPath<T> = {
-    [P in Path<T>]: PathValue<T, P> extends unknown[] ? P : never;
-}[Path<T>];
-
-/**
- * The element type of the array at path `P` in `T`.
- */
-export type ArrayItem<T, P extends string> = PathValue<T, P> extends (infer E)[]
-    ? E
-    : never;
-
 // ---------------------------------------------------------------------------
 // Internal shared state
 // ---------------------------------------------------------------------------
@@ -757,10 +742,11 @@ export class List<T> {
  *
  * state.set("scores", [1, 2, 3, 4]);              // replace array
  * state.patch("user", { name: "Bob", age: 30 });  // only notifies "user.name"
- * state.push("scores", 5);                         // appends 5
  *
- * const scoresStore  = state.at("scores");           // List<number>
- * const userStore    = state.at("user");             // Store<{ name: string; age: number }>
+ * const scoresList = state.at("scores");           // List<number>
+ * scoresList.push(5);                              // appends 5
+ *
+ * const userStore  = state.at("user");             // Store<{ name: string; age: number }>
  * const nameHandle = state.at("user.name");        // Derived<string>
  */
 export class Store<T extends object> {
@@ -987,64 +973,6 @@ export class Store<T extends object> {
 
         this.#holder.handles.set(fullPath, handle as any);
         return handle as any;
-    }
-
-    /**
-     * Append one or more items to the end of the array at `path`.
-     * Notifies signals at the new indices and ancestor paths.
-     */
-    push<P extends ArrayPath<T>>(path: P, ...items: ArrayItem<T, P>[]): void {
-        if (this.#holder.disposed) return;
-        const fullPath = resolveFullPath(this.#prefix, path as string);
-        const arr = (getAtPath(this.#holder.state, fullPath) as unknown[]) ?? [];
-        applyArrayMutation(this.#holder, fullPath, arr, [...arr, ...items]);
-    }
-
-    /**
-     * Remove and return the last element of the array at `path`.
-     * Notifies signals at the removed index and ancestor paths.
-     * Returns `Option.Some(value)` on success, `Option.None()` if the array is empty.
-     */
-    pop<P extends ArrayPath<T>>(path: P): Option<ArrayItem<T, P>> {
-        if (this.#holder.disposed) return Option.None();
-        const fullPath = resolveFullPath(this.#prefix, path as string);
-        const arr = (getAtPath(this.#holder.state, fullPath) as unknown[]) ?? [];
-        if (arr.length === 0) return Option.None();
-        applyArrayMutation(this.#holder, fullPath, arr, arr.slice(0, -1));
-        return Option.Some(arr[arr.length - 1] as ArrayItem<T, P>);
-    }
-
-    /**
-     * Remove and/or insert elements in the array at `path`, starting at `start`.
-     * Signals at affected indices and ancestor paths are notified.
-     * Signals for indices that no longer exist (array shrink) are disposed.
-     */
-    splice<P extends ArrayPath<T>>(
-        path: P,
-        start: number,
-        deleteCount: number,
-        ...items: ArrayItem<T, P>[]
-    ): void {
-        if (this.#holder.disposed) return;
-        const fullPath = resolveFullPath(this.#prefix, path as string);
-        const arr = (getAtPath(this.#holder.state, fullPath) as unknown[]) ?? [];
-        const newArr = [...arr];
-        newArr.splice(start, deleteCount, ...items);
-        applyArrayMutation(this.#holder, fullPath, arr, newArr);
-    }
-
-    /**
-     * Swap the elements at indices `from` and `to` in the array at `path`.
-     * Only signals at those two indices and ancestor paths are notified.
-     */
-    move<P extends ArrayPath<T>>(path: P, from: number, to: number): void {
-        if (this.#holder.disposed) return;
-        const fullPath = resolveFullPath(this.#prefix, path as string);
-        const arr = (getAtPath(this.#holder.state, fullPath) as unknown[]) ?? [];
-        if (from === to || from >= arr.length || to >= arr.length) return;
-        const newArr = [...arr];
-        [newArr[from], newArr[to]] = [newArr[to], newArr[from]];
-        applyArrayMutation(this.#holder, fullPath, arr, newArr);
     }
 
     /**

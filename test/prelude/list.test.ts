@@ -510,7 +510,7 @@ describe("Store.at(path) → List", () => {
 
         trackIn(comp, () => items.length());
 
-        state.push("items", 4);
+        items.push(4);
         expect(dirty).toHaveBeenCalledTimes(1);
     });
 
