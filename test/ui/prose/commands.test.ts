@@ -1,6 +1,10 @@
 import { describe, it, expect } from "vitest";
 import { match } from "../../../src/match.ts";
-import { getTag } from "../../../src/union.ts";
+import { __ } from "../../../src/union.ts";
+import { Dispatcher } from "../../../src/prelude/dispatcher.ts";
+import { Validation } from "../../../src/prelude/validation.ts";
+import { CommandError } from "../../../src/prelude/command-error.ts";
+import type { ApplyResult } from "../../../src/prelude/dispatcher.ts";
 import {
     MarkSet,
     ProseNode,
@@ -17,58 +21,108 @@ import {
 } from "../../../src/ui/prose/document-state.ts";
 import {
     ProseCommand,
-    defaultApply,
+    proseProtocol,
 } from "../../../src/ui/prose/commands.ts";
 import { rangePointAt, normalizeText } from "../../../src/ui/prose/tree-ops.ts";
 
 // ---------------------------------------------------------------------------
-// Helpers
+// Test seam — exercises the production Dispatcher and Validation contracts
+// rather than hand-rolling apply/match plumbing in the test file.
 // ---------------------------------------------------------------------------
 
-/** Serialize a ProseNode tree to a plain JSON shape (ignores node IDs). */
-const serialize = (n: ProseNode): unknown => {
-    const tag = getTag(n);
-    const out: Record<string, unknown> = { tag };
-    if ("level" in (n as object)) out.level = (n as { level: number }).level;
-    if ("language" in (n as object))
-        out.language = (n as { language: string | null }).language;
-    if ("content" in (n as object))
-        out.content = (n as { content: string }).content;
-    if ("marks" in (n as object))
-        out.marks = (n as { marks: { [k: symbol]: string }[] }).marks.map(
-            (m) => ({ tag: getTag(m as never), ...m }),
-        );
-    if ("src" in (n as object)) out.src = (n as { src: string }).src;
-    if ("alt" in (n as object)) out.alt = (n as { alt: string | null }).alt;
-    if ("caption" in (n as object))
-        out.caption = (n as { caption: string | null }).caption;
-    if ("children" in (n as object))
-        out.children = (n as { children: ProseNode[] }).children.map(serialize);
-    return out;
-};
+const newDispatcher = (state: DocumentState) =>
+    Dispatcher.create(state, proseProtocol);
 
-const dispatch = (state: DocumentState, cmd: ProseCommand): { next: DocumentState; inverse: ProseCommand } => {
-    const r = defaultApply(state, cmd);
-    return match(r, {
+const expectValid = <V>(v: Validation<V, CommandError>): V =>
+    match(v, {
         Valid: ({ value }) => value,
         Invalid: ({ errors }) => {
-            throw new Error(`apply failed: ${JSON.stringify(errors)}`);
+            throw new Error(`unexpected Invalid: ${JSON.stringify(errors)}`);
         },
         Unvalidated: () => {
-            throw new Error("unreachable");
+            throw new Error("unexpected Unvalidated");
         },
     });
-};
 
-const expectRoundTrip = (state: DocumentState, cmd: ProseCommand): void => {
-    const { next, inverse } = dispatch(state, cmd);
-    const { next: restored } = dispatch(next, inverse);
-    // Compare normalized forms — model carries fragmentation (adjacent
-    // same-marks Texts) deliberately; consumers normalize on read.
-    expect(serialize(normalizeText(restored.doc))).toEqual(
-        serialize(normalizeText(state.doc)),
+const expectInvalid = <V>(v: Validation<V, CommandError>): void =>
+    match(v, {
+        Invalid: () => {},
+        Valid: () => {
+            throw new Error("expected Invalid, got Valid");
+        },
+        Unvalidated: () => {
+            throw new Error("expected Invalid, got Unvalidated");
+        },
+    });
+
+/**
+ * Round-trip a single command through a Dispatcher: dispatch, capture the
+ * inverse from the returned ApplyResult, dispatch the inverse, and assert
+ * the extracted Document is equivalent to the initial under `normalizeText`.
+ */
+const expectRoundTrip = (initial: DocumentState, cmd: ProseCommand): void => {
+    const d = newDispatcher(initial);
+    const { inverse }: ApplyResult<DocumentState, ProseCommand> = expectValid(
+        d.dispatch(cmd),
+    );
+    expectValid(d.dispatch(inverse));
+    expect(serialize(normalizeText(d.peek()!))).toEqual(
+        serialize(normalizeText(initial.doc)),
     );
 };
+
+const serialize = (n: ProseNode): unknown =>
+    match(n, {
+        Document: ({ children }) => ({
+            tag: "Document",
+            children: children.map(serialize),
+        }),
+        Block: ({ children }) => ({
+            tag: "Block",
+            children: children.map(serialize),
+        }),
+        Heading: ({ level, children }) => ({
+            tag: "Heading",
+            level,
+            children: children.map(serialize),
+        }),
+        Quote: ({ children }) => ({
+            tag: "Quote",
+            children: children.map(serialize),
+        }),
+        Code: ({ language, children }) => ({
+            tag: "Code",
+            language,
+            children: children.map(serialize),
+        }),
+        Text: ({ content, marks }) => ({
+            tag: "Text",
+            content,
+            marks: marks.map(serializeMark),
+        }),
+        Image: ({ src, alt, caption }) => ({
+            tag: "Image",
+            src,
+            alt,
+            caption,
+        }),
+        HardBreak: () => ({ tag: "HardBreak" }),
+        Hr: () => ({ tag: "Hr" }),
+    });
+
+const serializeMark = (m: MarkSet): unknown =>
+    match(m, {
+        Bold: () => ({ tag: "Bold" }),
+        Italic: () => ({ tag: "Italic" }),
+        Underline: () => ({ tag: "Underline" }),
+        Strike: () => ({ tag: "Strike" }),
+        Code: () => ({ tag: "Code" }),
+        Link: ({ href }) => ({ tag: "Link", href }),
+        Color: ({ value }) => ({ tag: "Color", value }),
+        BackgroundColor: ({ value }) => ({ tag: "BackgroundColor", value }),
+        FontFamily: ({ value }) => ({ tag: "FontFamily", value }),
+        FontSize: ({ value }) => ({ tag: "FontSize", value }),
+    });
 
 const point = (
     doc: Document,
@@ -80,11 +134,43 @@ const point = (
     return p;
 };
 
+const isBoldMark = (m: MarkSet): boolean =>
+    match(m, {
+        Bold: () => true,
+        [__]: () => false,
+    });
+
+const hasBold = (n: ProseNode): boolean =>
+    match(n, {
+        Text: ({ marks }) => marks.some(isBoldMark),
+        [__]: () => false,
+    });
+
+const blockChildren = (n: ProseNode): ProseNode[] =>
+    match(n, {
+        Block: ({ children }) => children,
+        Heading: ({ children }) => children,
+        Quote: ({ children }) => children,
+        Code: ({ children }) => children,
+        [__]: () => {
+            throw new Error("expected block container");
+        },
+    });
+
+const expectText = (n: ProseNode, expected: string): void =>
+    match(n, {
+        Text: ({ content }) => {
+            expect(content).toBe(expected);
+        },
+        [__]: () => {
+            throw new Error(`expected Text("${expected}")`);
+        },
+    });
+
 // ---------------------------------------------------------------------------
 // Fixtures
 // ---------------------------------------------------------------------------
 
-/** Single-block document: <document><block id="b1"><text id="t1">Hello, world.</text></block></document> */
 const makeSimpleDoc = (): DocumentState => {
     const t1 = ProseNode.Text("Hello, world.", [], "t1");
     const b1 = ProseNode.Block([t1], "b1");
@@ -92,7 +178,6 @@ const makeSimpleDoc = (): DocumentState => {
     return { doc, cursor: EditorRange.Cursor(point(doc, "t1", 0)) };
 };
 
-/** Two-block doc: blocks b1="Hello" and b2="World". */
 const makeTwoBlockDoc = (): DocumentState => {
     const t1 = ProseNode.Text("Hello", [], "t1");
     const t2 = ProseNode.Text("World", [], "t2");
@@ -102,25 +187,39 @@ const makeTwoBlockDoc = (): DocumentState => {
     return { doc, cursor: EditorRange.Cursor(point(doc, "t1", 0)) };
 };
 
+const firstBlockChildren = (doc: Document): ProseNode[] =>
+    blockChildren(doc.children[0]!);
+
 // ---------------------------------------------------------------------------
 // SetCursor
 // ---------------------------------------------------------------------------
 
 describe("SetCursor", () => {
     it("updates the cursor and preserves the doc", () => {
-        const s = makeSimpleDoc();
-        const newPoint = point(s.doc, "t1", 5);
-        const { next } = dispatch(s, ProseCommand.SetCursor(EditorRange.Cursor(newPoint)));
-        expect(next.doc).toBe(s.doc);
-        expect((next.cursor as { point: RangePoint }).point.offset).toBe(5);
+        const initial = makeSimpleDoc();
+        const d = newDispatcher(initial);
+        const newPoint = point(initial.doc, "t1", 5);
+        expectValid(
+            d.dispatch(ProseCommand.SetCursor(EditorRange.Cursor(newPoint))),
+        );
+        expect(d.peek()).toBe(initial.doc);
+        match(d.peekState().cursor, {
+            Cursor: ({ point: p }) => expect(p.offset).toBe(5),
+            [__]: () => {
+                throw new Error("expected Cursor range");
+            },
+        });
     });
 
     it("round-trips via its inverse", () => {
-        const s = makeSimpleDoc();
-        const target = EditorRange.Cursor(point(s.doc, "t1", 5));
-        const { next, inverse } = dispatch(s, ProseCommand.SetCursor(target));
-        const { next: restored } = dispatch(next, inverse);
-        expect(restored.cursor).toEqual(s.cursor);
+        const initial = makeSimpleDoc();
+        const target = EditorRange.Cursor(point(initial.doc, "t1", 5));
+        const d = newDispatcher(initial);
+        const { inverse } = expectValid(
+            d.dispatch(ProseCommand.SetCursor(target)),
+        );
+        expectValid(d.dispatch(inverse));
+        expect(d.peekState().cursor).toEqual(initial.cursor);
     });
 });
 
@@ -130,32 +229,40 @@ describe("SetCursor", () => {
 
 describe("Insert (text)", () => {
     it("splices text into a Text node", () => {
-        const s = makeSimpleDoc();
-        const { next } = dispatch(s, ProseCommand.Insert("XYZ", point(s.doc, "t1", 5)));
-        const t1 = (next.doc.children[0] as { children: { content: string }[] })
-            .children[0]!;
-        expect(t1.content).toBe("HelloXYZ, world.");
+        const initial = makeSimpleDoc();
+        const d = newDispatcher(initial);
+        expectValid(
+            d.dispatch(
+                ProseCommand.Insert("XYZ", point(initial.doc, "t1", 5)),
+            ),
+        );
+        expectText(firstBlockChildren(d.peek()!)[0]!, "HelloXYZ, world.");
     });
 
     it("round-trips via its inverse (DeleteForward)", () => {
-        const s = makeSimpleDoc();
-        expectRoundTrip(s, ProseCommand.Insert("XYZ", point(s.doc, "t1", 5)));
+        const initial = makeSimpleDoc();
+        expectRoundTrip(
+            initial,
+            ProseCommand.Insert("XYZ", point(initial.doc, "t1", 5)),
+        );
     });
 
     it("rejects targeting a non-Text node", () => {
-        const s = makeSimpleDoc();
-        const r = defaultApply(
-            s,
-            ProseCommand.Insert("X", point(s.doc, "b1", 0)),
+        const initial = makeSimpleDoc();
+        const d = newDispatcher(initial);
+        expectInvalid(
+            d.dispatch(ProseCommand.Insert("X", point(initial.doc, "b1", 0))),
         );
-        expect(getTag(r)).toBe("Invalid");
     });
 
     it("rejects out-of-range offsets", () => {
-        const s = makeSimpleDoc();
-        const oob: RangePoint = { ...point(s.doc, "t1", 0), offset: 999 };
-        const r = defaultApply(s, ProseCommand.Insert("X", oob));
-        expect(getTag(r)).toBe("Invalid");
+        const initial = makeSimpleDoc();
+        const d = newDispatcher(initial);
+        const oob: RangePoint = {
+            ...point(initial.doc, "t1", 0),
+            offset: 999,
+        };
+        expectInvalid(d.dispatch(ProseCommand.Insert("X", oob)));
     });
 });
 
@@ -165,43 +272,42 @@ describe("Insert (text)", () => {
 
 describe("DeleteBackward / DeleteForward (single-Text)", () => {
     it("removes a slice within a single Text node", () => {
-        const s = makeSimpleDoc();
+        const initial = makeSimpleDoc();
+        const d = newDispatcher(initial);
         const range = EditorRange.Text(
-            point(s.doc, "t1", 5),
-            point(s.doc, "t1", 7),
+            point(initial.doc, "t1", 5),
+            point(initial.doc, "t1", 7),
         );
-        const { next } = dispatch(s, ProseCommand.DeleteBackward(range));
-        const t1 = (next.doc.children[0] as { children: { content: string }[] })
-            .children[0]!;
-        expect(t1.content).toBe("Helloworld.");
+        expectValid(d.dispatch(ProseCommand.DeleteBackward(range)));
+        expectText(firstBlockChildren(d.peek()!)[0]!, "Helloworld.");
     });
 
     it("round-trips via inverse Insert (single-node text)", () => {
-        const s = makeSimpleDoc();
+        const initial = makeSimpleDoc();
         const range = EditorRange.Text(
-            point(s.doc, "t1", 5),
-            point(s.doc, "t1", 7),
+            point(initial.doc, "t1", 5),
+            point(initial.doc, "t1", 7),
         );
-        expectRoundTrip(s, ProseCommand.DeleteBackward(range));
+        expectRoundTrip(initial, ProseCommand.DeleteBackward(range));
     });
 
     it("DeleteForward behaves equivalently for in-node ranges", () => {
-        const s = makeSimpleDoc();
+        const initial = makeSimpleDoc();
         const range = EditorRange.Text(
-            point(s.doc, "t1", 5),
-            point(s.doc, "t1", 7),
+            point(initial.doc, "t1", 5),
+            point(initial.doc, "t1", 7),
         );
-        expectRoundTrip(s, ProseCommand.DeleteForward(range));
+        expectRoundTrip(initial, ProseCommand.DeleteForward(range));
     });
 
     it("collapsed ranges are no-ops", () => {
-        const s = makeSimpleDoc();
-        const p = point(s.doc, "t1", 3);
-        const { next } = dispatch(
-            s,
-            ProseCommand.DeleteBackward(EditorRange.Text(p, p)),
+        const initial = makeSimpleDoc();
+        const d = newDispatcher(initial);
+        const p = point(initial.doc, "t1", 3);
+        expectValid(
+            d.dispatch(ProseCommand.DeleteBackward(EditorRange.Text(p, p))),
         );
-        expect(serialize(next.doc)).toEqual(serialize(s.doc));
+        expect(serialize(d.peek()!)).toEqual(serialize(initial.doc));
     });
 });
 
@@ -211,16 +317,15 @@ describe("DeleteBackward / DeleteForward (single-Text)", () => {
 
 describe("DeleteBackward (spanning blocks)", () => {
     it("merges two blocks and round-trips", () => {
-        const s = makeTwoBlockDoc();
-        // Delete from "Hell[o" through "Wor]ld" — keeps "Hellld"
+        const initial = makeTwoBlockDoc();
         const range = EditorRange.Text(
-            point(s.doc, "t1", 4),
-            point(s.doc, "t2", 3),
+            point(initial.doc, "t1", 4),
+            point(initial.doc, "t2", 3),
         );
-        const { next } = dispatch(s, ProseCommand.DeleteBackward(range));
-        // After delete, only one block remains with merged content.
-        expect(next.doc.children.length).toBe(1);
-        expectRoundTrip(s, ProseCommand.DeleteBackward(range));
+        const d = newDispatcher(initial);
+        expectValid(d.dispatch(ProseCommand.DeleteBackward(range)));
+        expect(d.peek()!.children.length).toBe(1);
+        expectRoundTrip(initial, ProseCommand.DeleteBackward(range));
     });
 });
 
@@ -230,60 +335,57 @@ describe("DeleteBackward (spanning blocks)", () => {
 
 describe("Format / RemoveMark", () => {
     it("adds a Bold mark to a TextRange and splits the Text node", () => {
-        const s = makeSimpleDoc();
+        const initial = makeSimpleDoc();
+        const d = newDispatcher(initial);
         const range = EditorRange.Text(
-            point(s.doc, "t1", 0),
-            point(s.doc, "t1", 5),
+            point(initial.doc, "t1", 0),
+            point(initial.doc, "t1", 5),
         );
-        const { next } = dispatch(
-            s,
-            ProseCommand.Format(MarkSet.Bold(), range),
-        );
-        const block = next.doc.children[0] as { children: { content: string; marks: unknown[] }[] };
-        expect(block.children.length).toBeGreaterThan(1);
-        const bolded = block.children.find((c) =>
-            (c as { marks: { [k: symbol]: string }[] }).marks.some(
-                (m) => getTag(m as never) === "Bold",
-            ),
-        );
-        expect(bolded).toBeTruthy();
-        expect((bolded as { content: string }).content).toBe("Hello");
+        expectValid(d.dispatch(ProseCommand.Format(MarkSet.Bold(), range)));
+        const kids = firstBlockChildren(d.peek()!);
+        expect(kids.length).toBeGreaterThan(1);
+        const bolded = kids.find(hasBold);
+        if (!bolded) throw new Error("expected a bolded Text node");
+        expectText(bolded, "Hello");
     });
 
     it("Format round-trips via its inverse (RemoveMark)", () => {
-        const s = makeSimpleDoc();
+        const initial = makeSimpleDoc();
         const range = EditorRange.Text(
-            point(s.doc, "t1", 0),
-            point(s.doc, "t1", 5),
+            point(initial.doc, "t1", 0),
+            point(initial.doc, "t1", 5),
         );
-        expectRoundTrip(s, ProseCommand.Format(MarkSet.Bold(), range));
+        expectRoundTrip(initial, ProseCommand.Format(MarkSet.Bold(), range));
     });
 
     it("RemoveMark removes a previously-applied mark", () => {
-        const s0 = makeSimpleDoc();
+        const initial = makeSimpleDoc();
+        const d = newDispatcher(initial);
         const range = EditorRange.Text(
-            point(s0.doc, "t1", 0),
-            point(s0.doc, "t1", 5),
+            point(initial.doc, "t1", 0),
+            point(initial.doc, "t1", 5),
         );
-        const { next: s1 } = dispatch(s0, ProseCommand.Format(MarkSet.Bold(), range));
-        // Find the now-bold range and remove the mark.
-        const block = s1.doc.children[0] as { children: ProseNode[] };
-        const boldNode = block.children.find((c) =>
-            (c as { marks?: unknown[] }).marks?.some(
-                (m) => getTag(m as never) === "Bold",
+        expectValid(d.dispatch(ProseCommand.Format(MarkSet.Bold(), range)));
+
+        const boldNode = firstBlockChildren(d.peek()!).find(hasBold);
+        if (!boldNode) throw new Error("expected a bolded node after Format");
+        const length = match(boldNode, {
+            Text: ({ content }) => content.length,
+            [__]: () => {
+                throw new Error("expected Text");
+            },
+        });
+        const id = getNodeId(boldNode);
+        const start = point(d.peek()!, id, 0);
+        const end = point(d.peek()!, id, length);
+
+        expectValid(
+            d.dispatch(
+                ProseCommand.RemoveMark("Bold", EditorRange.Text(start, end)),
             ),
-        )!;
-        const boldStart = point(s1.doc, getNodeId(boldNode), 0);
-        const boldEnd = point(s1.doc, getNodeId(boldNode), (boldNode as { content: string }).content.length);
-        const { next: s2 } = dispatch(
-            s1,
-            ProseCommand.RemoveMark("Bold", EditorRange.Text(boldStart, boldEnd)),
         );
-        // After removing, no Text node should carry a Bold mark.
-        const newBlock = s2.doc.children[0] as { children: ProseNode[] };
-        for (const c of newBlock.children) {
-            const marks = (c as { marks?: unknown[] }).marks ?? [];
-            expect(marks.some((m) => getTag(m as never) === "Bold")).toBe(false);
+        for (const c of firstBlockChildren(d.peek()!)) {
+            expect(hasBold(c)).toBe(false);
         }
     });
 });
@@ -294,33 +396,40 @@ describe("Format / RemoveMark", () => {
 
 describe("SplitBlock / MergeBlock", () => {
     it("SplitBlock divides a block at a Text offset", () => {
-        const s = makeSimpleDoc();
-        const at = point(s.doc, "t1", 5);
-        const { next } = dispatch(s, ProseCommand.SplitBlock(at));
-        expect(next.doc.children.length).toBe(2);
-        const left = next.doc.children[0] as { children: { content: string }[] };
-        const right = next.doc.children[1] as { children: { content: string }[] };
-        expect(left.children[0]!.content).toBe("Hello");
-        expect(right.children[0]!.content).toBe(", world.");
+        const initial = makeSimpleDoc();
+        const d = newDispatcher(initial);
+        expectValid(
+            d.dispatch(ProseCommand.SplitBlock(point(initial.doc, "t1", 5))),
+        );
+        const doc = d.peek()!;
+        expect(doc.children.length).toBe(2);
+        expectText(blockChildren(doc.children[0]!)[0]!, "Hello");
+        expectText(blockChildren(doc.children[1]!)[0]!, ", world.");
     });
 
     it("SplitBlock round-trips via MergeBlock", () => {
-        const s = makeSimpleDoc();
-        const at = point(s.doc, "t1", 5);
-        expectRoundTrip(s, ProseCommand.SplitBlock(at));
+        const initial = makeSimpleDoc();
+        expectRoundTrip(
+            initial,
+            ProseCommand.SplitBlock(point(initial.doc, "t1", 5)),
+        );
     });
 
     it("MergeBlock combines a block with its predecessor", () => {
-        const s = makeTwoBlockDoc();
-        const at = point(s.doc, "t2", 0);
-        const { next } = dispatch(s, ProseCommand.MergeBlock(at));
-        expect(next.doc.children.length).toBe(1);
+        const initial = makeTwoBlockDoc();
+        const d = newDispatcher(initial);
+        expectValid(
+            d.dispatch(ProseCommand.MergeBlock(point(initial.doc, "t2", 0))),
+        );
+        expect(d.peek()!.children.length).toBe(1);
     });
 
     it("MergeBlock round-trips via SplitBlock with pinned ID", () => {
-        const s = makeTwoBlockDoc();
-        const at = point(s.doc, "t2", 0);
-        expectRoundTrip(s, ProseCommand.MergeBlock(at));
+        const initial = makeTwoBlockDoc();
+        expectRoundTrip(
+            initial,
+            ProseCommand.MergeBlock(point(initial.doc, "t2", 0)),
+        );
     });
 });
 
@@ -330,37 +439,55 @@ describe("SplitBlock / MergeBlock", () => {
 
 describe("SetBlockKind", () => {
     it("converts a Block to a Heading on a Node range", () => {
-        const s = makeSimpleDoc();
-        const { next } = dispatch(
-            s,
-            ProseCommand.SetBlockKind(EditorRange.Node("b1"), BlockKind.Heading(2)),
+        const initial = makeSimpleDoc();
+        const d = newDispatcher(initial);
+        expectValid(
+            d.dispatch(
+                ProseCommand.SetBlockKind(
+                    EditorRange.Node("b1"),
+                    BlockKind.Heading(2),
+                ),
+            ),
         );
-        const h = next.doc.children[0]!;
-        expect(getTag(h)).toBe("Heading");
-        expect((h as { level: number }).level).toBe(2);
+        match(d.peek()!.children[0]!, {
+            Heading: ({ level }) => expect(level).toBe(2),
+            [__]: () => {
+                throw new Error("expected Heading");
+            },
+        });
     });
 
     it("round-trips on a single block", () => {
-        const s = makeSimpleDoc();
+        const initial = makeSimpleDoc();
         expectRoundTrip(
-            s,
-            ProseCommand.SetBlockKind(EditorRange.Node("b1"), BlockKind.Heading(1)),
+            initial,
+            ProseCommand.SetBlockKind(
+                EditorRange.Node("b1"),
+                BlockKind.Heading(1),
+            ),
         );
     });
 
     it("converts multiple blocks across a Text range and round-trips", () => {
-        const s = makeTwoBlockDoc();
+        const initial = makeTwoBlockDoc();
         const range = EditorRange.Text(
-            point(s.doc, "t1", 0),
-            point(s.doc, "t2", 5),
+            point(initial.doc, "t1", 0),
+            point(initial.doc, "t2", 5),
         );
-        const { next } = dispatch(
-            s,
-            ProseCommand.SetBlockKind(range, BlockKind.Quote()),
+        const d = newDispatcher(initial);
+        expectValid(
+            d.dispatch(ProseCommand.SetBlockKind(range, BlockKind.Quote())),
         );
-        for (const c of next.doc.children) expect(getTag(c)).toBe("Quote");
+        for (const c of d.peek()!.children) {
+            match(c, {
+                Quote: () => {},
+                [__]: () => {
+                    throw new Error("expected Quote");
+                },
+            });
+        }
         expectRoundTrip(
-            s,
+            initial,
             ProseCommand.SetBlockKind(range, BlockKind.Quote()),
         );
     });
@@ -372,27 +499,27 @@ describe("SetBlockKind", () => {
 
 describe("Compound", () => {
     it("applies steps sequentially", () => {
-        const s = makeSimpleDoc();
-        const c1 = ProseCommand.Insert("ABC", point(s.doc, "t1", 0));
-        const c2 = ProseCommand.Insert("XYZ", point(s.doc, "t1", 0));
-        const { next } = dispatch(s, ProseCommand.Compound([c1, c2]));
-        // Both inserts at offset 0 in the *same* original RangePoint —
-        // each Insert resolves against the *current* state, so c2 sees the
-        // post-c1 state. Result: "XYZABCHello, world." (c2 inserts before c1's chars).
-        const t1 = (next.doc.children[0] as { children: { content: string }[] })
-            .children[0]!;
-        expect(t1.content).toBe("XYZABCHello, world.");
+        const initial = makeSimpleDoc();
+        const c1 = ProseCommand.Insert("ABC", point(initial.doc, "t1", 0));
+        const c2 = ProseCommand.Insert("XYZ", point(initial.doc, "t1", 0));
+        const d = newDispatcher(initial);
+        expectValid(d.dispatch(ProseCommand.Compound([c1, c2])));
+        expectText(
+            firstBlockChildren(d.peek()!)[0]!,
+            "XYZABCHello, world.",
+        );
     });
 
     it("round-trips via reversed inverse steps", () => {
-        const s = makeSimpleDoc();
-        const c1 = ProseCommand.Insert("ABC", point(s.doc, "t1", 0));
-        expectRoundTrip(s, ProseCommand.Compound([c1]));
+        const initial = makeSimpleDoc();
+        const c1 = ProseCommand.Insert("ABC", point(initial.doc, "t1", 0));
+        expectRoundTrip(initial, ProseCommand.Compound([c1]));
     });
 
     it("an empty Compound is a no-op", () => {
-        const s = makeSimpleDoc();
-        const { next } = dispatch(s, ProseCommand.Compound([]));
-        expect(serialize(next.doc)).toEqual(serialize(s.doc));
+        const initial = makeSimpleDoc();
+        const d = newDispatcher(initial);
+        expectValid(d.dispatch(ProseCommand.Compound([])));
+        expect(serialize(d.peek()!)).toEqual(serialize(initial.doc));
     });
 });

@@ -113,7 +113,30 @@ A migration that leaves the tree in a temporarily broken state — even for one 
 
 ---
 
-## P10 — When in doubt, consult this guide
+## P10 — Consume the library, do not recreate it
+
+Tests, demos, and internal consumers must go through the public APIs the library already ships. If a behavior has a primitive — `Dispatcher` for command-driven state, `match` for variant branching, `Validation` for valid/invalid/unvalidated, `union(...)`+`merge(...)` for ADTs — that primitive is the only acceptable seam to use. Hand-rolling a parallel implementation in a test, fixture, or demo is forbidden.
+
+**Why this matters:**
+
+Recreated APIs decouple the consumer from the contract under test. A test that hand-rolls its own `dispatch` helper to unwrap `Validation` keeps passing even if `Dispatcher` changes how it threads results — the test verifies the apply function in isolation, not the production seam. The same is true for demos: a demo that reaches inside a primitive instead of using its public API stops being a faithful example. **A test that doesn't fail when the production code breaks is not a test — it's a placebo.**
+
+Recreations also create false agreement: two implementations drift, the test stays green against the stale one, and the regression slips through CI.
+
+**Specific anti-patterns to avoid:**
+
+- Writing a `dispatch` helper that calls `protocol.apply` and matches on the result, instead of using `Dispatcher.create(state, protocol)` and `dispatcher.dispatch(cmd)`.
+- Using `getTag(value) === "Foo"` (or `if (...) ... else if (...)`) for variant branching when `match(value, { Foo: ..., Bar: ..., ... })` is the canonical operation. `getTag` is for inspection and string-keyed lookup, not control flow over a closed union.
+- Re-exporting or re-implementing helpers (tree walks, schema decoders, prelude utilities) inside a test file when the same helper is already exported from the library.
+- Wrapping `Validation`/`Result`/`Option` unwrapping in ad-hoc `if`/`throw` ladders instead of going through `match`.
+
+**The test for whether you're violating P10:** if the production API changed its observable contract (return shape, error propagation, lifecycle ordering), would *your* code fail? If the answer is "no, because I built my own version of that contract," you've recreated the API. Delete your recreation and use the real one.
+
+**A narrow exception:** thin assertion shims like `expectValid(v)`/`expectInvalid(v)` that internally use `match` to convert "wrong variant" into a vitest failure are acceptable. They invoke the canonical primitive (`match`) and exist purely to integrate with the test runner. They are not a parallel implementation of the variant contract — they consume it.
+
+---
+
+## P11 — When in doubt, consult this guide
 
 This document is the contract you have with the library and its users. Re-read it before:
 
