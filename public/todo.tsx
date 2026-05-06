@@ -50,7 +50,7 @@ function find(task: Task) {
 }
 
 function toggle(task: Task) {
-    return find(task).flatMap((idx) => tasks.set(idx, toggleTask(task)));
+    return find(task).map((idx) => tasks.set(idx, toggleTask(task)));
 }
 
 function remove(task: Task) {

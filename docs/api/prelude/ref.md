@@ -634,20 +634,17 @@ Swap the elements at indices `from` and `to`. Only signals at those two position
 #### `.set(index, value)`
 
 ```ts
-refArray.set(index: number, value: T): Option<T>
+refArray.set(index: number, value: T): void
 ```
 
 Replace the element at `index` in-place. Fine-grained: dirties only the per-index signal for `index`, leaving all other indices and the length signal untouched.
 
-Returns `Option.Some(oldValue)` on success (the previous value) or `Option.None()` if the index is out of bounds. Does **not** extend the array — use `push` to append or `splice` to insert.
+No-op if `index` is out of bounds or `value === items.peek(index)`. Does **not** extend the array — use `push` to append or `splice` to insert. Callers that need the prior value should `peek(index)` before calling.
 
 ```ts
-import { match } from "aljabr"
-
-match(items.set(2, 99), {
-    Some: ({ value: prev }) => console.log("replaced", prev, "with 99"),
-    None: ()                => console.warn("index out of bounds"),
-})
+const prev = items.peek(2)
+items.set(2, 99)
+console.log("replaced", prev, "with 99")
 ```
 
 #### `.shift()`

@@ -383,19 +383,19 @@ export class List<T> {
     /**
      * Replace the element at `index` in place.
      * Fine-grained: only the per-index signal for `index` is dirtied.
-     * Returns `Option.Some(oldValue)` on success, `Option.None()` if `index` is out of bounds.
+     * No-op if `index` is out of bounds or the new value === the existing one.
      * Does not extend the array — use `push` or `splice` to append.
+     * Callers that need the prior value should `peek(index)` before calling.
      */
-    set(index: number, value: T): Option<T> {
-        if (this.#holder.disposed) return Option.None();
+    set(index: number, value: T): void {
+        if (this.#holder.disposed) return;
         const arr = this.#getArr() ?? [];
-        if (index < 0 || index >= arr.length) return Option.None();
+        if (index < 0 || index >= arr.length) return;
         const old = arr[index] as T;
-        if (old === value) return Option.Some(old);
+        if (old === value) return;
         const newArr = [...arr];
         newArr[index] = value;
         applyArrayMutation(this.#holder, this.#prefix, arr, newArr);
-        return Option.Some(old);
     }
 
     /** Remove and/or insert elements starting at `start`. */

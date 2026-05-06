@@ -448,6 +448,80 @@ describe("refArray.move", () => {
 });
 
 // ---------------------------------------------------------------------------
+// set
+// ---------------------------------------------------------------------------
+
+describe("refArray.set", () => {
+    it("replaces the element in place", () => {
+        const arr = makeNumberArray(); // [1,2,3,4,5]
+        arr.set(2, 99);
+        expect(arr.peek(2)).toBe(99);
+        expect(arr.length()).toBe(5);
+    });
+
+    it("returns void", () => {
+        const arr = makeNumberArray();
+        expectTypeOf(arr.set(0, 10)).toEqualTypeOf<void>();
+    });
+
+    it("is a no-op when index is out of bounds", () => {
+        const arr = makeNumberArray();
+        const comp = createOwner(null);
+        const dirty = vi.fn();
+        comp.dirty = dirty;
+        trackIn(comp, () => arr.get(0));
+
+        arr.set(99, 999);
+        expect(arr.peek()).toEqual([1, 2, 3, 4, 5]);
+        expect(dirty).not.toHaveBeenCalled();
+    });
+
+    it("is a no-op when the new value === the existing one", () => {
+        const arr = makeNumberArray();
+        const comp = createOwner(null);
+        const dirty = vi.fn();
+        comp.dirty = dirty;
+        trackIn(comp, () => arr.get(2));
+
+        arr.set(2, 3); // identical
+        expect(dirty).not.toHaveBeenCalled();
+    });
+
+    it("notifies only the per-index signal, not siblings or length", () => {
+        const arr = makeNumberArray();
+
+        const target = createOwner(null);
+        const dirtyTarget = vi.fn();
+        target.dirty = dirtyTarget;
+
+        const sibling = createOwner(null);
+        const dirtySibling = vi.fn();
+        sibling.dirty = dirtySibling;
+
+        const lenComp = createOwner(null);
+        const dirtyLen = vi.fn();
+        lenComp.dirty = dirtyLen;
+
+        trackIn(target, () => arr.get(2));
+        trackIn(sibling, () => arr.get(0));
+        trackIn(lenComp, () => arr.length());
+
+        arr.set(2, 99);
+
+        expect(dirtyTarget).toHaveBeenCalledTimes(1);
+        expect(dirtySibling).not.toHaveBeenCalled();
+        expect(dirtyLen).not.toHaveBeenCalled();
+    });
+
+    it("is a no-op after dispose", () => {
+        const arr = makeNumberArray();
+        arr.dispose();
+        arr.set(0, 99); // must not throw
+        // post-dispose reads are undefined behaviour; we only assert no throw
+    });
+});
+
+// ---------------------------------------------------------------------------
 // Store.at(path) → List for array paths
 // ---------------------------------------------------------------------------
 
