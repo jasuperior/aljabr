@@ -4,6 +4,268 @@ All notable changes to aljabr are documented here. This project uses a rolling c
 
 ---
 
+## v0.3.10 — Prelude Foundations & API Consistency
+
+_Minor release following v0.3.9. Lands four new prelude primitives — `Dispatcher`, `CommandError`, union algebra, `Schema.lazy` — and completes a library-wide API consistency migration that pays down years of accumulated drift before the v0.4.0 prose renderer. The breaking changes are batched into this single release so downstream consumers migrate exactly once._
+
+`Phase 5` of the v0.3.10 roadmap codifies the rules in [`docs/guides/style-guide.md`](../guides/style-guide.md) and the cross-cutting principles in [`docs/guides/principles.md`](../guides/principles.md). Both documents are now the source of truth for new abstractions.
+
+---
+
+### Breaking Changes
+
+Eleven breaking sub-steps shipped together. Find-and-replace migration patterns are listed below; each is a mechanical update with no semantic change unless noted.
+
+**Renames**
+
+| Before | After |
+|---|---|
+| `Ref<T>` | `Store<T>` |
+| `RefArray<T>` | `List<T>` |
+| `watchEffect(fn, onChange)` | `watch(fn, onChange)` |
+| `Option.getOrElse(default)` | `Option.getOr(default)` |
+| `WatchHandle.stop()` | `WatchHandle.dispose()` |
+| `persistedSignal(initial, options)` | `Signal.persisted(initial, options)` |
+| `syncToStore(signal, options)` (returns stop fn) | `signal.persist(options)` (returns `WatchHandle`) |
+| `Scope(opts)` | `Scope.create(opts)` |
+| `Resource(acquire, release)` | `Resource.create(acquire, release)` |
+
+**Surface removals**
+
+- `Store.push` / `Store.pop` / `Store.splice` / `Store.move` are removed. Array mutations now go through `store.at(arrayPath)`, which returns a `List<T>`. The `ArrayPath<T>` and `ArrayItem<T, P>` helper types are removed with them.
+- `List.set(index, value)` returns `void` instead of `Option<T>`. Out-of-bounds and equal-value cases are silent no-ops; callers that need the prior value should `peek(index)` first.
+
+**Async-shape change for `AsyncDerived`**
+
+- `asyncDerived.get()` is now **synchronous** — it returns `T | null` (last-known value, tracked) like a `Signal<T>`.
+- For the awaitable form, use the new `asyncDerived.run(): Promise<Done | Failed>` (mirrors `Effect.run()`) or `asyncDerived.runOr(default): Promise<T>`.
+- Migration: `await asyncDerived.get()` → `await asyncDerived.run()` (or `.runOr(default)` if a fallback is acceptable).
+
+**`Derived` / `WritableDerived` split**
+
+- `Derived.create({ get, set })` is removed. Read-only deriveds are `Derived.create(fn)`; writable deriveds are `Derived.writable({ get, set })` and have type `WritableDerived<T> extends Derived<T>`.
+- The runtime `"Derived is read-only"` throw is replaced by a compile-time error.
+
+---
+
+### New — `Dispatcher<T, S, Cmd>`
+
+A reactive primitive whose writes route through a typed `apply` function returning `Validation<ApplyResult, CommandError>`. Foundation for `prose`'s document state and any other domain that wants validated transactional updates.
+
+```ts
+import { Dispatcher } from "aljabr/prelude"
+
+const dispatcher = Dispatcher.create(initialState, {
+    extract: (state) => state.value,
+    apply: (current, command) => {
+        if (!isLegal(current, command)) {
+            return Validation.Invalid([CommandError.IllegalTransition()])
+        }
+        return Validation.Valid({ next: applyCmd(current, command), inverse: invert(command) })
+    },
+})
+
+const result = dispatcher.dispatch(MyCommand.Edit("hello"))
+match(result, {
+    Valid:   ({ value: { next, inverse } }) => historyStore.push(inverse),
+    Invalid: ({ errors })                   => showFailure(errors),
+    /* ... */
+})
+```
+
+`apply` produces both the next state and the inverse command in one pass — a foundation for history (store inverses), undo (dispatch the inverse), and rejectable transitions.
+
+`dispatch(cmd)` returns the `Validation` so authors can fire-and-forget or pattern-match. Dispatchers expose the bucket-1 read API: `get()`, `state()`, `peekState()`, `getOr()`, `subscribe()`, sync `dispose()`.
+
+---
+
+### New — `CommandError`
+
+A standardised error union for `apply()` failures, extensible via `.merge()` so authors keep type compatibility across renderers and consumers.
+
+```ts
+import { CommandError } from "aljabr/prelude"
+
+CommandError.IllegalTransition()
+CommandError.IllegalNode({ tag: "ProseNode" })
+CommandError.SchemaViolation([decodeError])
+CommandError.Custom({ reason: "out of quota" })
+```
+
+Extend with your own variants via `union.merge`:
+
+```ts
+const EditorError = CommandError.merge({
+    QuotaExceeded: variant<{ limit: number }>(),
+    ReadOnly:      variant<{}>(),
+})
+```
+
+---
+
+### New — Union algebra: `.merge`, `.pick`, `.omit`
+
+Compose, narrow, and project union types without the spread-and-reapply-impls dance. The values returned by `union(...)` now expose three operators:
+
+```ts
+const Cmd = union({ Insert: variant<{ at: number; text: string }>(), Delete: variant<{ at: number }>() })
+
+const ExtendedCmd = Cmd.merge({ Replace: variant<{ at: number; with: string }>() })
+
+const ReadOnly = Cmd.omit("Insert" /* | "Delete" */)
+const WriteOnly = Cmd.pick("Insert", "Delete")
+```
+
+`.merge` rejects overlapping variant names at compile time; impl arrays are combined automatically. `.pick` and `.omit` operate by tag name and preserve impls for the surviving variants. `intersect` and `difference` operators are tracked for a future release.
+
+---
+
+### New — `Schema.lazy`
+
+Recursive schema support — required by `documentSchema` in v0.4.2 (`<document>` contains `ProseNode` children which contain more `ProseNode` children).
+
+```ts
+import { Schema } from "aljabr/schema"
+
+const ProseNodeSchema = Schema.lazy(() => Schema.object({
+    tag:      Schema.string(),
+    children: Schema.array(ProseNodeSchema),
+}))
+```
+
+`Schema.lazy(thunk)` defers schema construction until first use, breaking the recursion cycle. Decoded values inherit the full type-system inference of the thunk's return.
+
+---
+
+### New — `Signal.persisted` / `signal.persist`
+
+Persistence is now expressed as static and instance methods on `Signal` itself rather than separate `persistedSignal` / `syncToStore` exports. This brings persistence under the bucket-1 construction rule and gives `signal.persist` a `WatchHandle` (matching the rest of the watch family) that disposes via `Symbol.dispose`.
+
+```ts
+const theme = Signal.persisted<"light" | "dark">("light", { key: "app.theme" })
+
+const cursor = Signal.create({ line: 0, col: 0 })
+using handle = cursor.persist({ key: "editor.cursor" })  // disposes at block exit
+```
+
+The old free-function names are removed — see the migration table.
+
+---
+
+### New — Canonical traits: `Mappable`, `Bindable`, `Reducible`, `Foldable`
+
+Factored four reusable trait interfaces in [`src/prelude/traits.ts`](../../src/prelude/traits.ts). ADT trait classes (`Option`'s `Mappable`, `Result`'s `Bindable`, etc.) `implements` the canonical interfaces while still extending `Trait<{ value: unknown }>` directly to preserve the `[requirements]` payload constraint.
+
+This keeps each ADT's local trait class as the owner of `[requirements]` (where the union builder enforces variant payload shape) while giving the broader library a single set of names for the four common operator shapes. ADT-specific traits (`Combinable`, `Thenable`, `Computable`) remain unchanged.
+
+```ts
+// src/prelude/traits.ts
+export interface Mappable<T>  { map<U>(fn: (value: T) => U): unknown }
+export interface Bindable<T>  extends Mappable<T> {
+    flatMap<U>(fn: (value: T) => unknown): unknown
+    getOr<U>(defaultValue: U): T | U
+}
+export interface Reducible<T> { reduce<U>(fn: (acc: U, value: T) => U, initial: U): U }
+export interface Foldable<T>  { fold<U>(fns: { /* ... */ }): U }
+```
+
+---
+
+### New — `getOr`, `state()` / `peekState()`, `subscribe`, `Symbol.dispose`, static aggregators
+
+A coordinated rollout across every reactive container and ADT so consumers no longer relearn read/write/disposal idioms per type.
+
+**`getOr(default)` everywhere as the canonical "read with default" verb.** Bucket-1 reads (`Signal`, `Derived`, `AsyncDerived`, `Store`, `List`, `Dispatcher`) and bucket-2 ADTs (`Option`, `Result`, `Validation`).
+
+```ts
+signal.getOr(0)
+list.getOr(99, -1)             // index, default
+store.getOr("user.nickname", "anonymous")
+option.getOr("placeholder")
+result.getOr(0)
+```
+
+**`state()` and `peekState()` on `Derived` and `AsyncDerived`.** Tracked / untracked reads of the full lifecycle union, mirroring `Signal`. Old getter forms removed.
+
+**`subscribe(callback): () => void` on every reactive container.** Eager push subscribers, distinct from the dependency-tracking computation graph. Each container keeps its own `#valueSubscribers` Set; the callback signature mirrors `get()`. For granular subscription, compose with `.at(path).subscribe(...)`.
+
+**`[Symbol.dispose]` adoption.** Sync `void dispose()` on bucket-1 (`Signal`, `Derived`, `Store`, `List`, `Dispatcher`, `WatchHandle`). Async `Promise<Defect[]> dispose()` only on `Scope` (which implements `Symbol.asyncDispose`). Mixing the two contracts inside one container is forbidden.
+
+```ts
+{
+    using sig = Signal.create("hello")
+    using handle = watch(/* ... */, onChange)
+    /* ... */
+}   // sig.dispose() and handle.dispose() called automatically
+```
+
+**Static aggregators on ADTs.**
+
+| Method | Behaviour |
+|---|---|
+| `Option.all(opts)` | All-or-nothing — `Some([values])` if every input is `Some`, else `None` |
+| `Result.all(rs)` | Parallel-fail-fast — first `Reject` wins; `Expect` collapses awaits |
+| `Effect.all(effects)` | Parallel-fail-fast across effects |
+| `Effect.allSettled(effects)` | Parallel-collect — never short-circuits |
+| `Effect.runOr(default)` | Convenience for `await effect.run().then(/* ... */)` with a fallback |
+
+`Validation.all` already accumulated errors; it's the `Validation`-shaped equivalent of `allSettled` and is unchanged.
+
+---
+
+### Changed — `Store` / `List` rules
+
+- `Store` is the **single home for object state**; `List` is the **single home for array mutations**. `store.at(arrayPath)` returns the `List<T>` backed by the same internal holder, so mutations propagate to the parent's per-path signals automatically.
+- Structural writes return `void` — including `List.set(index, value)`, which previously returned `Option<T>` for the prior value. Destructive reads (`pop`, `shift`) still return `Option<T>` for the meaningful absence case.
+- Transactional writes return `Validation<ApplyResult, CommandError>` — only `Dispatcher.dispatch` does this today. `Store.set` / `Store.patch` / `List.push` / etc. are not transactional; they return `void`.
+
+---
+
+### Migration
+
+Most renames are mechanical:
+
+```bash
+# Top-level renames
+sed -i '' 's/\bRef\b/Store/g; s/RefArray/List/g; s/watchEffect/watch/g; s/getOrElse/getOr/g' \
+    src/**/*.ts test/**/*.ts
+
+# WatchHandle disposal
+sed -i '' 's/handle\.stop()/handle.dispose()/g' src/**/*.ts
+
+# Persistence
+sed -i '' 's/persistedSignal(/Signal.persisted(/g' src/**/*.ts
+# syncToStore(sig, opts) → sig.persist(opts)  — manual; the return type changed
+# from () => void to WatchHandle, callers that captured the stop function
+# should call handle.dispose() instead.
+
+# Construction
+sed -i '' 's/Scope(/Scope.create(/g; s/Resource(/Resource.create(/g' src/**/*.ts
+# (be careful: this also matches getCurrentScope( and runInScope( — restrict
+#  with a non-letter prefix, or use the editor's symbol-aware rename.)
+```
+
+Manual touch-ups required:
+
+- **`Store.push("path", ...)` → `store.at("path").push(...)`.** Same for `pop`, `splice`, `move`. Both `ArrayPath<T>` and `ArrayItem<T, P>` types are removed; references to those types should be deleted (the `List<T>` returned by `.at()` is fully typed).
+- **`List.set(i, value)` discards `Option<T>`.** Replace `const prev = list.set(i, v)` with `const prev = list.peek(i); list.set(i, v)`.
+- **`asyncDerived.get()` is sync.** `await asyncDerived.get()` becomes `await asyncDerived.run()` (or `.runOr(default)`).
+- **`Derived.create({ get, set })` removed.** Use `Derived.writable({ get, set })`. Read-only deriveds (`Derived.create(fn)`) keep their existing form.
+
+The full style guide ([`docs/guides/style-guide.md`](../guides/style-guide.md)) lists every rule. Principles ([`docs/guides/principles.md`](../guides/principles.md)) records the load-bearing invariants — type-safety, single-responsibility-per-bucket, construction-shape, the `[requirements]` discipline behind canonical traits.
+
+---
+
+### Docs
+
+- `docs/api/prelude/ref.md` → `docs/api/prelude/store.md`. Sibling `docs/api/prelude/list.md` covers the full `List<T>` surface.
+- `docs/api/prelude/persist.md` rewritten to document `Signal.persisted` and `signal.persist` (replacing `persistedSignal` and `syncToStore`).
+- `docs/api/prelude/scope.md`, `docs/guides/advanced/resource-lifetime.md`, `docs/guides/ui/dom.md`, and `docs/guides/advanced/index.md` updated to `Scope.create()` / `Resource.create()`.
+- All `./ref.md` cross-links retargeted to `./store.md`. All `#watcheffect` anchors updated to `#watch`. `WatchHandle.stop()` references updated to `.dispose()`.
+- New top-level guide [`docs/guides/principles.md`](../guides/principles.md) — load-bearing invariants the library will not compromise on regardless of how the API is shaped.
+
+---
+
 ## v0.3.8 — Canvas Renderer
 
 _Minor release following v0.3.7. Ships a first-class retained-mode 2D canvas renderer at `aljabr/ui/canvas` — a fully pluggable `RendererHost<CanvasNode, CanvasElementNode>` that integrates with the existing reconciler with zero changes to the core. Also includes the `mounted` prop for DOM element lifecycle access, and a small `Option.toResult` / `Result.Expect` follow-up from v0.3.7._

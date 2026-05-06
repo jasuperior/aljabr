@@ -172,3 +172,58 @@ The full `when(pattern, guard, handler)` form: pattern fields are checked first,
 - [API Reference: union](../api/union.md) — full `union()`, `Trait`, `pred`, `when`, `getTag` docs
 - [API Reference: match](../api/match.md) — full `match()` docs with error behavior
 - [API Reference: aljabr/schema](../api/schema.md) — full schema module reference
+
+---
+
+## Migrating from v0.3.x to v0.3.10
+
+v0.3.10 batches eleven breaking sub-steps into a single tagged release so downstream consumers migrate exactly once. The changelog ([`docs/roadmap/CHANGELOG.md`](../roadmap/CHANGELOG.md)) describes what changed and why; this section is the find-and-replace cheat-sheet.
+
+### Mechanical renames
+
+| Before | After |
+|---|---|
+| `Ref<T>` / `Ref.create` | `Store<T>` / `Store.create` |
+| `RefArray<T>` / `RefArray.create` | `List<T>` / `List.create` |
+| `watchEffect(fn, onChange)` | `watch(fn, onChange)` |
+| `Option.getOrElse(default)` | `Option.getOr(default)` |
+| `WatchHandle.stop()` | `WatchHandle.dispose()` (or `using` blocks) |
+| `persistedSignal(initial, options)` | `Signal.persisted(initial, options)` |
+| `Scope(opts)` | `Scope.create(opts)` |
+| `Resource(acquire, release)` | `Resource.create(acquire, release)` |
+
+A non-letter-prefixed regex is the safest bulk pattern — it leaves `getCurrentScope`, `runInScope`, `ResourceHandle`, and similar suffix collisions alone:
+
+```bash
+sed -i '' -E \
+    -e 's/[[:<:]]Ref[[:>:]]/Store/g' \
+    -e 's/RefArray/List/g' \
+    -e 's/watchEffect/watch/g' \
+    -e 's/getOrElse/getOr/g' \
+    -e 's/[[:<:]]Scope\(/Scope.create(/g' \
+    -e 's/[[:<:]]Resource\(/Resource.create(/g' \
+    -e 's/persistedSignal\(/Signal.persisted(/g' \
+    src/**/*.ts test/**/*.ts
+```
+
+### Semantic changes that need real edits
+
+These changes affect call-site shape and can't be handled by find-and-replace:
+
+- **`Store` array methods removed.** `store.push("path", item)` becomes `store.at("path").push(item)`. The `List<T>` returned by `.at()` is fully typed; the old `ArrayPath<T>` and `ArrayItem<T, P>` helper types are gone.
+- **`List.set(index, value)` returns `void`.** Replace `const prev = list.set(i, v)` with `const prev = list.peek(i); list.set(i, v)`.
+- **`AsyncDerived.get()` is now synchronous** — it returns the last-known `T | null` like a `Signal`. For an awaitable form, use `asyncDerived.run(): Promise<Done | Failed>` (mirrors `Effect.run()`) or `asyncDerived.runOr(default): Promise<T>`.
+- **`Derived.create({ get, set })` is removed.** Use `Derived.writable({ get, set })`, which returns `WritableDerived<T> extends Derived<T>`. Read-only deriveds (`Derived.create(fn)`) are unchanged.
+- **`syncToStore(signal, options)` is now `signal.persist(options)`** and returns a `WatchHandle` instead of a stop function. Call `handle.dispose()` (or use `using`) to stop syncing.
+
+### What you get for the migration
+
+The post-migration surface gains coverage that previously varied per type:
+
+- `getOr(default)` on every reactive container and bucket-2 ADT.
+- `subscribe(callback): () => void` on every reactive container.
+- `[Symbol.dispose]` on every disposable container — works with TC39 explicit resource management (`using sig = Signal.create(...)` auto-disposes at block exit).
+- Static aggregators: `Option.all`, `Result.all`, `Effect.all` / `allSettled`, `Effect.runOr`.
+- New primitives: `Dispatcher` (validated transactional writes) and `CommandError` (extensible failure union).
+
+For the full set of rules the library will not compromise on regardless of how the API is shaped, see [`docs/guides/principles.md`](./principles.md).
