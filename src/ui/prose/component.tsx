@@ -28,6 +28,7 @@ import {
     type EmbedRegistry,
 } from "./prose-renderer.ts";
 import { projectDoc } from "./projection.ts";
+import { bindSelection } from "./selection-binding.ts";
 
 export type ProseProps<Cmd extends ProseCommand = ProseCommand> = {
     state: Dispatcher<Document, DocumentState, Cmd>;
@@ -63,10 +64,13 @@ export const Prose = <Cmd extends ProseCommand>(
                     el.addEventListener("beforeinput", handler);
                 }
 
+                const unbindSelection = bindSelection(state, el);
+
                 defer(() => {
                     if (!readonly) {
                         el.removeEventListener("beforeinput", handler);
                     }
+                    unbindSelection();
                     unmount();
                 });
             }}

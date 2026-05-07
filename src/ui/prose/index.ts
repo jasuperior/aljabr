@@ -44,6 +44,14 @@ export type {
 export { projectDoc } from "./projection.ts";
 export { translateBeforeInput } from "./before-input.ts";
 
+export {
+    bindSelection,
+    rangePointToDom,
+    domToRangePoint,
+    editorRangeToSelection,
+    selectionToEditorRange,
+} from "./selection-binding.ts";
+
 export { Prose } from "./component.tsx";
 export type { ProseProps } from "./component.tsx";
 
