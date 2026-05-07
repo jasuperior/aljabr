@@ -1,13 +1,16 @@
 import type { RendererHost } from "../types.ts";
+import { Renderer } from "../renderer.ts";
+import type { ViewNode, view } from "../view-node.ts";
 
 // ---------------------------------------------------------------------------
-// domHost — DOM implementation of RendererHost
+// DomHost — DOM implementation of RendererHost
 // ---------------------------------------------------------------------------
 
 /**
  * Production DOM implementation of {@link RendererHost}.
  *
- * Pass to {@link createRenderer} to mount component trees into the browser DOM.
+ * Pass to {@link Renderer.create} (or use {@link DomRenderer.create} as a
+ * convenience wrapper) to mount component trees into the browser DOM.
  *
  * **Property mapping:**
  * - `class` / `className` → `setAttribute("class", value)`
@@ -16,15 +19,8 @@ import type { RendererHost } from "../types.ts";
  * - `on*` (function) → `addEventListener(eventName, handler)`
  * - Known IDL properties (`value`, `checked`, `disabled`, …) → direct assignment
  * - Everything else → `setAttribute(key, String(value))`
- *
- * @example
- * import { createRenderer } from "aljabr/ui";
- * import { domHost } from "aljabr/ui/dom";
- *
- * const { mount } = createRenderer(domHost);
- * const unmount = mount(() => view("p", null, "hello"), document.body);
  */
-export const domHost: RendererHost<Node, Element> = {
+export const DomHost: RendererHost<Node, Element> = {
     createElement(tag: string): Element {
         return document.createElement(tag);
     },
@@ -64,7 +60,6 @@ export const domHost: RendererHost<Node, Element> = {
             return;
         }
 
-        // Reflect known IDL properties directly (value, checked, disabled, etc.)
         if (key in el) {
             (el as unknown as Record<string, unknown>)[key] = value;
         } else if (value == null) {
@@ -85,4 +80,25 @@ export const domHost: RendererHost<Node, Element> = {
     nextSibling(node: Node): Node | null {
         return node.nextSibling;
     },
+
+    attach(container: Element) {
+        return { root: container, dispose: () => {} };
+    },
 };
+
+// ---------------------------------------------------------------------------
+// DomRenderer — thin wrapper over Renderer.create(DomHost)
+// ---------------------------------------------------------------------------
+
+/**
+ * Convenience wrapper. `DomRenderer.create()` is equivalent to
+ * `Renderer.create(DomHost)`. Authors can use either form interchangeably.
+ */
+export const DomRenderer = {
+    create(): {
+        view: typeof view;
+        mount: (fn: () => ViewNode, container: Element) => () => void;
+    } {
+        return Renderer.create(DomHost);
+    },
+} as const;

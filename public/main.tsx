@@ -1,6 +1,6 @@
 /** @jsxImportSource aljabr/ui/dom */
-import { createRenderer } from "aljabr/ui";
-import { domHost } from "aljabr/ui/dom";
+import { Renderer } from "aljabr/ui";
+import { DomHost } from "aljabr/ui/dom";
 import { defer } from "aljabr/prelude";
 import { signal } from "aljabr/signals";
 import logo from "./logo-flat-sm-transparent.png";
@@ -68,5 +68,5 @@ function App() {
 // Mount
 // ---------------------------------------------------------------------------
 
-const { mount } = createRenderer(domHost);
+const { mount } = Renderer.create(DomHost);
 mount(() => <App />, document.getElementById("root")!);

@@ -14,78 +14,56 @@ import type { RendererHost, RendererProtocol } from "./types.ts";
 import { type Child, type ViewNode, view } from "./view-node.ts";
 
 // ---------------------------------------------------------------------------
-// createRenderer
+// Renderer.create
 // ---------------------------------------------------------------------------
 
 /**
  * Create a renderer bound to a specific {@link RendererHost}.
  *
- * Returns a `{ view, mount }` pair. `view` is re-exported for convenience so
- * callers only need to import from the renderer. `mount` attaches a component
- * tree to a container and returns an unmount function.
- *
- * @typeParam N - Base node type of the host.
- * @typeParam E - Element node type of the host; must extend `N`.
- * @param host - The rendering target to use (e.g. `domHost`).
- * @param protocol - Optional batching protocol. When provided, reactive updates
- *   are deferred: the renderer queues them and calls `scheduleFlush` once,
- *   coalescing all pending work into a single pass. Omit for synchronous
- *   (immediate) updates — the default for most applications.
- * @returns An object with `view` (the {@link view} factory) and `mount`.
- *
- * @remarks
- * **Prop diffing.** Reactive props (e.g. `{ class: () => cls.get() }`) are
- * diffed before being applied: `host.setProperty` is only called when the
- * newly computed value differs from the previous one (`!==`). This avoids
- * redundant DOM writes when a signal notifies but the derived value is
- * unchanged.
- *
- * **Disposal order.** Component and reactive-region owners are disposed
- * LIFO — the most recently mounted subtree is torn down first. This matches
- * the guarantee provided by {@link createOwner}.
+ * Returns a `{ view, mount }` pair. `mount(fn, container)` calls
+ * `host.attach(container)` to obtain the internal root element, an optional
+ * batching protocol, and a per-mount disposer. The reconciler then mounts
+ * `fn()` into the root, coalescing updates through the protocol when one is
+ * supplied. The returned unmount callback disposes reactive subscriptions and
+ * invokes the host's `dispose`.
  *
  * @example Basic DOM usage
  * ```ts
- * import { createRenderer, view } from "aljabr/ui";
- * import { domHost } from "aljabr/ui/dom";
+ * import { Renderer, view } from "aljabr/ui";
+ * import { DomHost } from "aljabr/ui/dom";
  *
- * const { mount } = createRenderer(domHost);
- *
- * const unmount = mount(
- *   () => view("h1", null, "Hello world"),
- *   document.getElementById("root")!,
- * );
- *
- * unmount(); // removes all nodes and disposes reactive subscriptions
- * ```
- *
- * @example rAF batching — coalesces all updates within a frame
- * ```ts
- * const { mount } = createRenderer(domHost, {
- *   scheduleFlush: (flush) => requestAnimationFrame(flush),
- * });
+ * const { mount } = Renderer.create(DomHost);
+ * const unmount = mount(() => view("h1", null, "Hello world"),
+ *                       document.getElementById("root")!);
+ * unmount();
  * ```
  */
-export function createRenderer<N, E extends N>(
-    host: RendererHost<N, E>,
-    protocol?: RendererProtocol,
+function create<N, E extends N, Container>(
+    host: RendererHost<N, E, Container>,
 ): {
     view: typeof view;
-    mount: (fn: () => ViewNode, container: E) => () => void;
+    mount: (fn: () => ViewNode, container: Container) => () => void;
 } {
-    const schedule = makeScheduler(protocol);
     return {
         view,
-        mount(fn: () => ViewNode, container: E): () => void {
+        mount(fn: () => ViewNode, container: Container): () => void {
+            const adopted = host.attach(container);
+            const schedule = makeScheduler(adopted.protocol);
             const rootOwner = createOwner(null);
             runInContext(rootOwner, () => {
                 const node = fn();
-                untrack(() => reconcileViewNode(host, schedule, node, container, null, rootOwner));
+                untrack(() => reconcileViewNode(host, schedule, node, adopted.root, null, rootOwner));
             });
-            return () => rootOwner.dispose();
+            adopted.onMounted?.();
+            return () => {
+                rootOwner.dispose();
+                adopted.dispose();
+            };
         },
     };
 }
+
+export const Renderer = { create } as const;
 
 // ---------------------------------------------------------------------------
 // Scheduler — immediate (no protocol) or deferred via RendererProtocol
@@ -118,7 +96,7 @@ function makeScheduler(protocol: RendererProtocol | undefined): (fn: () => void)
 type Schedule = (fn: () => void) => void;
 
 function reconcileChild<N, E extends N>(
-    host: RendererHost<N, E>,
+    host: RendererHost<N, E, unknown>,
     schedule: Schedule,
     child: Child,
     parent: E,
@@ -148,7 +126,7 @@ function reconcileChild<N, E extends N>(
 }
 
 function reconcileViewNode<N, E extends N>(
-    host: RendererHost<N, E>,
+    host: RendererHost<N, E, unknown>,
     schedule: Schedule,
     node: ViewNode,
     parent: E,
@@ -237,7 +215,7 @@ function reconcileViewNode<N, E extends N>(
 // ---------------------------------------------------------------------------
 
 function mountReactiveRegion<N, E extends N>(
-    host: RendererHost<N, E>,
+    host: RendererHost<N, E, unknown>,
     schedule: Schedule,
     getter: () => Child,
     parent: E,
@@ -316,7 +294,7 @@ type ReactiveList<T> = {
 };
 
 function mountDerivedArray<N, E extends N>(
-    host: RendererHost<N, E>,
+    host: RendererHost<N, E, unknown>,
     schedule: Schedule,
     arr: ReactiveList<Child>,
     parent: E,

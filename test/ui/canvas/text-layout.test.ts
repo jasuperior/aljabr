@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeAll } from "vitest";
 import { paintNode } from "../../../src/ui/canvas/paint.ts";
-import { canvasHost } from "../../../src/ui/canvas/host.ts";
+import { CanvasHost } from "../../../src/ui/canvas/host.ts";
 import {
     CanvasNode,
     zeroBounds,
@@ -35,16 +35,16 @@ beforeAll(() => {
 });
 
 /**
- * Build a `<rect>` with a `<text>` child via `canvasHost.insert` so the
+ * Build a `<rect>` with a `<text>` child via `CanvasHost.insert` so the
  * parent pointer + bounds are set the way the reconciler would set them in
  * production. Returns the rect (caller paints from there).
  */
 function rectWithText(rectProps: Record<string, unknown>, textProps: Record<string, unknown>): CanvasElementNode {
-    const rect = canvasHost.createElement("rect");
-    for (const [k, v] of Object.entries(rectProps)) canvasHost.setProperty(rect, k, v);
-    const text = canvasHost.createElement("text");
-    for (const [k, v] of Object.entries(textProps)) canvasHost.setProperty(text, k, v);
-    canvasHost.insert(rect, text);
+    const rect = CanvasHost.createElement("rect");
+    for (const [k, v] of Object.entries(rectProps)) CanvasHost.setProperty(rect, k, v);
+    const text = CanvasHost.createElement("text");
+    for (const [k, v] of Object.entries(textProps)) CanvasHost.setProperty(text, k, v);
+    CanvasHost.insert(rect, text);
     return rect;
 }
 
@@ -128,16 +128,16 @@ describe("text layout positioning (Phase 5.2)", () => {
 
     describe("layout-prop inheritance through shape parent", () => {
         it("text inherits textAlign / padding directly from a shape parent's props", () => {
-            const rect = canvasHost.createElement("rect");
-            canvasHost.setProperty(rect, "x", 0);
-            canvasHost.setProperty(rect, "y", 0);
-            canvasHost.setProperty(rect, "width", 100);
-            canvasHost.setProperty(rect, "height", 50);
-            canvasHost.setProperty(rect, "textAlign", "center");
-            const text = canvasHost.createElement("text");
-            canvasHost.setProperty(text, "content", "label");
-            canvasHost.setProperty(text, "fill", "black");
-            canvasHost.insert(rect, text);
+            const rect = CanvasHost.createElement("rect");
+            CanvasHost.setProperty(rect, "x", 0);
+            CanvasHost.setProperty(rect, "y", 0);
+            CanvasHost.setProperty(rect, "width", 100);
+            CanvasHost.setProperty(rect, "height", 50);
+            CanvasHost.setProperty(rect, "textAlign", "center");
+            const text = CanvasHost.createElement("text");
+            CanvasHost.setProperty(text, "content", "label");
+            CanvasHost.setProperty(text, "fill", "black");
+            CanvasHost.insert(rect, text);
 
             const ctx = makeCtx();
             paintNode(ctx as any, rect);
@@ -196,7 +196,7 @@ describe("text layout positioning (Phase 5.2)", () => {
 
 // ===========================================================================
 // Standalone unit checks against the rectWithText helper to make sure it
-// reflects what canvasHost.insert actually does (defensive — guards against
+// reflects what CanvasHost.insert actually does (defensive — guards against
 // regressions in the helper itself).
 // ===========================================================================
 

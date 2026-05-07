@@ -1,1 +1,1 @@
-export { domHost } from "./host.ts";
+export { DomHost, DomRenderer } from "./host.ts";

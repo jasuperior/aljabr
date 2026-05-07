@@ -11,7 +11,10 @@
 
 import { match } from "../../match.ts";
 import { __, when } from "../../union.ts";
-import type { RendererHost } from "../types.ts";
+import type { RendererHost, RendererProtocol } from "../types.ts";
+import { EVENT_HANDLER_MAP, bubbleEvent, hitTest } from "./hit-test.ts";
+import { paintNode } from "./paint.ts";
+import type { ViewportHandle } from "./viewport.ts";
 import {
     CanvasNode,
     type CanvasBounds,
@@ -145,42 +148,106 @@ function recomputeBounds(node: CanvasNodeT): CanvasBounds {
 // ---------------------------------------------------------------------------
 
 /**
+ * Build the `attach` method for the canvas host. Factored so both the bare
+ * singleton (`CanvasHost`) and the viewport-aware wrapper produced by
+ * {@link CanvasRenderer.create} can share the same wiring with different
+ * paint closures.
+ *
+ * The returned record:
+ * - `root` — synthetic `<group>` the reconciler mounts into.
+ * - `protocol` — rAF-backed scheduler that flushes the reconciler's queued
+ *   updates and repaints once per frame.
+ * - `dispose` — removes pointer/wheel listeners and clears the canvas.
+ */
+export function makeCanvasAttach(
+    options: { viewport?: ViewportHandle } = {},
+): (canvas: HTMLCanvasElement) => {
+    root: CanvasElementNode;
+    protocol: RendererProtocol;
+    dispose: () => void;
+} {
+    return (canvas) => {
+        const ctx = canvas.getContext("2d");
+        if (ctx === null) {
+            throw new Error("CanvasHost.attach: 2d context not available");
+        }
+
+        const root: CanvasElementNode = CanvasNode.Element({
+            tag: "group",
+            props: {},
+            children: [],
+            parent: null,
+            bounds: zeroBounds(),
+            zIndex: 0,
+        });
+
+        const repaint = (): void => {
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+            paintNode(ctx, root, options.viewport?.bounds());
+        };
+
+        const protocol: RendererProtocol = {
+            scheduleFlush(flush) {
+                requestAnimationFrame(() => {
+                    flush();
+                    repaint();
+                });
+            },
+        };
+
+        const dispatch = (native: Event): void => {
+            const m = native as MouseEvent;
+            const target = hitTest(root, m.offsetX ?? 0, m.offsetY ?? 0);
+            if (target === null) return;
+            bubbleEvent(target, native);
+        };
+
+        const listenerCleanups: Array<() => void> = [];
+        for (const eventName of Object.keys(EVENT_HANDLER_MAP)) {
+            canvas.addEventListener(eventName, dispatch);
+            listenerCleanups.push(() => canvas.removeEventListener(eventName, dispatch));
+        }
+
+        return {
+            root,
+            protocol,
+            // Renderer.create fires `onMounted` synchronously after the
+            // reconciler populates the scene graph. The canvas paints once
+            // here so the first frame reflects the mount without waiting for
+            // an rAF. Subsequent updates flow through the rAF protocol.
+            onMounted: repaint,
+            dispose: () => {
+                for (const cleanup of listenerCleanups) cleanup();
+                ctx.clearRect(0, 0, canvas.width, canvas.height);
+            },
+        };
+    };
+}
+
+/**
  * Retained-mode canvas implementation of {@link RendererHost}.
  *
- * Pass to {@link createRenderer} when you need to bring your own
- * `RendererProtocol` — for example, a microtask flush, or driving paint from
- * an external animation loop. Most consumers use `createCanvasRenderer`
- * instead, which pre-wires this host with a `requestAnimationFrame`-backed
- * protocol and the pointer event dispatcher.
+ * `CanvasHost.attach(canvas)` adopts the supplied `<canvas>`: it builds a
+ * synthetic `<group>` root, installs an rAF-backed protocol that clears and
+ * repaints on every flush, and attaches pointer/wheel listeners that bubble
+ * synthetic events through the scene graph. `dispose` removes the listeners
+ * and clears the canvas.
+ *
+ * Authors who need viewport-aware culling go through
+ * {@link CanvasRenderer.create} (which threads `viewport` into the repaint
+ * closure) or the `<Canvas>` Component.
  *
  * The host special-cases two prop keys during `setProperty`:
  * - `zIndex` is hoisted onto the variant payload's `zIndex` field for the
  *   paint pass's stable sort.
  * - `onHitTest` is hoisted onto the payload's `hitTest` field for the
- *   pixel-perfect override path. The `on` prefix is required so the
- *   reconciler treats the function as a non-reactive callback rather than a
- *   reactive getter.
+ *   pixel-perfect override path.
  *
  * The host also performs implicit `<text>` wrapping: a {@link CanvasTextNode}
  * inserted into a non-`text` parent is wrapped in a synthetic `<text>`
  * element so wrapped labels participate in the paint and hit-test passes.
- *
- * @example
- * ```ts
- * import { createRenderer } from "aljabr/ui";
- * import { canvasHost } from "aljabr/ui/canvas";
- *
- * const { mount } = createRenderer(canvasHost, {
- *   scheduleFlush(flush) { queueMicrotask(flush); },
- * });
- * ```
- *
- * @see {@link createCanvasRenderer}
- * @see {@link CanvasNode}
- *
- * const { mount } = createRenderer(canvasHost);
  */
-export const canvasHost: RendererHost<CanvasNodeT, CanvasElementNode> = {
+export const CanvasHost: RendererHost<CanvasNodeT, CanvasElementNode, HTMLCanvasElement> = {
     createElement(tag: string): CanvasElementNode {
         return CanvasNode.Element({
             tag: tag as CanvasTag,
@@ -200,7 +267,7 @@ export const canvasHost: RendererHost<CanvasNodeT, CanvasElementNode> = {
         // Detach from any previous parent first — matches DOM `insertBefore`
         // semantics and keeps the scene graph internally consistent under
         // reconciler-driven moves (e.g. keyed list reorders).
-        canvasHost.remove(child);
+        CanvasHost.remove(child);
 
         // Implicit wrap: a Text variant inserted into a non-`text` parent is
         // wrapped in a synthetic `<text>` element
@@ -322,4 +389,6 @@ export const canvasHost: RendererHost<CanvasNodeT, CanvasElementNode> = {
         if (idx === -1 || idx === parent.children.length - 1) return null;
         return unwrap(parent.children[idx + 1]);
     },
+
+    attach: makeCanvasAttach(),
 };

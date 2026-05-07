@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeAll } from "vitest";
 import { paintNode } from "../../../src/ui/canvas/paint.ts";
-import { canvasHost } from "../../../src/ui/canvas/host.ts";
+import { CanvasHost } from "../../../src/ui/canvas/host.ts";
 import {
     CanvasNode,
     zeroBounds,
@@ -52,12 +52,12 @@ beforeAll(() => {
 // ---------------------------------------------------------------------------
 
 function rect(x: number, y: number, w: number, h: number, fill = "red"): CanvasElementNode {
-    const r = canvasHost.createElement("rect");
-    canvasHost.setProperty(r, "x", x);
-    canvasHost.setProperty(r, "y", y);
-    canvasHost.setProperty(r, "width", w);
-    canvasHost.setProperty(r, "height", h);
-    canvasHost.setProperty(r, "fill", fill);
+    const r = CanvasHost.createElement("rect");
+    CanvasHost.setProperty(r, "x", x);
+    CanvasHost.setProperty(r, "y", y);
+    CanvasHost.setProperty(r, "width", w);
+    CanvasHost.setProperty(r, "height", h);
+    CanvasHost.setProperty(r, "fill", fill);
     return r;
 }
 
@@ -123,9 +123,9 @@ describe("paintNode viewport culling", () => {
     });
 
     it("paints `path` elements regardless of viewport (zero bounds → always paint)", () => {
-        const path = canvasHost.createElement("path");
-        canvasHost.setProperty(path, "d", "M0 0 L10 10");
-        canvasHost.setProperty(path, "fill", "red");
+        const path = CanvasHost.createElement("path");
+        CanvasHost.setProperty(path, "d", "M0 0 L10 10");
+        CanvasHost.setProperty(path, "fill", "red");
         const ctx = makeCtx();
         paintNode(ctx as any, path, viewport({ x: 1000, y: 1000, width: 10, height: 10 }));
         // Path always paints (no real bounds parser yet).

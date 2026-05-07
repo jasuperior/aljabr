@@ -2,7 +2,7 @@
  * End-to-end integration through the public `aljabr/ui/canvas` surface.
  *
  * Each test reaches all the way from the JSX runtime (constructing
- * `ViewNode`s via `view`/`jsx`) through `createCanvasRenderer` (rAF
+ * `ViewNode`s via `view`/`jsx`) through `CanvasRenderer.create` (rAF
  * protocol, paint pass, viewport culling, hit-test, event dispatch). The
  * intent is to validate the *shape* of the public API one more time — if a
  * future change shifts an internal contract, these tests are the canary.
@@ -10,7 +10,7 @@
 
 import { describe, it, expect, beforeAll, beforeEach, afterEach, vi } from "vitest";
 import {
-    createCanvasRenderer,
+    CanvasRenderer,
     Viewport,
     type CanvasSyntheticEvent,
 } from "../../../src/ui/canvas/index.ts";
@@ -108,8 +108,8 @@ function fakeEvent(type: string, fields: Partial<MouseEvent> = {}): Event {
 describe("aljabr/ui/canvas — end-to-end via the public API", () => {
     it("paints a JSX tree built with jsx() through the public renderer", () => {
         const { canvas, ctx } = makeCanvas();
-        const r = createCanvasRenderer(canvas);
-        r.mount(() => jsx("rect", { x: 10, y: 10, width: 50, height: 50, fill: "red" }));
+        const r = CanvasRenderer.create();
+        r.mount(() => jsx("rect", { x: 10, y: 10, width: 50, height: 50, fill: "red" }), canvas);
 
         expect(ctx.calls.some((c: Call) => c.fn === "clearRect")).toBe(true);
         expect(ctx.calls.some((c: Call) => c.fn === "fillRect")).toBe(true);
@@ -118,14 +118,14 @@ describe("aljabr/ui/canvas — end-to-end via the public API", () => {
 
     it("propagates a group's fill into a descendant rect via JSX nesting", () => {
         const { canvas, ctx } = makeCanvas();
-        const r = createCanvasRenderer(canvas);
+        const r = CanvasRenderer.create();
         r.mount(() =>
             jsxs("group", {
                 fill: "purple",
                 children: [
                     jsx("rect", { x: 0, y: 0, width: 10, height: 10 }),
                 ],
-            }),
+            }), canvas,
         );
 
         expect(ctx.fillStyle).toBe("purple");
@@ -133,14 +133,14 @@ describe("aljabr/ui/canvas — end-to-end via the public API", () => {
 
     it("centers wrapped label text inside a shape parent via layout props", () => {
         const { canvas, ctx } = makeCanvas();
-        const r = createCanvasRenderer(canvas);
+        const r = CanvasRenderer.create();
         r.mount(() =>
             jsx("rect", {
                 x: 0, y: 0, width: 100, height: 40,
                 textAlign: "center", verticalAlign: "middle",
                 fill: "white",
                 children: jsx("text", { content: "label", fill: "black" }),
-            }),
+            }), canvas,
         );
 
         const fillText = ctx.calls.find((c: Call) => c.fn === "fillText");
@@ -152,14 +152,14 @@ describe("aljabr/ui/canvas — end-to-end via the public API", () => {
 
     it("re-paints on the next rAF tick after a Signal write reaches a JSX prop", () => {
         const { canvas, ctx } = makeCanvas();
-        const r = createCanvasRenderer(canvas);
+        const r = CanvasRenderer.create();
 
         const fill = Signal.create<string>("red");
         r.mount(() =>
             jsx("rect", {
                 x: 0, y: 0, width: 10, height: 10,
                 fill: () => fill.get() ?? "none",
-            }),
+            }), canvas,
         );
 
         const before = ctx.calls.filter((c: Call) => c.fn === "fillRect").length;
@@ -173,7 +173,7 @@ describe("aljabr/ui/canvas — end-to-end via the public API", () => {
     it("culls off-screen children when a Viewport is configured", () => {
         const { canvas, ctx } = makeCanvas(100, 100);
         const vp = Viewport(canvas);
-        const r = createCanvasRenderer(canvas, { viewport: vp });
+        const r = CanvasRenderer.create({ viewport: vp });
 
         r.mount(() =>
             jsxs("group", {
@@ -181,7 +181,7 @@ describe("aljabr/ui/canvas — end-to-end via the public API", () => {
                     jsx("rect", { x: 0, y: 0, width: 10, height: 10, fill: "near" }),
                     jsx("rect", { x: 5000, y: 5000, width: 10, height: 10, fill: "far" }),
                 ],
-            }),
+            }), canvas,
         );
 
         // Only the near rect paints; the far one culls.
@@ -190,7 +190,7 @@ describe("aljabr/ui/canvas — end-to-end via the public API", () => {
 
     it("dispatches a click that bubbles from rect → enclosing group", () => {
         const { canvas } = makeCanvas();
-        const r = createCanvasRenderer(canvas);
+        const r = CanvasRenderer.create();
 
         const log: string[] = [];
         r.mount(() =>
@@ -202,7 +202,7 @@ describe("aljabr/ui/canvas — end-to-end via the public API", () => {
                         onClick: () => log.push("rect"),
                     }),
                 ],
-            }),
+            }), canvas,
         );
 
         canvas.dispatchEvent(fakeEvent("click", { offsetX: 25, offsetY: 25 }));
@@ -211,7 +211,7 @@ describe("aljabr/ui/canvas — end-to-end via the public API", () => {
 
     it("an onHitTest function on a path is honoured (and not invoked as a reactive getter)", () => {
         const { canvas } = makeCanvas();
-        const r = createCanvasRenderer(canvas);
+        const r = CanvasRenderer.create();
 
         const log: string[] = [];
         const onHitTest = (_x: number, _y: number): boolean => {
@@ -225,7 +225,7 @@ describe("aljabr/ui/canvas — end-to-end via the public API", () => {
                 fill: "red",
                 onClick: () => log.push("click"),
                 onHitTest,
-            }),
+            }), canvas,
         );
 
         // Dispatch a click somewhere — onHitTest will be called, return
@@ -239,14 +239,14 @@ describe("aljabr/ui/canvas — end-to-end via the public API", () => {
 
     it("listener teardown on unmount clears handlers and stops further dispatch", () => {
         const { canvas } = makeCanvas();
-        const r = createCanvasRenderer(canvas);
+        const r = CanvasRenderer.create();
 
         const log: number[] = [];
         const unmount = r.mount(() =>
             jsx("rect", {
                 x: 0, y: 0, width: 50, height: 50, fill: "red",
                 onClick: () => log.push(1),
-            }),
+            }), canvas,
         );
 
         canvas.dispatchEvent(fakeEvent("click", { offsetX: 10, offsetY: 10 }));

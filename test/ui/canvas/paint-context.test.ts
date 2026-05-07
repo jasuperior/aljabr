@@ -5,7 +5,7 @@ import {
     normalizePadding,
     rootPaintContext,
 } from "../../../src/ui/canvas/paint-context.ts";
-import { canvasHost } from "../../../src/ui/canvas/host.ts";
+import { CanvasHost } from "../../../src/ui/canvas/host.ts";
 import {
     CanvasNode,
     zeroBounds,
@@ -62,7 +62,7 @@ function el(
     });
 }
 
-/** Wire children → parent the way `canvasHost.insert` would. */
+/** Wire children → parent the way `CanvasHost.insert` would. */
 function attach(parent: CanvasElementNode, children: CanvasElementNode[]): CanvasElementNode {
     for (const child of children) {
         child.parent = parent;
@@ -199,15 +199,15 @@ describe("paint pass — inherited paint props", () => {
         expect(ctx.font).toBe("bold 24px Arial");
     });
 
-    it("uses canvasHost-driven scene graph end-to-end", () => {
-        const root = canvasHost.createElement("group");
-        canvasHost.setProperty(root, "fill", "purple");
-        const child = canvasHost.createElement("rect");
-        canvasHost.setProperty(child, "x", 0);
-        canvasHost.setProperty(child, "y", 0);
-        canvasHost.setProperty(child, "width", 10);
-        canvasHost.setProperty(child, "height", 10);
-        canvasHost.insert(root, child);
+    it("uses CanvasHost-driven scene graph end-to-end", () => {
+        const root = CanvasHost.createElement("group");
+        CanvasHost.setProperty(root, "fill", "purple");
+        const child = CanvasHost.createElement("rect");
+        CanvasHost.setProperty(child, "x", 0);
+        CanvasHost.setProperty(child, "y", 0);
+        CanvasHost.setProperty(child, "width", 10);
+        CanvasHost.setProperty(child, "height", 10);
+        CanvasHost.insert(root, child);
         const ctx = makeCtx();
         paintNode(ctx as any, root);
         expect(ctx.fillStyle).toBe("purple");

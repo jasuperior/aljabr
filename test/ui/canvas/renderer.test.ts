@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach, vi, beforeAll } from "vitest";
-import { createCanvasRenderer } from "../../../src/ui/canvas/renderer.ts";
+import { CanvasRenderer } from "../../../src/ui/canvas/renderer.ts";
 import { Viewport } from "../../../src/ui/canvas/viewport.ts";
 import { view } from "../../../src/ui/view-node.ts";
 import { Signal } from "../../../src/prelude/signal.ts";
@@ -84,13 +84,13 @@ function makeCanvas(width = 800, height = 600): { canvas: HTMLCanvasElement; ctx
 // Tests
 // ---------------------------------------------------------------------------
 
-describe("createCanvasRenderer", () => {
+describe("CanvasRenderer.create", () => {
     describe("initial paint", () => {
         it("clears the canvas and paints synchronously after mount", () => {
             const { canvas, ctx } = makeCanvas();
-            const r = createCanvasRenderer(canvas);
+            const r = CanvasRenderer.create();
 
-            r.mount(() => view("rect", { x: 10, y: 10, width: 50, height: 50, fill: "red" }));
+            r.mount(() => view("rect", { x: 10, y: 10, width: 50, height: 50, fill: "red" }), canvas);
 
             const fns = ctx.calls.map((c: Call) => c.fn);
             expect(fns).toContain("clearRect");
@@ -101,9 +101,9 @@ describe("createCanvasRenderer", () => {
 
         it("does not require a rAF tick for the initial paint", () => {
             const { canvas, ctx } = makeCanvas();
-            const r = createCanvasRenderer(canvas);
+            const r = CanvasRenderer.create();
 
-            r.mount(() => view("rect", { x: 0, y: 0, width: 1, height: 1, fill: "red" }));
+            r.mount(() => view("rect", { x: 0, y: 0, width: 1, height: 1, fill: "red" }), canvas);
             expect(ctx.calls.some((c: Call) => c.fn === "fillRect")).toBe(true);
             // No rAF callbacks were queued by the initial mount.
             expect(rafQueue).toHaveLength(0);
@@ -114,21 +114,27 @@ describe("createCanvasRenderer", () => {
                 width: 100,
                 height: 100,
                 getContext: () => null,
+                addEventListener: () => {},
+                removeEventListener: () => {},
             } as unknown as HTMLCanvasElement;
-            expect(() => createCanvasRenderer(canvas)).toThrow(/2d context/);
+            // The 2d-context check fires inside attach() (called by mount).
+            const r = CanvasRenderer.create();
+            expect(() => r.mount(() => view("rect", { x: 0, y: 0, width: 1, height: 1 }), canvas))
+                .toThrow(/2d context/);
         });
     });
 
     describe("rAF protocol", () => {
         it("repaints on the next rAF tick after a reactive prop update", () => {
             const { canvas, ctx } = makeCanvas();
-            const r = createCanvasRenderer(canvas);
+            const r = CanvasRenderer.create();
 
             const fill = Signal.create<string>("red");
             r.mount(() => view("rect", {
                 x: 0, y: 0, width: 1, height: 1,
                 fill: () => fill.get() ?? "none",
-            }));
+            }),
+            canvas);
 
             const initialFillCount = ctx.calls.filter((c: Call) => c.fn === "fillRect").length;
 
@@ -146,13 +152,14 @@ describe("createCanvasRenderer", () => {
 
         it("clears before each repaint", () => {
             const { canvas, ctx } = makeCanvas();
-            const r = createCanvasRenderer(canvas);
+            const r = CanvasRenderer.create();
 
             const x = Signal.create<number>(0);
             r.mount(() => view("rect", {
                 x: () => x.get() ?? 0,
                 y: 0, width: 1, height: 1, fill: "red",
-            }));
+            }),
+            canvas);
 
             const initialClears = ctx.calls.filter((c: Call) => c.fn === "clearRect").length;
             x.set(5);
@@ -163,7 +170,7 @@ describe("createCanvasRenderer", () => {
 
         it("coalesces multiple writes within a single rAF tick into one repaint", () => {
             const { canvas, ctx } = makeCanvas();
-            const r = createCanvasRenderer(canvas);
+            const r = CanvasRenderer.create();
 
             const x = Signal.create<number>(0);
             const y = Signal.create<number>(0);
@@ -171,7 +178,8 @@ describe("createCanvasRenderer", () => {
                 x: () => x.get() ?? 0,
                 y: () => y.get() ?? 0,
                 width: 1, height: 1, fill: "red",
-            }));
+            }),
+            canvas);
 
             const clearsAfterMount = ctx.calls.filter((c: Call) => c.fn === "clearRect").length;
             x.set(1);
@@ -189,13 +197,14 @@ describe("createCanvasRenderer", () => {
     describe("unmount", () => {
         it("clears the canvas and stops responding to subsequent updates", () => {
             const { canvas, ctx } = makeCanvas();
-            const r = createCanvasRenderer(canvas);
+            const r = CanvasRenderer.create();
 
             const fill = Signal.create<string>("red");
             const unmount = r.mount(() => view("rect", {
                 x: 0, y: 0, width: 1, height: 1,
                 fill: () => fill.get() ?? "none",
-            }));
+            }),
+            canvas);
 
             const fillsBeforeUnmount = ctx.calls.filter((c: Call) => c.fn === "fillRect").length;
             unmount();
@@ -216,13 +225,13 @@ describe("createCanvasRenderer", () => {
         it("threads viewport.bounds() into culling decisions", () => {
             const { canvas, ctx } = makeCanvas(100, 100);
             const vp = Viewport(canvas);
-            const r = createCanvasRenderer(canvas, { viewport: vp });
+            const r = CanvasRenderer.create({ viewport: vp });
 
             r.mount(() =>
                 view("group", null,
                     view("rect", { x: 0, y: 0, width: 10, height: 10, fill: "near" }),
                     view("rect", { x: 5000, y: 5000, width: 10, height: 10, fill: "far" }),
-                ),
+                ), canvas,
             );
 
             // Only one rect is painted — the far rect culls.
@@ -232,13 +241,13 @@ describe("createCanvasRenderer", () => {
 
         it("paints both rects when no viewport is configured", () => {
             const { canvas, ctx } = makeCanvas(100, 100);
-            const r = createCanvasRenderer(canvas);
+            const r = CanvasRenderer.create();
 
             r.mount(() =>
                 view("group", null,
                     view("rect", { x: 0, y: 0, width: 10, height: 10, fill: "near" }),
                     view("rect", { x: 5000, y: 5000, width: 10, height: 10, fill: "far" }),
-                ),
+                ), canvas,
             );
 
             const fillRects = ctx.calls.filter((c: Call) => c.fn === "fillRect");

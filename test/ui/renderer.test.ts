@@ -1,7 +1,7 @@
 import { describe, it, expect, vi } from "vitest";
-import { createRenderer } from "../../src/ui/renderer.ts";
+import { Renderer } from "../../src/ui/renderer.ts";
 import { view, Fragment } from "../../src/ui/view-node.ts";
-import type { RendererHost } from "../../src/ui/types.ts";
+import type { RendererHost, RendererProtocol } from "../../src/ui/types.ts";
 import { Signal } from "../../src/prelude/signal.ts";
 import { Store } from "../../src/prelude/store.ts";
 import { createOwner } from "../../src/prelude/context.ts";
@@ -19,7 +19,7 @@ type TestNode = {
     parent: TestNode | null;
 };
 
-function makeHost(): RendererHost<TestNode, TestNode> & { root: TestNode } {
+function makeHost(protocol?: RendererProtocol): RendererHost<TestNode, TestNode> & { root: TestNode } {
     function mkNode(partial: Partial<TestNode>): TestNode {
         return {
             type: "element",
@@ -75,6 +75,9 @@ function makeHost(): RendererHost<TestNode, TestNode> & { root: TestNode } {
             const idx = p.children.indexOf(node);
             return p.children[idx + 1] ?? null;
         },
+        attach(container): { root: TestNode; protocol?: RendererProtocol; dispose: () => void } {
+            return { root: container, protocol, dispose: () => {} };
+        },
     };
 
     return host;
@@ -114,11 +117,11 @@ function visibleElements(node: TestNode): TestNode[] {
     );
 }
 
-describe("createRenderer", () => {
+describe("Renderer.create", () => {
     describe("mount — static tree", () => {
         it("mounts a simple element", () => {
             const host = makeHost();
-            const { mount } = createRenderer(host);
+            const { mount } = Renderer.create(host);
             mount(() => view("div", { class: "app" }), host.root);
 
             const children = visibleElements(host.root);
@@ -129,7 +132,7 @@ describe("createRenderer", () => {
 
         it("mounts nested elements", () => {
             const host = makeHost();
-            const { mount } = createRenderer(host);
+            const { mount } = Renderer.create(host);
             mount(
                 () =>
                     view(
@@ -150,7 +153,7 @@ describe("createRenderer", () => {
 
         it("mounts a Text node", () => {
             const host = makeHost();
-            const { mount } = createRenderer(host);
+            const { mount } = Renderer.create(host);
             mount(() => view("span", null, "hello"), host.root);
             const span = visibleElements(host.root)[0];
             expect(visibleTexts(span)[0]).toBe("hello");
@@ -158,7 +161,7 @@ describe("createRenderer", () => {
 
         it("mounts a Fragment", () => {
             const host = makeHost();
-            const { mount } = createRenderer(host);
+            const { mount } = Renderer.create(host);
             mount(
                 () =>
                     view(
@@ -175,7 +178,7 @@ describe("createRenderer", () => {
 
         it("mounts a function component", () => {
             const host = makeHost();
-            const { mount, view: v } = createRenderer(host);
+            const { mount, view: v } = Renderer.create(host);
             const Greeting = ({ name }: { name: string }) => v("p", null, name);
             mount(() => v(Greeting, { name: "world" }), host.root);
 
@@ -188,7 +191,7 @@ describe("createRenderer", () => {
     describe("mount — dispose", () => {
         it("unmount removes all nodes", () => {
             const host = makeHost();
-            const { mount } = createRenderer(host);
+            const { mount } = Renderer.create(host);
             const unmount = mount(
                 () => view("div", null, "content"),
                 host.root,
@@ -203,7 +206,7 @@ describe("createRenderer", () => {
     describe("reactive children (function getter)", () => {
         it("renders initial value", () => {
             const host = makeHost();
-            const { mount } = createRenderer(host);
+            const { mount } = Renderer.create(host);
             const sig = Signal.create("hello");
             mount(() => view("p", null, () => sig.get()), host.root);
 
@@ -213,7 +216,7 @@ describe("createRenderer", () => {
 
         it("updates when signal changes", () => {
             const host = makeHost();
-            const { mount } = createRenderer(host);
+            const { mount } = Renderer.create(host);
             const sig = Signal.create("hello");
             mount(() => view("p", null, () => sig.get()), host.root);
 
@@ -226,7 +229,7 @@ describe("createRenderer", () => {
 
         it("swaps elements on conditional change", () => {
             const host = makeHost();
-            const { mount } = createRenderer(host);
+            const { mount } = Renderer.create(host);
             const active = Signal.create(true);
 
             mount(
@@ -248,7 +251,7 @@ describe("createRenderer", () => {
 
         it("renders null/undefined without inserting nodes", () => {
             const host = makeHost();
-            const { mount } = createRenderer(host);
+            const { mount } = Renderer.create(host);
             const show = Signal.create(false);
 
             mount(
@@ -270,7 +273,7 @@ describe("createRenderer", () => {
     describe("reactive props (function value)", () => {
         it("applies initial reactive prop", () => {
             const host = makeHost();
-            const { mount } = createRenderer(host);
+            const { mount } = Renderer.create(host);
             const cls = Signal.create("active");
             mount(() => view("div", { class: () => cls.get() }), host.root);
 
@@ -280,7 +283,7 @@ describe("createRenderer", () => {
 
         it("updates reactive prop when signal changes", () => {
             const host = makeHost();
-            const { mount } = createRenderer(host);
+            const { mount } = Renderer.create(host);
             const cls = Signal.create("active");
             mount(() => view("div", { class: () => cls.get() }), host.root);
 
@@ -291,7 +294,7 @@ describe("createRenderer", () => {
 
         it("does not treat event handlers as reactive", () => {
             const host = makeHost();
-            const { mount } = createRenderer(host);
+            const { mount } = Renderer.create(host);
             const handler = vi.fn();
             mount(() => view("button", { onClick: handler }), host.root);
 
@@ -303,7 +306,7 @@ describe("createRenderer", () => {
     describe("DerivedArray children", () => {
         it("renders initial array", () => {
             const host = makeHost();
-            const { mount } = createRenderer(host);
+            const { mount } = Renderer.create(host);
             const ref = Store.create({ items: ["a", "b", "c"] });
             const rows = ref
                 .at("items")
@@ -317,7 +320,7 @@ describe("createRenderer", () => {
 
         it("updates when array item changes", () => {
             const host = makeHost();
-            const { mount } = createRenderer(host);
+            const { mount } = Renderer.create(host);
             const ref = Store.create({ items: ["a", "b"] });
             const rows = ref.at("items").map((item) => view("li", null, item));
 
@@ -330,7 +333,7 @@ describe("createRenderer", () => {
 
         it("adds new items when array grows", () => {
             const host = makeHost();
-            const { mount } = createRenderer(host);
+            const { mount } = Renderer.create(host);
             const ref = Store.create({ items: ["a"] });
             const rows = ref.at("items").map((item) => view("li", null, item));
 
@@ -347,7 +350,7 @@ describe("createRenderer", () => {
 
         it("removes items when array shrinks", () => {
             const host = makeHost();
-            const { mount } = createRenderer(host);
+            const { mount } = Renderer.create(host);
             const ref = Store.create({ items: ["a", "b", "c"] });
             const rows = ref.at("items").map((item) => view("li", null, item));
 
@@ -367,7 +370,7 @@ describe("createRenderer", () => {
             (host as typeof host & { onMount: typeof onMount }).onMount =
                 onMount;
 
-            const { mount } = createRenderer(
+            const { mount } = Renderer.create(
                 host as RendererHost<TestNode, TestNode>,
             );
             mount(() => view("div", null), host.root);
@@ -381,7 +384,7 @@ describe("createRenderer", () => {
             (host as typeof host & { onUnmount: typeof onUnmount }).onUnmount =
                 onUnmount;
 
-            const { mount } = createRenderer(
+            const { mount } = Renderer.create(
                 host as RendererHost<TestNode, TestNode>,
             );
             const unmount = mount(() => view("div", null), host.root);
@@ -394,7 +397,7 @@ describe("createRenderer", () => {
     describe("component lifecycle via owner", () => {
         it("cleans up component-owned signals when unmounted", () => {
             const host = makeHost();
-            const { mount } = createRenderer(host);
+            const { mount } = Renderer.create(host);
             const disposed: boolean[] = [];
 
             const Comp = () => {
@@ -430,7 +433,7 @@ describe("createRenderer", () => {
                 if (key === "class") calls.push(value);
                 origSet(el, key, value);
             };
-            const { mount } = createRenderer(host);
+            const { mount } = Renderer.create(host);
             const cls = Signal.create("a");
             mount(() => view("div", { class: () => cls.get() }), host.root);
 
@@ -442,14 +445,14 @@ describe("createRenderer", () => {
         });
     });
 
-    describe("RendererProtocol batching", () => {
+    describe("RendererProtocol batching (returned from attach)", () => {
         it("defers updates until scheduleFlush fires", () => {
-            const host = makeHost();
             let flush: (() => void) | null = null;
             const protocol = {
                 scheduleFlush(f: () => void) { flush = f; },
             };
-            const { mount } = createRenderer(host, protocol);
+            const host = makeHost(protocol);
+            const { mount } = Renderer.create(host);
             const sig = Signal.create("hello");
             mount(() => view("p", null, () => sig.get()), host.root);
 
@@ -465,13 +468,13 @@ describe("createRenderer", () => {
         });
 
         it("coalesces multiple updates into one flush", () => {
-            const host = makeHost();
             let flush: (() => void) | null = null;
             let flushCount = 0;
             const protocol = {
                 scheduleFlush(f: () => void) { flushCount++; flush = f; },
             };
-            const { mount } = createRenderer(host, protocol);
+            const host = makeHost(protocol);
+            const { mount } = Renderer.create(host);
             const sig = Signal.create("a");
             mount(() => view("p", null, () => sig.get()), host.root);
 
@@ -483,10 +486,30 @@ describe("createRenderer", () => {
         });
     });
 
+    describe("attach() lifecycle", () => {
+        it("calls dispose returned from attach when unmount fires", () => {
+            let attached = 0;
+            let disposed = 0;
+            const host = makeHost();
+            const baseAttach = host.attach.bind(host);
+            host.attach = (container) => {
+                attached++;
+                const r = baseAttach(container);
+                return { ...r, dispose: () => { disposed++; r.dispose(); } };
+            };
+            const { mount } = Renderer.create(host);
+            const unmount = mount(() => view("div", null), host.root);
+            expect(attached).toBe(1);
+            expect(disposed).toBe(0);
+            unmount();
+            expect(disposed).toBe(1);
+        });
+    });
+
     describe("nested DerivedArray items", () => {
         it("renders string items from a List directly", () => {
             const host = makeHost();
-            const { mount } = createRenderer(host);
+            const { mount } = Renderer.create(host);
             const arr = Store.create({ items: ["x", "y"] });
             mount(
                 () => view("ul", null, arr.at("items")),
@@ -499,7 +522,7 @@ describe("createRenderer", () => {
 
         it("renders ViewNode items nested inside outer DerivedArray", () => {
             const host = makeHost();
-            const { mount } = createRenderer(host);
+            const { mount } = Renderer.create(host);
             const ref = Store.create({ groups: [["a", "b"], ["c"]] });
             const rows = ref.at("groups").map((group, i) =>
                 view("li", null, String(i), ": ", group.join(","))
@@ -520,7 +543,7 @@ describe("createRenderer", () => {
                 origRemove(node);
             };
 
-            const { mount } = createRenderer(host);
+            const { mount } = Renderer.create(host);
             const tasks = Store.create([
                 { id: 1, done: false },
                 { id: 2, done: false },
@@ -540,7 +563,7 @@ describe("createRenderer", () => {
 
         it("re-renders only the toggled item's scope, not all items", () => {
             const host = makeHost();
-            const { mount } = createRenderer(host);
+            const { mount } = Renderer.create(host);
             const renderCounts = [0, 0, 0];
 
             const tasks = Store.create([
@@ -565,7 +588,7 @@ describe("createRenderer", () => {
 
         it("preserves item identity when filter widens to re-insert an excluded key", () => {
             const host = makeHost();
-            const { mount } = createRenderer(host);
+            const { mount } = Renderer.create(host);
 
             type T = { id: string; done: boolean };
             const tasks = Store.create<T[]>([
@@ -629,7 +652,7 @@ describe("createRenderer", () => {
 
         it("preserves item identity when filter narrows then widens (toggle + navigate)", () => {
             const host = makeHost();
-            const { mount } = createRenderer(host);
+            const { mount } = Renderer.create(host);
 
             type T = { id: string; done: boolean };
             const tasks = Store.create<T[]>([
@@ -712,7 +735,7 @@ describe("createRenderer", () => {
     describe("nested reactive regions", () => {
         it("outer region updates without disturbing inner structure", () => {
             const host = makeHost();
-            const { mount } = createRenderer(host);
+            const { mount } = Renderer.create(host);
             const outer = Signal.create("a");
             const inner = Signal.create("x");
 

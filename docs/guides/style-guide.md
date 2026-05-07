@@ -310,6 +310,24 @@ Effect.allSettled([eff1, eff2])       // parallel-collect, returns all settlemen
 
 ---
 
+## UI: renderer abstraction
+
+Aljabr's UI layer follows the same single-shape rule. Every renderer is built from one primitive — `Renderer.create(host)` — over a stateless `RendererHost` that owns surface adoption.
+
+**`Renderer.create(host)` is the central abstraction.** `Renderer.create(host)` returns `{ view, mount }`. `mount(fn, container)` calls `host.attach(container)` to obtain the host's internal root element, an optional batching protocol, and a per-mount disposer; then it runs the reconciler and returns an unmount callback. There is no second protocol parameter — protocols come from the host's `attach`, because they are typically bound to the surface (canvas's rAF flush is bound to a specific 2d context, not to the host vtable).
+
+**Hosts are stateless singletons.** `DomHost`, `CanvasHost` are `const` exports of `RendererHost<N, E, Container>` — capitalized because they are values, not factories. Per-mount state (synthetic roots, event listeners, viewport closures) lives in the closures returned from `attach`, never on the host. This preserves the "singleton host, multiple mounts" property: `Renderer.create(DomHost)` returns one renderer; calling its `mount` twice with two different containers yields two independent surfaces.
+
+**Hosts that need per-instance configuration are factory-shaped.** When a host carries author-supplied state — `ProseHost.create({ embeds })` carries an embed registry — it follows the bucket-1 `.create(...)` shape. The singleton form (`DomHost`, `CanvasHost`) is reserved for hosts whose vtable has zero per-instance configuration.
+
+**Concrete renderers are thin wrappers.** `DomRenderer.create()` is `Renderer.create(DomHost)`; `CanvasRenderer.create({ viewport? })` wraps `Renderer.create(CanvasHost)` with a per-instance attach override that threads viewport into the rAF repaint closure. The wrappers are conveniences — every renderer is also constructible directly via `Renderer.create(host)`.
+
+**`<Prose>` and `<Canvas>` are Components, not intrinsics.** When a renderer needs to be embedded inside another renderer's output, the integration is a JSX *Component* (a function returning a `<container mounted={...}>` element with lifecycle in the `mounted` callback) — not a magic intrinsic tag, not a renderer-protocol handshake. The Component encapsulates its own renderer creation and mount, so the outer renderer sees only a normal element with a `mounted` hook. This keeps Components renderer-agnostic and avoids tag collisions across JSX runtimes.
+
+**Raw `<canvas mounted={...}>` is the escape hatch.** Authors who want to feed the canvas to a third-party library (Three.js, Pixi) bypass `<Canvas>` and use the low-level intrinsic with the `mounted` callback to receive an element ref. The Component is the high-level path; the intrinsic is the low-level path.
+
+---
+
 ## Adding a new abstraction — the checklist
 
 1. Pick a bucket. If it doesn't fit any of the four, the bucket model is wrong before the abstraction is.

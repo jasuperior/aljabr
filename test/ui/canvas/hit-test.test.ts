@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { hitTest, bubbleEvent, type CanvasSyntheticEvent } from "../../../src/ui/canvas/hit-test.ts";
-import { canvasHost } from "../../../src/ui/canvas/host.ts";
+import { CanvasHost } from "../../../src/ui/canvas/host.ts";
 import {
     CanvasNode,
     zeroBounds,
@@ -13,17 +13,17 @@ import {
 // ---------------------------------------------------------------------------
 
 function rect(x: number, y: number, w: number, h: number): CanvasElementNode {
-    const r = canvasHost.createElement("rect");
-    canvasHost.setProperty(r, "x", x);
-    canvasHost.setProperty(r, "y", y);
-    canvasHost.setProperty(r, "width", w);
-    canvasHost.setProperty(r, "height", h);
+    const r = CanvasHost.createElement("rect");
+    CanvasHost.setProperty(r, "x", x);
+    CanvasHost.setProperty(r, "y", y);
+    CanvasHost.setProperty(r, "width", w);
+    CanvasHost.setProperty(r, "height", h);
     return r;
 }
 
 function group(props: Record<string, unknown> = {}): CanvasElementNode {
-    const g = canvasHost.createElement("group");
-    for (const [k, v] of Object.entries(props)) canvasHost.setProperty(g, k, v);
+    const g = CanvasHost.createElement("group");
+    for (const [k, v] of Object.entries(props)) CanvasHost.setProperty(g, k, v);
     return g;
 }
 
@@ -62,7 +62,7 @@ describe("hitTest", () => {
         it("applies a parent group's translate to inverse-resolve children", () => {
             const child = rect(0, 0, 10, 10); // local (0,0)-(10,10)
             const g = group({ x: 100, y: 100 });
-            canvasHost.insert(g, child);
+            CanvasHost.insert(g, child);
 
             // After translate(100, 100), the child paints at screen (100,100)-(110,110).
             expect(hitTest(g, 105, 105)).toBe(child);
@@ -72,7 +72,7 @@ describe("hitTest", () => {
         it("applies a parent group's scale", () => {
             const child = rect(0, 0, 10, 10);
             const g = group({ scale: 2 });
-            canvasHost.insert(g, child);
+            CanvasHost.insert(g, child);
 
             // After scale(2), the child paints at screen (0,0)-(20,20).
             expect(hitTest(g, 15, 15)).toBe(child);
@@ -82,9 +82,9 @@ describe("hitTest", () => {
         it("composes nested group transforms", () => {
             const child = rect(0, 0, 10, 10);
             const inner = group({ x: 50, y: 0 });
-            canvasHost.insert(inner, child);
+            CanvasHost.insert(inner, child);
             const outer = group({ x: 100, y: 0 });
-            canvasHost.insert(outer, inner);
+            CanvasHost.insert(outer, inner);
 
             // Outer translate(100,0) ∘ inner translate(50,0): screen origin = (150,0).
             expect(hitTest(outer, 155, 5)).toBe(child);
@@ -94,7 +94,7 @@ describe("hitTest", () => {
         it("groups are transparent — never the hit target themselves", () => {
             const child = rect(0, 0, 10, 10);
             const g = group();
-            canvasHost.insert(g, child);
+            CanvasHost.insert(g, child);
 
             // (5, 5) is inside the child's bounds — child wins, not the group.
             expect(hitTest(g, 5, 5)).toBe(child);
@@ -102,7 +102,7 @@ describe("hitTest", () => {
 
         it("returns null when no descendant is hit, even if the group is the entry", () => {
             const g = group();
-            canvasHost.insert(g, rect(0, 0, 10, 10));
+            CanvasHost.insert(g, rect(0, 0, 10, 10));
             expect(hitTest(g, 100, 100)).toBeNull();
         });
     });
@@ -111,12 +111,12 @@ describe("hitTest", () => {
         it("higher zIndex sibling wins when both contain the point", () => {
             const back = rect(0, 0, 50, 50);
             const front = rect(0, 0, 50, 50);
-            canvasHost.setProperty(front, "zIndex", 1);
-            canvasHost.setProperty(back, "zIndex", 0);
+            CanvasHost.setProperty(front, "zIndex", 1);
+            CanvasHost.setProperty(back, "zIndex", 0);
 
             const g = group();
-            canvasHost.insert(g, back);
-            canvasHost.insert(g, front);
+            CanvasHost.insert(g, back);
+            CanvasHost.insert(g, front);
 
             // Hit-test relies on `el.children` being sorted (paint sorts in
             // place); simulate a paint pass having run by sorting here.
@@ -133,8 +133,8 @@ describe("hitTest", () => {
             const a = rect(0, 0, 50, 50);
             const b = rect(0, 0, 50, 50);
             const g = group();
-            canvasHost.insert(g, a);
-            canvasHost.insert(g, b);
+            CanvasHost.insert(g, a);
+            CanvasHost.insert(g, b);
             // No paint, no sort needed (insertion order with equal zIndex).
             expect(hitTest(g, 25, 25)).toBe(b);
         });
@@ -152,10 +152,10 @@ describe("hitTest", () => {
     describe("Text variants are skipped", () => {
         it("a Text child does not block a hit on its sibling", () => {
             const r = rect(0, 0, 50, 50);
-            const text = canvasHost.createText("label");
+            const text = CanvasHost.createText("label");
             const g = group();
-            canvasHost.insert(g, text); // wraps into a synthetic <text>
-            canvasHost.insert(g, r);
+            CanvasHost.insert(g, text); // wraps into a synthetic <text>
+            CanvasHost.insert(g, r);
             // The wrapped <text> is itself an Element with zero bounds, so
             // it doesn't claim the hit; the rect does.
             expect(hitTest(g, 25, 25)).toBe(r);
@@ -165,25 +165,25 @@ describe("hitTest", () => {
     describe("onHitTest pixel-perfect override", () => {
         it("rejects a hit when the override returns false", () => {
             const r = rect(0, 0, 50, 50);
-            canvasHost.setProperty(r, "onHitTest", () => false);
+            CanvasHost.setProperty(r, "onHitTest", () => false);
             expect(hitTest(r, 25, 25)).toBeNull();
         });
 
         it("accepts a hit when the override returns true (and bounds also match)", () => {
             const r = rect(0, 0, 50, 50);
-            canvasHost.setProperty(r, "onHitTest", () => true);
+            CanvasHost.setProperty(r, "onHitTest", () => true);
             expect(hitTest(r, 25, 25)).toBe(r);
         });
 
         it("receives local-frame coordinates (post-inverse-transform)", () => {
             const calls: Array<{ x: number; y: number }> = [];
             const r = rect(0, 0, 50, 50);
-            canvasHost.setProperty(r, "onHitTest", (x: number, y: number) => {
+            CanvasHost.setProperty(r, "onHitTest", (x: number, y: number) => {
                 calls.push({ x, y });
                 return true;
             });
             const g = group({ x: 100, y: 100 });
-            canvasHost.insert(g, r);
+            CanvasHost.insert(g, r);
 
             hitTest(g, 110, 110);
             expect(calls).toEqual([{ x: 10, y: 10 }]);
@@ -196,7 +196,7 @@ describe("hitTest", () => {
             // reachable through their own pixel-perfect override.
             const calls: number[] = [];
             const r = rect(0, 0, 10, 10);
-            canvasHost.setProperty(r, "onHitTest", (x: number, y: number) => {
+            CanvasHost.setProperty(r, "onHitTest", (x: number, y: number) => {
                 calls.push(x + y);
                 return false;
             });
@@ -206,9 +206,9 @@ describe("hitTest", () => {
 
         it("setting onHitTest to a non-function clears it on the variant payload", () => {
             const r = rect(0, 0, 50, 50);
-            canvasHost.setProperty(r, "onHitTest", () => false);
+            CanvasHost.setProperty(r, "onHitTest", () => false);
             expect(r.hitTest).toBeTypeOf("function");
-            canvasHost.setProperty(r, "onHitTest", null);
+            CanvasHost.setProperty(r, "onHitTest", null);
             expect(r.hitTest).toBeUndefined();
         });
     });
@@ -236,7 +236,7 @@ describe("bubbleEvent", () => {
     it("invokes the matching on* handler on the target", () => {
         const r = rect(0, 0, 10, 10);
         const calls: CanvasSyntheticEvent[] = [];
-        canvasHost.setProperty(r, "onClick", (e: CanvasSyntheticEvent) => calls.push(e));
+        CanvasHost.setProperty(r, "onClick", (e: CanvasSyntheticEvent) => calls.push(e));
         bubbleEvent(r, fakeEvent("click"));
         expect(calls).toHaveLength(1);
         expect(calls[0].target).toBe(r);
@@ -251,9 +251,9 @@ describe("bubbleEvent", () => {
         parent.parent = grand;
 
         const log: string[] = [];
-        canvasHost.setProperty(child, "onClick", () => log.push("child"));
-        canvasHost.setProperty(parent, "onClick", () => log.push("parent"));
-        canvasHost.setProperty(grand, "onClick", () => log.push("grand"));
+        CanvasHost.setProperty(child, "onClick", () => log.push("child"));
+        CanvasHost.setProperty(parent, "onClick", () => log.push("parent"));
+        CanvasHost.setProperty(grand, "onClick", () => log.push("grand"));
 
         bubbleEvent(child, fakeEvent("click"));
         expect(log).toEqual(["child", "parent", "grand"]);
@@ -265,11 +265,11 @@ describe("bubbleEvent", () => {
         child.parent = parent;
 
         const log: string[] = [];
-        canvasHost.setProperty(child, "onClick", (e: CanvasSyntheticEvent) => {
+        CanvasHost.setProperty(child, "onClick", (e: CanvasSyntheticEvent) => {
             log.push("child");
             e.stopPropagation();
         });
-        canvasHost.setProperty(parent, "onClick", () => log.push("parent"));
+        CanvasHost.setProperty(parent, "onClick", () => log.push("parent"));
 
         bubbleEvent(child, fakeEvent("click"));
         expect(log).toEqual(["child"]);
@@ -277,7 +277,7 @@ describe("bubbleEvent", () => {
 
     it("preventDefault forwards to the native event", () => {
         const r = rect(0, 0, 10, 10);
-        canvasHost.setProperty(r, "onContextMenu", (e: CanvasSyntheticEvent) => e.preventDefault());
+        CanvasHost.setProperty(r, "onContextMenu", (e: CanvasSyntheticEvent) => e.preventDefault());
         const native = fakeEvent("contextmenu");
         bubbleEvent(r, native);
         expect((native as Event & { defaultPrevented: boolean }).defaultPrevented).toBe(true);
@@ -290,14 +290,14 @@ describe("bubbleEvent", () => {
 
     it("returns false for an unknown event type (no handler-key mapping)", () => {
         const r = rect(0, 0, 10, 10);
-        canvasHost.setProperty(r, "onClick", () => undefined);
+        CanvasHost.setProperty(r, "onClick", () => undefined);
         expect(bubbleEvent(r, fakeEvent("nonsense"))).toBe(false);
     });
 
     it("event includes pointer-specific fields when present", () => {
         const r = rect(0, 0, 10, 10);
         let captured: CanvasSyntheticEvent | null = null;
-        canvasHost.setProperty(r, "onPointerDown", (e: CanvasSyntheticEvent) => { captured = e; });
+        CanvasHost.setProperty(r, "onPointerDown", (e: CanvasSyntheticEvent) => { captured = e; });
         const native = fakeEvent("pointerdown", {
             // PointerEvent fields are valid on the duck-typed mock.
         });
@@ -312,7 +312,7 @@ describe("bubbleEvent", () => {
     it("event includes wheel-specific fields when present", () => {
         const r = rect(0, 0, 10, 10);
         let captured: CanvasSyntheticEvent | null = null;
-        canvasHost.setProperty(r, "onWheel", (e: CanvasSyntheticEvent) => { captured = e; });
+        CanvasHost.setProperty(r, "onWheel", (e: CanvasSyntheticEvent) => { captured = e; });
         const native = fakeEvent("wheel");
         (native as unknown as { deltaX: number; deltaY: number }).deltaX = 0;
         (native as unknown as { deltaX: number; deltaY: number }).deltaY = -120;
@@ -327,7 +327,7 @@ describe("bubbleEvent", () => {
 
         const log: string[] = [];
         // child has no handler — should fall through to parent.
-        canvasHost.setProperty(parent, "onClick", () => log.push("parent"));
+        CanvasHost.setProperty(parent, "onClick", () => log.push("parent"));
         bubbleEvent(child, fakeEvent("click"));
         expect(log).toEqual(["parent"]);
     });

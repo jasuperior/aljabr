@@ -3,7 +3,7 @@
 import { union, match, type Union } from "aljabr";
 import { List, Signal } from "aljabr/prelude";
 import {
-    createCanvasRenderer,
+    CanvasRenderer,
     Viewport,
     type CanvasSyntheticEvent,
 } from "aljabr/ui/canvas";
@@ -69,7 +69,7 @@ edges.push({ fromId: 1, toId: 2 });
 
 export function mountDiagram(canvasEl: HTMLCanvasElement): () => void {
     const vp = Viewport(canvasEl);
-    const renderer = createCanvasRenderer(canvasEl, { viewport: vp });
+    const renderer = CanvasRenderer.create({ viewport: vp });
 
     vp.x.set(0);
     vp.y.set(0);
@@ -254,7 +254,7 @@ export function mountDiagram(canvasEl: HTMLCanvasElement): () => void {
     canvasEl.addEventListener("pointerleave", stopDrag);
     canvasEl.addEventListener("dblclick", onDblClick);
 
-    const unmount = renderer.mount(() => <Scene />);
+    const unmount = renderer.mount(() => <Scene />, canvasEl);
 
     return () => {
         unmount();
