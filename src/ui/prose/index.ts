@@ -53,7 +53,12 @@ export {
 } from "./selection-binding.ts";
 
 export { Prose } from "./component.tsx";
-export type { ProseProps } from "./component.tsx";
+export type {
+    ProseProps,
+    ProseInputEvent,
+    ProseSelectEvent,
+    ProseFocusEvent,
+} from "./component.tsx";
 
 export {
     EditorRange,
