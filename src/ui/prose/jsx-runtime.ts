@@ -73,6 +73,41 @@ type TextMarkProps = {
     marks?: MarkSet[];
 };
 
+// ---------------------------------------------------------------------------
+// Embed registry (type-level)
+//
+// `ProseEmbeds` is an interface that authors augment via TypeScript module
+// augmentation to register their embed payloads. The runtime renderer
+// (Phase 4) consults a parallel value-level registry; the two are kept in
+// sync by `<Prose embeds={…}>` typing.
+//
+// The package itself ships a default `image` registration on this interface
+// (the `image` embed is included automatically by `<Prose>`).
+// ---------------------------------------------------------------------------
+
+export interface ProseEmbeds {
+    image: { src: string; alt?: string | null; caption?: string | null };
+}
+
+type EmbedIntrinsics = {
+    [K in keyof ProseEmbeds]: Common & ProseEmbeds[K];
+};
+
+type StructuralIntrinsics = {
+    document:    Common & { state?: unknown; readonly?: boolean; bindings?: unknown };
+    block:       Common;
+    heading:     Common & { level: 1 | 2 | 3 | 4 | 5 | 6 };
+    quote:       Common;
+    code:        Common & { language?: string };
+    list:        Common & { ordered?: boolean };
+    listItem:    Common;
+    text:        Common & TextMarkProps;
+    break:       Common;
+    hr:          Common;
+    blockEmbed:  Common & { name: string; payload: unknown };
+    inlineEmbed: Common & { name: string; payload: unknown };
+};
+
 export namespace JSX {
     export type Element = ViewNode;
 
@@ -80,15 +115,6 @@ export namespace JSX {
         children: unknown;
     }
 
-    export interface IntrinsicElements {
-        document:  Common & { state?: unknown; readonly?: boolean; bindings?: unknown };
-        block:     Common;
-        heading:   Common & { level: 1 | 2 | 3 | 4 | 5 | 6 };
-        quote:     Common;
-        code:      Common & { language?: string };
-        text:      Common & TextMarkProps;
-        image:     Common & { src: string; alt?: string; caption?: string };
-        break:     Common;
-        hr:        Common;
-    }
+    export interface IntrinsicElements
+        extends StructuralIntrinsics, EmbedIntrinsics {}
 }

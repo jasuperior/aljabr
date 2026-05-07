@@ -21,9 +21,18 @@ describe("ProseNode — variant construction", () => {
         const code = ProseNode.Code("ts", []);
         expect(code.language).toBe("ts");
 
-        const image = ProseNode.Image("/cat.png", "a cat", null);
-        expect(image.src).toBe("/cat.png");
-        expect(image.alt).toBe("a cat");
+        const list = ProseNode.List(true, [
+            ProseNode.ListItem([ProseNode.Block([ProseNode.Text("one")])]),
+        ]);
+        expect(list.ordered).toBe(true);
+        expect(list.children.length).toBe(1);
+
+        const blockEmbed = ProseNode.BlockEmbed("image", { src: "/cat.png", alt: "a cat", caption: null });
+        expect(blockEmbed.name).toBe("image");
+        expect((blockEmbed.payload as { src: string }).src).toBe("/cat.png");
+
+        const inlineEmbed = ProseNode.InlineEmbed("reaction", { emoji: "🔥" });
+        expect(inlineEmbed.name).toBe("reaction");
 
         const hr = ProseNode.Hr();
         const br = ProseNode.HardBreak();
@@ -38,27 +47,33 @@ describe("ProseNode — variant construction", () => {
             ProseNode.Heading(1, []),
             ProseNode.Quote([]),
             ProseNode.Code(null, []),
+            ProseNode.List(false, []),
+            ProseNode.ListItem([]),
             ProseNode.Text("x", []),
-            ProseNode.Image("/x", null, null),
             ProseNode.HardBreak(),
             ProseNode.Hr(),
+            ProseNode.BlockEmbed("image", { src: "/x", alt: null, caption: null }),
+            ProseNode.InlineEmbed("reaction", { emoji: "🔥" }),
         ];
         const labels = cases.map((n) =>
             match(n, {
-                Document:  () => "doc",
-                Block:     () => "block",
-                Heading:   () => "heading",
-                Quote:     () => "quote",
-                Code:      () => "code",
-                Text:      () => "text",
-                Image:     () => "image",
-                HardBreak: () => "br",
-                Hr:        () => "hr",
+                Document:    () => "doc",
+                Block:       () => "block",
+                Heading:     () => "heading",
+                Quote:       () => "quote",
+                Code:        () => "code",
+                List:        () => "list",
+                ListItem:    () => "li",
+                Text:        () => "text",
+                HardBreak:   () => "br",
+                Hr:          () => "hr",
+                BlockEmbed:  () => "be",
+                InlineEmbed: () => "ie",
             }),
         );
         expect(labels).toEqual([
-            "doc", "block", "heading", "quote", "code",
-            "text", "image", "br", "hr",
+            "doc", "block", "heading", "quote", "code", "list", "li",
+            "text", "br", "hr", "be", "ie",
         ]);
     });
 });
@@ -150,8 +165,12 @@ describe("validatePlacement", () => {
             ProseNode.Heading(1, [ProseNode.Text("title")]),
             ProseNode.Quote([ProseNode.Block([ProseNode.Text("quoted")])]),
             ProseNode.Code("ts", [ProseNode.Text("const x = 1")]),
-            ProseNode.Image("/a.png", null, null),
+            ProseNode.BlockEmbed("image", { src: "/a.png", alt: null, caption: null }),
             ProseNode.Hr(),
+            ProseNode.List(false, [
+                ProseNode.ListItem([ProseNode.Block([ProseNode.Text("a")])]),
+                ProseNode.ListItem([ProseNode.Block([ProseNode.Text("b")])]),
+            ]),
         ]);
         expect(expectValid(root)).toBe(true);
     });
@@ -183,6 +202,51 @@ describe("validatePlacement", () => {
         ]);
         const errors = expectInvalid(root);
         expect(errors.length).toBeGreaterThanOrEqual(3);
+    });
+
+    it("accepts nested lists inside list items", () => {
+        const root = ProseNode.Document([
+            ProseNode.List(true, [
+                ProseNode.ListItem([
+                    ProseNode.Block([ProseNode.Text("outer")]),
+                    ProseNode.List(false, [
+                        ProseNode.ListItem([ProseNode.Block([ProseNode.Text("inner")])]),
+                    ]),
+                ]),
+            ]),
+        ]);
+        expect(expectValid(root)).toBe(true);
+    });
+
+    it("rejects non-ListItem children directly inside <list>", () => {
+        const root = ProseNode.Document([
+            ProseNode.List(false, [
+                ProseNode.Block([ProseNode.Text("not a list item")]) as unknown as never,
+            ] as never),
+        ]);
+        const errors = expectInvalid(root);
+        expect(errors.some((e) => e.parentTag === "List" && e.childTag === "Block")).toBe(true);
+    });
+
+    it("accepts BlockEmbed at block position and InlineEmbed at inline position", () => {
+        const root = ProseNode.Document([
+            ProseNode.BlockEmbed("image", { src: "/x", alt: null, caption: null }),
+            ProseNode.Block([
+                ProseNode.Text("hi "),
+                ProseNode.InlineEmbed("reaction", { emoji: "🔥" }),
+            ]),
+        ]);
+        expect(expectValid(root)).toBe(true);
+    });
+
+    it("rejects BlockEmbed inside an inline container", () => {
+        const root = ProseNode.Document([
+            ProseNode.Block([
+                ProseNode.BlockEmbed("image", { src: "/x", alt: null, caption: null }),
+            ]),
+        ]);
+        const errors = expectInvalid(root);
+        expect(errors.some((e) => e.parentTag === "Block" && e.childTag === "BlockEmbed")).toBe(true);
     });
 
     it("returns Validation.Valid carrying the original root on success", () => {

@@ -180,10 +180,20 @@ describe("Extending ProseCommand via merge() + [__] fallback", () => {
                 language,
                 children: children.map(serialize),
             }),
+            List: ({ ordered, children }) => ({
+                tag: "List",
+                ordered,
+                children: children.map(serialize),
+            }),
+            ListItem: ({ children }) => ({
+                tag: "ListItem",
+                children: children.map(serialize),
+            }),
             Text: ({ content }) => ({ tag: "Text", content }),
-            Image: ({ src }) => ({ tag: "Image", src }),
             HardBreak: () => ({ tag: "HardBreak" }),
             Hr: () => ({ tag: "Hr" }),
+            BlockEmbed: ({ name }) => ({ tag: "BlockEmbed", name }),
+            InlineEmbed: ({ name }) => ({ tag: "InlineEmbed", name }),
         });
 
     it("dispatches the extended command through Dispatcher", () => {

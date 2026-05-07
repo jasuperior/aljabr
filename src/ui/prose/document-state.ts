@@ -18,7 +18,7 @@ export type DocumentState = {
  * language. `Block` and `Quote` carry no payload.
  *
  * This is a small sibling union rather than a re-use of `ProseNode` tags
- * because (a) it doesn't include the void block kinds (`Image`, `Hr`) — those
+ * because (a) it doesn't include the void block kinds (`Hr`, `BlockEmbed`) — those
  * aren't valid conversion targets — and (b) the per-kind payload (heading
  * level, code language) is part of the command parameter, not derived from a
  * source node.

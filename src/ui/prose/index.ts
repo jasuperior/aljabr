@@ -10,12 +10,17 @@ export type {
     Heading,
     Quote,
     Code,
+    List,
+    ListItem,
     Text,
-    Image,
     HardBreak,
     Hr,
+    BlockEmbed,
+    InlineEmbed,
     PlacementError,
 } from "./document-model.ts";
+
+export type { ProseEmbeds } from "./jsx-runtime.ts";
 
 export {
     EditorRange,
@@ -49,5 +54,9 @@ export type {
     SplitBlockCmd,
     MergeBlockCmd,
     SetBlockKindCmd,
+    ToggleListCmd,
+    IndentListItemCmd,
+    OutdentListItemCmd,
+    SplitListItemCmd,
     CompoundCmd,
 } from "./commands.ts";

@@ -100,14 +100,27 @@ const serialize = (n: ProseNode): unknown =>
             content,
             marks: marks.map(serializeMark),
         }),
-        Image: ({ src, alt, caption }) => ({
-            tag: "Image",
-            src,
-            alt,
-            caption,
+        List: ({ ordered, children }) => ({
+            tag: "List",
+            ordered,
+            children: children.map(serialize),
+        }),
+        ListItem: ({ children }) => ({
+            tag: "ListItem",
+            children: children.map(serialize),
         }),
         HardBreak: () => ({ tag: "HardBreak" }),
         Hr: () => ({ tag: "Hr" }),
+        BlockEmbed: ({ name, payload }) => ({
+            tag: "BlockEmbed",
+            name,
+            payload,
+        }),
+        InlineEmbed: ({ name, payload }) => ({
+            tag: "InlineEmbed",
+            name,
+            payload,
+        }),
     });
 
 const serializeMark = (m: MarkSet): unknown =>
@@ -521,5 +534,136 @@ describe("Compound", () => {
         const d = newDispatcher(initial);
         expectValid(d.dispatch(ProseCommand.Compound([])));
         expect(serialize(d.peek()!)).toEqual(serialize(initial.doc));
+    });
+});
+
+// ---------------------------------------------------------------------------
+// List operations (Phase 3 §3.6 additive revisions)
+// ---------------------------------------------------------------------------
+
+const makeListDoc = (): DocumentState => {
+    const t1 = ProseNode.Text("alpha", [], "t1");
+    const t2 = ProseNode.Text("beta", [], "t2");
+    const b1 = ProseNode.Block([t1], "b1");
+    const b2 = ProseNode.Block([t2], "b2");
+    const li1 = ProseNode.ListItem([b1], "li1");
+    const li2 = ProseNode.ListItem([b2], "li2");
+    const list = ProseNode.List(false, [li1, li2], "L1");
+    const doc = ProseNode.Document([list], "d1") as Document;
+    return { doc, cursor: EditorRange.Cursor(point(doc, "t1", 0)) };
+};
+
+describe("ToggleList", () => {
+    it("wraps a single block into a List with one ListItem", () => {
+        const initial = makeSimpleDoc();
+        const range = EditorRange.Cursor(point(initial.doc, "t1", 0));
+        const d = newDispatcher(initial);
+        expectValid(d.dispatch(ProseCommand.ToggleList(range, false)));
+        const next = d.peek()!;
+        match(next.children[0]!, {
+            List: ({ ordered, children }) => {
+                expect(ordered).toBe(false);
+                expect(children.length).toBe(1);
+            },
+            [__]: () => { throw new Error("expected List"); },
+        });
+    });
+
+    it("round-trips wrap → unwrap", () => {
+        const initial = makeSimpleDoc();
+        const range = EditorRange.Cursor(point(initial.doc, "t1", 0));
+        expectRoundTrip(initial, ProseCommand.ToggleList(range, false));
+    });
+
+    it("unwraps a list when range is inside one", () => {
+        const initial = makeListDoc();
+        const range = EditorRange.Cursor(point(initial.doc, "t1", 0));
+        const d = newDispatcher(initial);
+        expectValid(d.dispatch(ProseCommand.ToggleList(range, false)));
+        // After unwrap, document children should be the two blocks (no List).
+        const next = d.peek()!;
+        expect(next.children.length).toBe(2);
+        match(next.children[0]!, {
+            Block: () => {},
+            [__]: () => { throw new Error("expected Block after unwrap"); },
+        });
+    });
+});
+
+describe("IndentListItem", () => {
+    it("nests a list item under its previous sibling", () => {
+        const initial = makeListDoc();
+        const range = EditorRange.Cursor(point(initial.doc, "t2", 0));
+        const d = newDispatcher(initial);
+        expectValid(d.dispatch(ProseCommand.IndentListItem(range)));
+        // After indent, top list has one item (li1), and li1 contains its block
+        // plus a nested List with li2.
+        const next = d.peek()!;
+        match(next.children[0]!, {
+            List: ({ children }) => {
+                expect(children.length).toBe(1);
+                const li1 = children[0]!;
+                const kids = li1.children;
+                match(kids[kids.length - 1]!, {
+                    List: ({ children: nested }) => {
+                        expect(nested.length).toBe(1);
+                    },
+                    [__]: () => { throw new Error("expected nested List"); },
+                });
+            },
+            [__]: () => { throw new Error("expected List"); },
+        });
+    });
+
+    it("rejects when the item is the first in its list", () => {
+        const initial = makeListDoc();
+        const range = EditorRange.Cursor(point(initial.doc, "t1", 0));
+        const d = newDispatcher(initial);
+        expectInvalid(d.dispatch(ProseCommand.IndentListItem(range)));
+    });
+
+    it("round-trips via OutdentListItem", () => {
+        const initial = makeListDoc();
+        const range = EditorRange.Cursor(point(initial.doc, "t2", 0));
+        expectRoundTrip(initial, ProseCommand.IndentListItem(range));
+    });
+});
+
+describe("OutdentListItem", () => {
+    it("promotes a top-level list item out of its list", () => {
+        const initial = makeListDoc();
+        const range = EditorRange.Cursor(point(initial.doc, "t1", 0));
+        const d = newDispatcher(initial);
+        expectValid(d.dispatch(ProseCommand.OutdentListItem(range)));
+        const next = d.peek()!;
+        // li1's promoted block should be document.children[0]; remaining list
+        // (with li2) follows.
+        match(next.children[0]!, {
+            Block: () => {},
+            [__]: () => { throw new Error("expected promoted Block"); },
+        });
+    });
+});
+
+describe("SplitListItem", () => {
+    it("splits a list item at a Text point into two sibling items", () => {
+        const initial = makeListDoc();
+        const at = point(initial.doc, "t1", 2);
+        const d = newDispatcher(initial);
+        expectValid(d.dispatch(ProseCommand.SplitListItem(at)));
+        const next = d.peek()!;
+        match(next.children[0]!, {
+            List: ({ children }) => {
+                // Started with 2 items; split adds one → 3 items.
+                expect(children.length).toBe(3);
+            },
+            [__]: () => { throw new Error("expected List"); },
+        });
+    });
+
+    it("round-trips via the split block's MergeBlock inverse", () => {
+        const initial = makeListDoc();
+        const at = point(initial.doc, "t1", 2);
+        expectRoundTrip(initial, ProseCommand.SplitListItem(at));
     });
 });

@@ -46,19 +46,22 @@ export const getNodeId = (node: ProseNode): string =>
 // ProseNode union
 // ============================================================================
 
-export type Document  = Variant<"Document",  { children: ProseNode[] }>;
-export type Block     = Variant<"Block",     { children: ProseNode[] }>;
-export type Heading   = Variant<"Heading",   { level: 1 | 2 | 3 | 4 | 5 | 6; children: ProseNode[] }>;
-export type Quote     = Variant<"Quote",     { children: ProseNode[] }>;
-export type Code      = Variant<"Code",      { language: string | null; children: ProseNode[] }>;
-export type Text      = Variant<"Text",      { content: string; marks: MarkSet[] }>;
-export type Image     = Variant<"Image",     { src: string; alt: string | null; caption: string | null }>;
-export type HardBreak = Variant<"HardBreak", {}>;
-export type Hr        = Variant<"Hr",        {}>;
+export type Document    = Variant<"Document",    { children: ProseNode[] }>;
+export type Block       = Variant<"Block",       { children: ProseNode[] }>;
+export type Heading     = Variant<"Heading",     { level: 1 | 2 | 3 | 4 | 5 | 6; children: ProseNode[] }>;
+export type Quote       = Variant<"Quote",       { children: ProseNode[] }>;
+export type Code        = Variant<"Code",        { language: string | null; children: ProseNode[] }>;
+export type List        = Variant<"List",        { ordered: boolean; children: ListItem[] }>;
+export type ListItem    = Variant<"ListItem",    { children: ProseNode[] }>;
+export type Text        = Variant<"Text",        { content: string; marks: MarkSet[] }>;
+export type HardBreak   = Variant<"HardBreak",   {}>;
+export type Hr          = Variant<"Hr",          {}>;
+export type BlockEmbed  = Variant<"BlockEmbed",  { name: string; payload: unknown }>;
+export type InlineEmbed = Variant<"InlineEmbed", { name: string; payload: unknown }>;
 
 export type ProseNode =
-    | Document | Block | Heading | Quote | Code
-    | Text | Image | HardBreak | Hr;
+    | Document | Block | Heading | Quote | Code | List | ListItem
+    | Text | HardBreak | Hr | BlockEmbed | InlineEmbed;
 
 // Underlying variant factories. The closed primitive set means ProseNode does
 // not need union-algebra operations (`merge`, `extend`) — so we wrap each
@@ -66,48 +69,63 @@ export type ProseNode =
 // variant instance (the union machinery uses Object.assign internally, which
 // drops non-enumerable properties from the payload).
 const _ProseNode = union([]).typed({
-    Document:  (children: ProseNode[]) => ({ children }) as Document,
-    Block:     (children: ProseNode[]) => ({ children }) as Block,
-    Heading:   (level: 1 | 2 | 3 | 4 | 5 | 6, children: ProseNode[]) =>
+    Document:    (children: ProseNode[]) => ({ children }) as Document,
+    Block:       (children: ProseNode[]) => ({ children }) as Block,
+    Heading:     (level: 1 | 2 | 3 | 4 | 5 | 6, children: ProseNode[]) =>
         ({ level, children }) as Heading,
-    Quote:     (children: ProseNode[]) => ({ children }) as Quote,
-    Code:      (language: string | null, children: ProseNode[]) =>
+    Quote:       (children: ProseNode[]) => ({ children }) as Quote,
+    Code:        (language: string | null, children: ProseNode[]) =>
         ({ language, children }) as Code,
-    Text:      (content: string, marks: MarkSet[] = []) =>
+    List:        (ordered: boolean, children: ListItem[]) =>
+        ({ ordered, children }) as List,
+    ListItem:    (children: ProseNode[]) => ({ children }) as ListItem,
+    Text:        (content: string, marks: MarkSet[] = []) =>
         ({ content, marks }) as Text,
-    Image:     (src: string, alt: string | null = null, caption: string | null = null) =>
-        ({ src, alt, caption }) as Image,
-    HardBreak: () => ({}) as HardBreak,
-    Hr:        () => ({}) as Hr,
+    HardBreak:   () => ({}) as HardBreak,
+    Hr:          () => ({}) as Hr,
+    BlockEmbed:  (name: string, payload: unknown) =>
+        ({ name, payload }) as BlockEmbed,
+    InlineEmbed: (name: string, payload: unknown) =>
+        ({ name, payload }) as InlineEmbed,
 });
 
 export const ProseNode = {
-    Document:  (children: ProseNode[], id?: string): Document =>
+    Document:    (children: ProseNode[], id?: string): Document =>
         stampId(_ProseNode.Document(children), id),
-    Block:     (children: ProseNode[], id?: string): Block =>
+    Block:       (children: ProseNode[], id?: string): Block =>
         stampId(_ProseNode.Block(children), id),
-    Heading:   (level: 1 | 2 | 3 | 4 | 5 | 6, children: ProseNode[], id?: string): Heading =>
+    Heading:     (level: 1 | 2 | 3 | 4 | 5 | 6, children: ProseNode[], id?: string): Heading =>
         stampId(_ProseNode.Heading(level, children), id),
-    Quote:     (children: ProseNode[], id?: string): Quote =>
+    Quote:       (children: ProseNode[], id?: string): Quote =>
         stampId(_ProseNode.Quote(children), id),
-    Code:      (language: string | null, children: ProseNode[], id?: string): Code =>
+    Code:        (language: string | null, children: ProseNode[], id?: string): Code =>
         stampId(_ProseNode.Code(language, children), id),
-    Text:      (content: string, marks: MarkSet[] = [], id?: string): Text =>
+    List:        (ordered: boolean, children: ListItem[], id?: string): List =>
+        stampId(_ProseNode.List(ordered, children), id),
+    ListItem:    (children: ProseNode[], id?: string): ListItem =>
+        stampId(_ProseNode.ListItem(children), id),
+    Text:        (content: string, marks: MarkSet[] = [], id?: string): Text =>
         stampId(_ProseNode.Text(content, marks), id),
-    Image:     (src: string, alt: string | null = null, caption: string | null = null, id?: string): Image =>
-        stampId(_ProseNode.Image(src, alt, caption), id),
-    HardBreak: (id?: string): HardBreak => stampId(_ProseNode.HardBreak(), id),
-    Hr:        (id?: string): Hr => stampId(_ProseNode.Hr(), id),
+    HardBreak:   (id?: string): HardBreak => stampId(_ProseNode.HardBreak(), id),
+    Hr:          (id?: string): Hr => stampId(_ProseNode.Hr(), id),
+    BlockEmbed:  (name: string, payload: unknown, id?: string): BlockEmbed =>
+        stampId(_ProseNode.BlockEmbed(name, payload), id),
+    InlineEmbed: (name: string, payload: unknown, id?: string): InlineEmbed =>
+        stampId(_ProseNode.InlineEmbed(name, payload), id),
 } as const;
 
 // ============================================================================
 // Placement rules and validation
 // ============================================================================
 
-const BLOCK_CONTAINERS = new Set(["Document", "Quote"]);
+const BLOCK_CONTAINERS = new Set(["Document", "Quote", "ListItem"]);
 const INLINE_CONTAINERS = new Set(["Block", "Heading", "Code"]);
-const BLOCKS = new Set(["Block", "Heading", "Quote", "Code", "Image", "Hr"]);
-const INLINES = new Set(["Text", "HardBreak"]);
+const LIST_CONTAINERS = new Set(["List"]);
+const BLOCKS = new Set([
+    "Block", "Heading", "Quote", "Code", "List", "Hr", "BlockEmbed",
+]);
+const LIST_CHILDREN = new Set(["ListItem"]);
+const INLINES = new Set(["Text", "HardBreak", "InlineEmbed"]);
 
 export type PlacementError = {
     nodeId: string;
@@ -119,6 +137,7 @@ export type PlacementError = {
 const allowedChildren = (parent: string): Set<string> | null => {
     if (BLOCK_CONTAINERS.has(parent)) return BLOCKS;
     if (INLINE_CONTAINERS.has(parent)) return INLINES;
+    if (LIST_CONTAINERS.has(parent)) return LIST_CHILDREN;
     return null; // leaf node — no children allowed
 };
 
@@ -158,9 +177,12 @@ const collectErrors = (node: ProseNode, errors: PlacementError[]): void => {
  * Validate the structural placement rules of a prose tree.
  *
  * Rules:
- *  - `Document` and `Quote` hold blocks (`Block`, `Heading`, `Quote`, `Code`, `Image`, `Hr`).
- *  - `Block`, `Heading`, `Code` hold inlines (`Text`, `HardBreak`).
- *  - `Text`, `HardBreak`, `Image`, `Hr` are leaves.
+ *  - `Document`, `Quote`, and `ListItem` hold blocks (`Block`, `Heading`,
+ *    `Quote`, `Code`, `List`, `Hr`, `BlockEmbed`).
+ *  - `List` holds `ListItem` children only.
+ *  - `Block`, `Heading`, `Code` hold inlines (`Text`, `HardBreak`,
+ *    `InlineEmbed`).
+ *  - `Text`, `HardBreak`, `Hr`, `BlockEmbed`, `InlineEmbed` are leaves.
  */
 export const validatePlacement = (
     root: ProseNode,

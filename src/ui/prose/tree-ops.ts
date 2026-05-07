@@ -19,12 +19,15 @@ import {
     ProseNode,
     getNodeId,
     type Block,
+    type BlockEmbed,
     type Code,
     type Document,
     type HardBreak,
     type Heading,
     type Hr,
-    type Image,
+    type InlineEmbed,
+    type List,
+    type ListItem,
     type MarkSet,
     type Quote,
     type Text,
@@ -36,19 +39,24 @@ import type { RangePoint } from "./editor-range.ts";
 // ============================================================================
 
 const BLOCK_TAGS = new Set(["Block", "Heading", "Quote", "Code"]);
-const VOID_BLOCK_TAGS = new Set(["Image", "Hr"]);
-const INLINE_TAGS = new Set(["Text", "HardBreak"]);
+const VOID_BLOCK_TAGS = new Set(["Hr", "BlockEmbed"]);
+const INLINE_TAGS = new Set(["Text", "HardBreak", "InlineEmbed"]);
 
 export const isBlock = (n: ProseNode): n is Block | Heading | Quote | Code =>
     BLOCK_TAGS.has(getTag(n));
 
-export const isVoidBlock = (n: ProseNode): n is Image | Hr =>
+export const isVoidBlock = (n: ProseNode): n is Hr | BlockEmbed =>
     VOID_BLOCK_TAGS.has(getTag(n));
 
-export const isInline = (n: ProseNode): n is Text | HardBreak =>
+export const isInline = (n: ProseNode): n is Text | HardBreak | InlineEmbed =>
     INLINE_TAGS.has(getTag(n));
 
 export const isText = (n: ProseNode): n is Text => getTag(n) === "Text";
+
+export const isList = (n: ProseNode): n is List => getTag(n) === "List";
+
+export const isListItem = (n: ProseNode): n is ListItem =>
+    getTag(n) === "ListItem";
 
 // ============================================================================
 // Children access
@@ -56,7 +64,7 @@ export const isText = (n: ProseNode): n is Text => getTag(n) === "Text";
 
 const hasChildren = (
     n: ProseNode,
-): n is Document | Block | Heading | Quote | Code =>
+): n is Document | Block | Heading | Quote | Code | List | ListItem =>
     "children" in (n as object);
 
 export const childrenOf = (n: ProseNode): ProseNode[] =>
@@ -68,15 +76,19 @@ export const childrenOf = (n: ProseNode): ProseNode[] =>
  */
 export const withChildren = (n: ProseNode, children: ProseNode[]): ProseNode =>
     match(n, {
-        Document: () => ProseNode.Document(children, getNodeId(n)) as ProseNode,
-        Block:    () => ProseNode.Block(children, getNodeId(n)) as ProseNode,
-        Heading:  ({ level }: Heading) => ProseNode.Heading(level, children, getNodeId(n)) as ProseNode,
-        Quote:    () => ProseNode.Quote(children, getNodeId(n)) as ProseNode,
-        Code:     ({ language }: Code) => ProseNode.Code(language, children, getNodeId(n)) as ProseNode,
-        Text:     () => n,
-        Image:    () => n,
-        HardBreak:() => n,
-        Hr:       () => n,
+        Document:    () => ProseNode.Document(children, getNodeId(n)) as ProseNode,
+        Block:       () => ProseNode.Block(children, getNodeId(n)) as ProseNode,
+        Heading:     ({ level }: Heading) => ProseNode.Heading(level, children, getNodeId(n)) as ProseNode,
+        Quote:       () => ProseNode.Quote(children, getNodeId(n)) as ProseNode,
+        Code:        ({ language }: Code) => ProseNode.Code(language, children, getNodeId(n)) as ProseNode,
+        List:        ({ ordered }: List) =>
+            ProseNode.List(ordered, children as ListItem[], getNodeId(n)) as ProseNode,
+        ListItem:    () => ProseNode.ListItem(children, getNodeId(n)) as ProseNode,
+        Text:        () => n,
+        HardBreak:   () => n,
+        Hr:          () => n,
+        BlockEmbed:  () => n,
+        InlineEmbed: () => n,
     });
 
 // ============================================================================
@@ -130,7 +142,8 @@ export const locateBlock = (
     const found = locate(root, id);
     if (!found) return null;
     if (isBlock(found.node) || isVoidBlock(found.node)) return found;
-    // Walk up ancestors looking for a block.
+    // Walk up ancestors looking for a block. ListItems are treated as
+    // block-equivalent for traversal purposes (see roadmap §3.6).
     for (let i = found.ancestors.length - 1; i >= 0; i--) {
         const a = found.ancestors[i]!;
         if (isBlock(a)) {
@@ -207,7 +220,7 @@ export type Walk = {
  * character offset at which its content *starts*.
  *
  * Convention: `Text` nodes contribute `content.length` characters;
- * `HardBreak` contributes 1; `Image` and `Hr` contribute 0; structural
+ * `HardBreak` contributes 1; `Hr`, `BlockEmbed`, `InlineEmbed` contribute 0; structural
  * containers contribute 0 themselves but their children do.
  *
  * The `absolute` returned is monotonic and totals to the document's logical

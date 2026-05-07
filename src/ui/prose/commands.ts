@@ -21,6 +21,8 @@ import { BlockKind, type DocumentState } from "./document-state.ts";
 import {
     childrenOf,
     isBlock,
+    isList,
+    isListItem,
     isText,
     locate,
     locateBlock,
@@ -33,6 +35,7 @@ import {
     walkInOrder,
     withChildren,
 } from "./tree-ops.ts";
+import type { List, ListItem } from "./document-model.ts";
 
 // ============================================================================
 // ProseCommand union
@@ -47,12 +50,18 @@ export type RemoveMarkCmd     = Variant<"RemoveMark",     { markTag: string; ran
 export type SplitBlockCmd     = Variant<"SplitBlock",     { at: RangePoint; newBlockId: string | null }>;
 export type MergeBlockCmd     = Variant<"MergeBlock",     { at: RangePoint }>;
 export type SetBlockKindCmd   = Variant<"SetBlockKind",   { range: EditorRange; kind: BlockKind }>;
+export type ToggleListCmd      = Variant<"ToggleList",      { range: EditorRange; ordered: boolean }>;
+export type IndentListItemCmd  = Variant<"IndentListItem",  { range: EditorRange }>;
+export type OutdentListItemCmd = Variant<"OutdentListItem", { range: EditorRange }>;
+export type SplitListItemCmd   = Variant<"SplitListItem",   { at: RangePoint }>;
 export type CompoundCmd       = Variant<"Compound",       { steps: ProseCommand[] }>;
 
 export type ProseCommand =
     | SetCursorCmd | InsertCmd | DeleteBackwardCmd | DeleteForwardCmd
     | FormatCmd | RemoveMarkCmd | SplitBlockCmd | MergeBlockCmd
-    | SetBlockKindCmd | CompoundCmd;
+    | SetBlockKindCmd
+    | ToggleListCmd | IndentListItemCmd | OutdentListItemCmd | SplitListItemCmd
+    | CompoundCmd;
 
 export const ProseCommand = union([]).typed({
     SetCursor:      (range: EditorRange) => ({ range }) as SetCursorCmd,
@@ -69,6 +78,11 @@ export const ProseCommand = union([]).typed({
     MergeBlock:     (at: RangePoint) => ({ at }) as MergeBlockCmd,
     SetBlockKind:   (range: EditorRange, kind: BlockKind) =>
         ({ range, kind }) as SetBlockKindCmd,
+    ToggleList:      (range: EditorRange, ordered: boolean) =>
+        ({ range, ordered }) as ToggleListCmd,
+    IndentListItem:  (range: EditorRange) => ({ range }) as IndentListItemCmd,
+    OutdentListItem: (range: EditorRange) => ({ range }) as OutdentListItemCmd,
+    SplitListItem:   (at: RangePoint) => ({ at }) as SplitListItemCmd,
     Compound:       (steps: ProseCommand[]) => ({ steps }) as CompoundCmd,
 });
 
@@ -689,15 +703,18 @@ const applySplitBlock = (
     // Build the right block as the same kind, with the new ID (or pinned).
     const rightBlock = (() => {
         const kindMatch = match(block, {
-            Block:    () => ProseNode.Block(rightKids, cmd.newBlockId ?? undefined),
-            Heading:  ({ level }) => ProseNode.Heading(level, rightKids, cmd.newBlockId ?? undefined),
-            Quote:    () => ProseNode.Quote(rightKids, cmd.newBlockId ?? undefined),
-            Code:     ({ language }) => ProseNode.Code(language, rightKids, cmd.newBlockId ?? undefined),
-            Document: () => block,
-            Text:     () => block,
-            Image:    () => block,
-            HardBreak:() => block,
-            Hr:       () => block,
+            Block:       () => ProseNode.Block(rightKids, cmd.newBlockId ?? undefined),
+            Heading:     ({ level }) => ProseNode.Heading(level, rightKids, cmd.newBlockId ?? undefined),
+            Quote:       () => ProseNode.Quote(rightKids, cmd.newBlockId ?? undefined),
+            Code:        ({ language }) => ProseNode.Code(language, rightKids, cmd.newBlockId ?? undefined),
+            Document:    () => block,
+            List:        () => block,
+            ListItem:    () => block,
+            Text:        () => block,
+            HardBreak:   () => block,
+            Hr:          () => block,
+            BlockEmbed:  () => block,
+            InlineEmbed: () => block,
         });
         return kindMatch;
     })();
@@ -733,6 +750,58 @@ const applyMergeBlock = (
     const idx = siblings.findIndex(
         (c) => getNodeId(c) === blockInfo.blockId,
     );
+    // Cross-ListItem fallback: when this block is the first in its ListItem
+    // and that ListItem has a preceding sibling ListItem, merge with the last
+    // block of the preceding ListItem and drop the now-empty current ListItem.
+    if (idx === 0 && isListItem(parentLocated.node)) {
+        const enc = locateEnclosingListItem(state.doc, blockInfo.blockId);
+        if (enc && enc.itemIndex > 0) {
+            const prevItem = enc.list.children[enc.itemIndex - 1]!;
+            const prevItemKids = childrenOf(prevItem);
+            const prevItemLastBlock = prevItemKids[prevItemKids.length - 1];
+            if (prevItemLastBlock && isBlock(prevItemLastBlock)) {
+                const mergedLastBlock = withChildren(prevItemLastBlock, [
+                    ...childrenOf(prevItemLastBlock),
+                    ...childrenOf(blockNode),
+                ]);
+                const newPrevItemKids = [
+                    ...prevItemKids.slice(0, prevItemKids.length - 1),
+                    mergedLastBlock,
+                ];
+                const newPrevItem = ProseNode.ListItem(newPrevItemKids, getNodeId(prevItem));
+                const newListChildren = [
+                    ...enc.list.children.slice(0, enc.itemIndex - 1),
+                    newPrevItem,
+                    ...enc.list.children.slice(enc.itemIndex + 1),
+                ];
+                const newList = ProseNode.List(
+                    enc.list.ordered,
+                    newListChildren,
+                    getNodeId(enc.list),
+                );
+                const newDoc = replaceById(
+                    state.doc,
+                    getNodeId(enc.list),
+                    newList,
+                ) as Document;
+                // Inverse: SplitListItem at the start of the original first
+                // child of the merged-in block (the boundary).
+                const firstChild = childrenOf(blockNode)[0];
+                if (!firstChild)
+                    return ok(
+                        { doc: newDoc, cursor: state.cursor },
+                        ProseCommand.Compound([]),
+                    );
+                const splitAt: RangePoint = isText(firstChild)
+                    ? { ...rangePointAt(newDoc, getNodeId(firstChild), 0)!, offset: 0 }
+                    : rangePointAt(newDoc, getNodeId(firstChild), 0)!;
+                const inverse = ProseCommand.SplitListItem(splitAt);
+                return ok({ doc: newDoc, cursor: state.cursor }, inverse);
+            }
+        }
+        return reject("MergeBlock: no preceding block to merge with");
+    }
+
     if (idx <= 0)
         return reject("MergeBlock: no preceding block to merge with");
 
@@ -816,15 +885,18 @@ const applySetBlockKind = (
 
         seen.add(id);
         const prevKind = match(v.node, {
-            Block:    () => BlockKind.Block(),
-            Heading:  ({ level }) => BlockKind.Heading(level),
-            Quote:    () => BlockKind.Quote(),
-            Code:     ({ language }) => BlockKind.Code(language),
-            Document: () => BlockKind.Block(),
-            Text:     () => BlockKind.Block(),
-            Image:    () => BlockKind.Block(),
-            HardBreak:() => BlockKind.Block(),
-            Hr:       () => BlockKind.Block(),
+            Block:       () => BlockKind.Block(),
+            Heading:     ({ level }) => BlockKind.Heading(level),
+            Quote:       () => BlockKind.Quote(),
+            Code:        ({ language }) => BlockKind.Code(language),
+            Document:    () => BlockKind.Block(),
+            List:        () => BlockKind.Block(),
+            ListItem:    () => BlockKind.Block(),
+            Text:        () => BlockKind.Block(),
+            HardBreak:   () => BlockKind.Block(),
+            Hr:          () => BlockKind.Block(),
+            BlockEmbed:  () => BlockKind.Block(),
+            InlineEmbed: () => BlockKind.Block(),
         });
         targets.push({ blockId: id, prevKind });
 
@@ -867,15 +939,18 @@ const applySetBlockKindNode = (
         return reject("SetBlockKind: target must be a block");
 
     const prevKind = match(found.node, {
-        Block:    () => BlockKind.Block(),
-        Heading:  ({ level }) => BlockKind.Heading(level),
-        Quote:    () => BlockKind.Quote(),
-        Code:     ({ language }) => BlockKind.Code(language),
-        Document: () => BlockKind.Block(),
-        Text:     () => BlockKind.Block(),
-        Image:    () => BlockKind.Block(),
-        HardBreak:() => BlockKind.Block(),
-        Hr:       () => BlockKind.Block(),
+        Block:       () => BlockKind.Block(),
+        Heading:     ({ level }) => BlockKind.Heading(level),
+        Quote:       () => BlockKind.Quote(),
+        Code:        ({ language }) => BlockKind.Code(language),
+        Document:    () => BlockKind.Block(),
+        List:        () => BlockKind.Block(),
+        ListItem:    () => BlockKind.Block(),
+        Text:        () => BlockKind.Block(),
+        HardBreak:   () => BlockKind.Block(),
+        Hr:          () => BlockKind.Block(),
+        BlockEmbed:  () => BlockKind.Block(),
+        InlineEmbed: () => BlockKind.Block(),
     });
     const replacement = match(kind, {
         Block:   () => ProseNode.Block(childrenOf(found.node), nodeId),
@@ -888,6 +963,391 @@ const applySetBlockKindNode = (
         { doc: newDoc, cursor: state.cursor },
         ProseCommand.SetBlockKind(EditorRange.Node(nodeId), prevKind),
     );
+};
+
+// ============================================================================
+// List operations
+// ============================================================================
+
+/**
+ * Locate the nearest enclosing `<List>` ancestor of the node identified by
+ * `nodeId`. Returns the located List along with the index of the enclosing
+ * `ListItem` within that list. Returns `null` if `nodeId` is not inside a
+ * List.
+ */
+const locateEnclosingList = (
+    doc: Document,
+    nodeId: string,
+): { list: List; listIndexInParent: number; listParentId: string; itemIndex: number } | null => {
+    const found = locate(doc, nodeId);
+    if (!found) return null;
+    let lastListItemAncestorIndex = -1;
+    for (let i = found.ancestors.length - 1; i >= 0; i--) {
+        const a = found.ancestors[i]!;
+        if (isListItem(a)) lastListItemAncestorIndex = i;
+        if (isList(a)) {
+            const list = a as List;
+            const listLocated = locate(doc, getNodeId(list));
+            if (!listLocated || !listLocated.parent) return null;
+            const itemIndex = lastListItemAncestorIndex >= 0
+                ? list.children.findIndex(
+                    (c) => getNodeId(c) === getNodeId(found.ancestors[lastListItemAncestorIndex]!),
+                )
+                : -1;
+            return {
+                list,
+                listIndexInParent: listLocated.indexInParent,
+                listParentId: getNodeId(listLocated.parent),
+                itemIndex,
+            };
+        }
+    }
+    return null;
+};
+
+const applyToggleList = (
+    state: DocumentState,
+    cmd: ToggleListCmd,
+): ApplyOut => {
+    const bounds = rangeBounds(cmd.range);
+    if (!bounds) return reject("ToggleList: Node ranges not supported");
+    const [from] = bounds;
+
+    // Unwrap path: range start is inside a List → replace the List with its
+    // items' children flattened.
+    const enclosing = locateEnclosingList(state.doc, from.nodeId);
+    if (enclosing) {
+        const { list, listParentId } = enclosing;
+        const flattened: ProseNode[] = list.children.flatMap((li) => childrenOf(li));
+        const listId = getNodeId(list);
+
+        const newDoc = updateChildren(state.doc, listParentId, (kids) => {
+            const idx = kids.findIndex((c) => getNodeId(c) === listId);
+            return [...kids.slice(0, idx), ...flattened, ...kids.slice(idx + 1)];
+        }) as Document;
+
+        // Inverse: ToggleList over the same range — re-runs the wrap path on
+        // the (now unwrapped) blocks.
+        const inverse = ProseCommand.ToggleList(cmd.range, list.ordered);
+        return ok({ doc: newDoc, cursor: state.cursor }, inverse);
+    }
+
+    // Wrap path: locate the block ancestor of `from`. Wrap that single block
+    // into a `<List>` of one `<ListItem>`. (Multi-block wrap is deferred.)
+    const blockLocated = locateBlock(state.doc, from.nodeId);
+    if (!blockLocated || !blockLocated.parent)
+        return reject("ToggleList: target has no block ancestor");
+    const block = blockLocated.node;
+    const blockId = getNodeId(block);
+    const blockParentId = getNodeId(blockLocated.parent);
+
+    const item = ProseNode.ListItem([block]);
+    const list = ProseNode.List(cmd.ordered, [item]);
+
+    const newDoc = updateChildren(state.doc, blockParentId, (kids) => {
+        const idx = kids.findIndex((c) => getNodeId(c) === blockId);
+        return [...kids.slice(0, idx), list, ...kids.slice(idx + 1)];
+    }) as Document;
+
+    // Inverse: ToggleList over the same range — re-runs the unwrap path
+    // since the block is now inside the new List.
+    const inverse = ProseCommand.ToggleList(cmd.range, cmd.ordered);
+    return ok({ doc: newDoc, cursor: state.cursor }, inverse);
+};
+
+/**
+ * Locate the `<ListItem>` enclosing `nodeId`, along with its parent `<List>`
+ * and that list's location. Returns null if `nodeId` is not inside a list
+ * item.
+ */
+const locateEnclosingListItem = (
+    doc: Document,
+    nodeId: string,
+):
+    | {
+        item: ListItem;
+        itemIndex: number;
+        list: List;
+        listIndexInListParent: number;
+        listParentId: string;
+    }
+    | null => {
+    const found = locate(doc, nodeId);
+    if (!found) return null;
+    for (let i = found.ancestors.length - 1; i >= 0; i--) {
+        const a = found.ancestors[i]!;
+        if (isListItem(a)) {
+            // Find the List parent of this ListItem.
+            for (let j = i - 1; j >= 0; j--) {
+                const b = found.ancestors[j]!;
+                if (isList(b)) {
+                    const list = b as List;
+                    const itemIndex = list.children.findIndex(
+                        (c) => getNodeId(c) === getNodeId(a),
+                    );
+                    const listLocated = locate(doc, getNodeId(list));
+                    if (!listLocated || !listLocated.parent) return null;
+                    return {
+                        item: a as ListItem,
+                        itemIndex,
+                        list,
+                        listIndexInListParent: listLocated.indexInParent,
+                        listParentId: getNodeId(listLocated.parent),
+                    };
+                }
+            }
+            return null;
+        }
+    }
+    return null;
+};
+
+const applyIndentListItem = (
+    state: DocumentState,
+    cmd: IndentListItemCmd,
+): ApplyOut => {
+    const bounds = rangeBounds(cmd.range);
+    if (!bounds) return reject("IndentListItem: Node ranges not supported");
+    const [from] = bounds;
+
+    const enc = locateEnclosingListItem(state.doc, from.nodeId);
+    if (!enc) return reject("IndentListItem: not inside a list item");
+    if (enc.itemIndex === 0)
+        return reject("IndentListItem: first item has no preceding sibling");
+
+    const { item, itemIndex, list } = enc;
+    const prev = list.children[itemIndex - 1]!;
+    const prevKids = childrenOf(prev);
+    const lastChildOfPrev = prevKids[prevKids.length - 1];
+
+    // If prev's last child is a List of the same `ordered` value, append into
+    // it; otherwise create a nested list at the end of prev.
+    let newPrev: ListItem;
+    if (lastChildOfPrev && isList(lastChildOfPrev) && lastChildOfPrev.ordered === list.ordered) {
+        const targetList = lastChildOfPrev;
+        const newTargetList = ProseNode.List(
+            targetList.ordered,
+            [...targetList.children, item],
+            getNodeId(targetList),
+        );
+        newPrev = ProseNode.ListItem(
+            [...prevKids.slice(0, prevKids.length - 1), newTargetList],
+            getNodeId(prev),
+        );
+    } else {
+        const nestedList = ProseNode.List(list.ordered, [item]);
+        newPrev = ProseNode.ListItem([...prevKids, nestedList], getNodeId(prev));
+    }
+
+    const newListChildren = [
+        ...list.children.slice(0, itemIndex - 1),
+        newPrev,
+        ...list.children.slice(itemIndex + 1),
+    ];
+    const newList = ProseNode.List(list.ordered, newListChildren, getNodeId(list));
+    const newDoc = replaceById(state.doc, getNodeId(list), newList) as Document;
+
+    const inverse = ProseCommand.OutdentListItem(cmd.range);
+    return ok({ doc: newDoc, cursor: state.cursor }, inverse);
+};
+
+const applyOutdentListItem = (
+    state: DocumentState,
+    cmd: OutdentListItemCmd,
+): ApplyOut => {
+    const bounds = rangeBounds(cmd.range);
+    if (!bounds) return reject("OutdentListItem: Node ranges not supported");
+    const [from] = bounds;
+
+    const enc = locateEnclosingListItem(state.doc, from.nodeId);
+    if (!enc) return reject("OutdentListItem: not inside a list item");
+    const { item, itemIndex, list, listParentId } = enc;
+
+    // Find the parent of the List. Two cases:
+    //   - List is inside a ListItem (nested list) → outdent the item to be
+    //     a sibling of that enclosing ListItem within its parent List.
+    //   - List is inside Document/Quote → outdent splits the list and the
+    //     item becomes a sibling block of the List in that container.
+    const listParentLocated = locate(state.doc, listParentId);
+    if (!listParentLocated) return conflict("OutdentListItem: list parent missing");
+    const listParent = listParentLocated.node;
+
+    if (isListItem(listParent)) {
+        // Nested-list case.
+        // Split the inner list around `item`: items before stay under listParent
+        // in the existing nested List; items after move to a new nested List
+        // appended inside a new ListItem that follows listParent in the outer List.
+        const before = list.children.slice(0, itemIndex);
+        const after = list.children.slice(itemIndex + 1);
+
+        const outerListLocated = locate(state.doc, listParentId);
+        if (!outerListLocated || !outerListLocated.parent)
+            return conflict("OutdentListItem: outer list missing");
+        const outerList = outerListLocated.parent;
+        if (!isList(outerList))
+            return reject("OutdentListItem: nested list not inside a List");
+        const outerListId = getNodeId(outerList);
+        const listParentIndexInOuter = outerListLocated.indexInParent;
+
+        // Build the new listParent (the enclosing ListItem) without the inner list
+        // (or with the inner list trimmed to `before`).
+        const listParentKids = childrenOf(listParent);
+        const innerListIndex = listParentKids.findIndex((c) => getNodeId(c) === getNodeId(list));
+        let newListParentKids: ProseNode[];
+        if (before.length === 0 && after.length === 0) {
+            // Drop the empty inner list entirely.
+            newListParentKids = [
+                ...listParentKids.slice(0, innerListIndex),
+                ...listParentKids.slice(innerListIndex + 1),
+            ];
+        } else if (after.length === 0) {
+            // Keep inner list with `before` items only.
+            const trimmed = ProseNode.List(list.ordered, before, getNodeId(list));
+            newListParentKids = [
+                ...listParentKids.slice(0, innerListIndex),
+                trimmed,
+                ...listParentKids.slice(innerListIndex + 1),
+            ];
+        } else {
+            // before stays in original inner list (may be empty → drop); after goes
+            // into a new inner list appended on the *trailing* sibling ListItem.
+            // Simpler: keep the original inner list with `before`, and put the
+            // `after` items inside a new sibling ListItem (which we'll insert in
+            // the outer list).
+            const trimmed = ProseNode.List(list.ordered, before, getNodeId(list));
+            newListParentKids =
+                before.length > 0
+                    ? [
+                        ...listParentKids.slice(0, innerListIndex),
+                        trimmed,
+                        ...listParentKids.slice(innerListIndex + 1),
+                    ]
+                    : [
+                        ...listParentKids.slice(0, innerListIndex),
+                        ...listParentKids.slice(innerListIndex + 1),
+                    ];
+        }
+
+        const newListParent = ProseNode.ListItem(newListParentKids, listParentId);
+
+        // Build the trailing sibling ListItem for `after` (if any).
+        const afterContainer =
+            after.length > 0
+                ? [
+                    ProseNode.ListItem([
+                        ProseNode.List(list.ordered, after),
+                    ]),
+                ]
+                : [];
+
+        // Rebuild the outer list.
+        const outerKids = outerList.children;
+        const newOuterKids: ListItem[] = [
+            ...outerKids.slice(0, listParentIndexInOuter),
+            newListParent as ListItem,
+            // The promoted item slots in here — sibling of the (now-modified)
+            // listParent ListItem.
+            item,
+            ...(afterContainer as ListItem[]),
+            ...outerKids.slice(listParentIndexInOuter + 1),
+        ];
+        const newOuterList = ProseNode.List(outerList.ordered, newOuterKids, outerListId);
+        const newDoc = replaceById(state.doc, outerListId, newOuterList) as Document;
+
+        const inverse = ProseCommand.IndentListItem(cmd.range);
+        return ok({ doc: newDoc, cursor: state.cursor }, inverse);
+    }
+
+    // Top-level list case: item is promoted to a sibling block of the List in
+    // listParent. The list splits into [before-list] [promoted item-as-blocks]
+    // [after-list].
+    const before = list.children.slice(0, itemIndex);
+    const after = list.children.slice(itemIndex + 1);
+    const promotedBlocks = childrenOf(item);
+
+    const replacement: ProseNode[] = [];
+    if (before.length > 0)
+        replacement.push(ProseNode.List(list.ordered, before, getNodeId(list)));
+    replacement.push(...promotedBlocks);
+    if (after.length > 0)
+        replacement.push(ProseNode.List(list.ordered, after));
+
+    const listId = getNodeId(list);
+    const newDoc = updateChildren(state.doc, listParentId, (kids) => {
+        const idx = kids.findIndex((c) => getNodeId(c) === listId);
+        return [...kids.slice(0, idx), ...replacement, ...kids.slice(idx + 1)];
+    }) as Document;
+
+    const inverse = ProseCommand.IndentListItem(cmd.range);
+    return ok({ doc: newDoc, cursor: state.cursor }, inverse);
+};
+
+const applySplitListItem = (
+    state: DocumentState,
+    cmd: SplitListItemCmd,
+): ApplyOut => {
+    const enc = locateEnclosingListItem(state.doc, cmd.at.nodeId);
+    if (!enc) return reject("SplitListItem: not inside a list item");
+    const { item, itemIndex, list } = enc;
+
+    // Identify the block within `item` that contains `at`, and split it.
+    const itemKids = childrenOf(item);
+    const targetBlock = itemKids.find((b) => {
+        // Walk into b looking for at.nodeId.
+        for (const v of walkInOrder(b)) {
+            if (getNodeId(v.node) === cmd.at.nodeId) return true;
+        }
+        return false;
+    });
+    if (!targetBlock)
+        return conflict("SplitListItem: at.nodeId not inside any block of the item");
+
+    // Use SplitBlock to split that block, then partition the item's children
+    // around the split.
+    const splitResult = applySplitBlock(state, ProseCommand.SplitBlock(cmd.at));
+    const splitOut = match(splitResult, {
+        Valid:       ({ value }) => value,
+        Invalid:     () => null,
+        Unvalidated: () => null,
+    });
+    if (!splitOut) return splitResult;
+
+    // After SplitBlock, `targetBlock` was split into [leftBlock, rightBlock]
+    // siblings inside `item`. Now we partition `item.children` so leftBlock and
+    // anything before stays in `item`, and rightBlock plus what follows goes
+    // into a new ListItem inserted after `item` in `list`.
+    const splitDoc = splitOut.next.doc;
+    const splitItemLocated = locate(splitDoc, getNodeId(item));
+    if (!splitItemLocated) return conflict("SplitListItem: item vanished after block split");
+    const splitItem = splitItemLocated.node;
+    const splitItemKids = childrenOf(splitItem);
+
+    const targetIdx = splitItemKids.findIndex(
+        (b) => getNodeId(b) === getNodeId(targetBlock),
+    );
+    // After split, indices [0..targetIdx] stay (leftBlock at targetIdx), and
+    // [targetIdx+1..] move to the new item (rightBlock leads).
+    const leftKids = splitItemKids.slice(0, targetIdx + 1);
+    const rightKids = splitItemKids.slice(targetIdx + 1);
+
+    const newLeftItem = ProseNode.ListItem(leftKids, getNodeId(item));
+    const newRightItem = ProseNode.ListItem(rightKids);
+
+    const newListChildren = [
+        ...list.children.slice(0, itemIndex),
+        newLeftItem,
+        newRightItem,
+        ...list.children.slice(itemIndex + 1),
+    ];
+    const newList = ProseNode.List(list.ordered, newListChildren, getNodeId(list));
+    const newDoc = replaceById(splitDoc, getNodeId(list), newList) as Document;
+
+    // Inverse: a Compound that (1) merges the new ListItem back into `item` by
+    // re-merging its blocks via MergeBlock, (2) un-splits the block via
+    // MergeBlock at the boundary. Simpler — encode as MergeBlock at the start
+    // of the right block (which is what SplitBlock's inverse already produces).
+    const splitInverse = splitOut.inverse; // MergeBlock
+    return ok({ doc: newDoc, cursor: state.cursor }, splitInverse);
 };
 
 // ============================================================================
@@ -914,6 +1374,10 @@ export const defaultApply: CommandProtocol<
             getTag(range) === "Node"
                 ? applySetBlockKindNode(state, (range as { nodeId: string }).nodeId, kind)
                 : applySetBlockKind(state, ProseCommand.SetBlockKind(range, kind)),
+        ToggleList:      (c) => applyToggleList(state, c),
+        IndentListItem:  (c) => applyIndentListItem(state, c),
+        OutdentListItem: (c) => applyOutdentListItem(state, c),
+        SplitListItem:   (c) => applySplitListItem(state, c),
         Compound:       ({ steps }) => applyCompound(state, steps),
     });
 
