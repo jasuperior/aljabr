@@ -23,6 +23,31 @@ export type {
 export type { ProseEmbeds } from "./jsx-runtime.ts";
 
 export {
+    DEFAULT_EMBEDS,
+} from "./embed-registry.ts";
+export type {
+    EmbedDefinition,
+    EmbedPlacement,
+    EmbedRegistry,
+    ImagePayload,
+} from "./embed-registry.ts";
+
+export { ProseHost } from "./host.ts";
+export type { ProseHostOptions } from "./host.ts";
+
+export { ProseRenderer } from "./prose-renderer.ts";
+export type {
+    ProseRendererOptions,
+    ProseRendererInstance,
+} from "./prose-renderer.ts";
+
+export { projectDoc } from "./projection.ts";
+export { translateBeforeInput } from "./before-input.ts";
+
+export { Prose } from "./component.tsx";
+export type { ProseProps } from "./component.tsx";
+
+export {
     EditorRange,
     rangePointSchema,
     editorRangeSchema,
