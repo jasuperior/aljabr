@@ -78,6 +78,8 @@ export const Prose = <Cmd extends ProseCommand>(
         <div
             contentEditable={!readonly}
             data-aljabr-prose=""
+            data-aljabr-readonly={readonly ? "" : null}
+            style={readonly ? { caretColor: "transparent" } : null}
             mounted={(el: Element) => {
                 const r = ProseRenderer.create({ embeds: mergedEmbeds });
                 const unmount = r.mount(

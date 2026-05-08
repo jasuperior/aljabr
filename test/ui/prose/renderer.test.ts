@@ -1,10 +1,9 @@
 import { describe, it, expect, vi } from "vitest";
 import { match } from "../../../src/match.ts";
-import { getTag } from "../../../src/union.ts";
+import { __, getTag, tag } from "../../../src/union.ts";
 import {
     MarkSet,
     ProseNode,
-    type Document,
 } from "../../../src/ui/prose/document-model.ts";
 import { EditorRange } from "../../../src/ui/prose/editor-range.ts";
 import { rangePointAt } from "../../../src/ui/prose/tree-ops.ts";
@@ -15,62 +14,84 @@ import {
 } from "../../../src/ui/prose/embed-registry.ts";
 import { translateBeforeInput } from "../../../src/ui/prose/before-input.ts";
 import { ProseCommand } from "../../../src/ui/prose/commands.ts";
-import { Schema } from "../../../src/schema/index.ts";
-import { view, type ViewNode } from "../../../src/ui/view-node.ts";
+import { Schema, type Schema as SchemaT } from "../../../src/schema/index.ts";
+import { view, type ViewNode, type Child } from "../../../src/ui/view-node.ts";
 import type { DocumentState } from "../../../src/ui/prose/document-state.ts";
 
 // ---------------------------------------------------------------------------
-// Helpers — walk the ViewNode tree by dispatching through `match`
+// Walker — narrow Child → ViewNode via the [tag] symbol, then dispatch via match
 // ---------------------------------------------------------------------------
 
-const tagsOf = (vn: ViewNode | string): string[] => {
-    if (typeof vn === "string" || typeof vn === "number") return [];
+const isViewNode = (c: Child): c is ViewNode =>
+    c !== null
+    && typeof c === "object"
+    && (c as Record<symbol, unknown>)[tag] !== undefined;
+
+const walkViewNode = (vn: ViewNode, visit: (vn: ViewNode) => void): void => {
+    visit(vn);
+    match(vn, {
+        Element:  ({ children }) => {
+            for (const c of children) if (isViewNode(c)) walkViewNode(c, visit);
+        },
+        Fragment: ({ children }) => {
+            for (const c of children) if (isViewNode(c)) walkViewNode(c, visit);
+        },
+        Text:      () => {},
+        Component: () => {},
+    });
+};
+
+const tagsOf = (vn: ViewNode): string[] => {
     const out: string[] = [];
-    const walk = (n: ViewNode | unknown): void => {
-        if (n === null || n === undefined || typeof n === "boolean") return;
-        if (typeof n === "string" || typeof n === "number") return;
-        if (typeof n === "function") return;
-        const tag = (n as { [k: symbol]: unknown });
-        if (typeof tag !== "object") return;
-        match(n as ViewNode, {
-            Element: ({ tag, children }) => {
-                out.push(tag);
-                for (const c of children) walk(c);
-            },
+    walkViewNode(vn, (n) => {
+        match(n, {
+            Element:  ({ tag: t }) => { out.push(t); },
             Text:      () => {},
             Component: () => {},
-            Fragment:  ({ children }) => { for (const c of children) walk(c); },
+            Fragment:  () => {},
         });
-    };
-    walk(vn);
+    });
     return out;
 };
 
-const findTag = (vn: ViewNode, tag: string): ViewNode | null => {
+const findTag = (vn: ViewNode, tagName: string): ViewNode | null => {
     let found: ViewNode | null = null;
-    const walk = (n: unknown): void => {
+    walkViewNode(vn, (n) => {
         if (found) return;
-        if (n === null || n === undefined) return;
-        if (typeof n !== "object") return;
-        match(n as ViewNode, {
-            Element: ({ tag: t, children }) => {
-                if (t === tag) { found = n as ViewNode; return; }
-                for (const c of children) walk(c);
-            },
+        match(n, {
+            Element:  ({ tag: t }) => { if (t === tagName) found = n; },
             Text:      () => {},
             Component: () => {},
-            Fragment:  ({ children }) => { for (const c of children) walk(c); },
+            Fragment:  () => {},
         });
-    };
-    walk(vn);
+    });
+    return found;
+};
+
+const findElementWhere = (
+    vn: ViewNode,
+    pred: (props: Record<string, unknown>, tag: string) => boolean,
+): ViewNode | null => {
+    let found: ViewNode | null = null;
+    walkViewNode(vn, (n) => {
+        if (found) return;
+        match(n, {
+            Element:  ({ tag: t, props }) => { if (pred(props, t)) found = n; },
+            Text:      () => {},
+            Component: () => {},
+            Fragment:  () => {},
+        });
+    });
     return found;
 };
 
 const elProps = (vn: ViewNode): Record<string, unknown> =>
     match(vn, {
-        Element: ({ props }) => props,
-        [Symbol.for("__")]: () => { throw new Error("not an Element"); },
-    } as never) as Record<string, unknown>;
+        Element:  ({ props }) => props,
+        Text:      () => { throw new Error("not an Element (Text)"); },
+        Component: () => { throw new Error("not an Element (Component)"); },
+        Fragment:  () => { throw new Error("not an Element (Fragment)"); },
+    });
 
 // ---------------------------------------------------------------------------
 // projectDoc — variant → native-tag mapping
@@ -84,9 +105,8 @@ describe("projectDoc — block variants map to native HTML tags", () => {
             ProseNode.Heading(4, [ProseNode.Text("h4")]),
             ProseNode.Quote([ProseNode.Block([ProseNode.Text("q")])]),
             ProseNode.Code("ts", [ProseNode.Text("const x = 1")]),
-        ]) as Document;
-        const vn = projectDoc(doc, DEFAULT_EMBEDS);
-        const tags = tagsOf(vn);
+        ]);
+        const tags = tagsOf(projectDoc(doc, DEFAULT_EMBEDS));
         expect(tags).toContain("p");
         expect(tags).toContain("h2");
         expect(tags).toContain("h4");
@@ -103,9 +123,8 @@ describe("projectDoc — block variants map to native HTML tags", () => {
             ProseNode.List(false, [
                 ProseNode.ListItem([ProseNode.Block([ProseNode.Text("b")])]),
             ]),
-        ]) as Document;
-        const vn = projectDoc(doc, DEFAULT_EMBEDS);
-        const tags = tagsOf(vn);
+        ]);
+        const tags = tagsOf(projectDoc(doc, DEFAULT_EMBEDS));
         expect(tags).toContain("ol");
         expect(tags).toContain("ul");
         expect(tags).toContain("li");
@@ -114,10 +133,13 @@ describe("projectDoc — block variants map to native HTML tags", () => {
     it("Hr → <hr>, HardBreak → <br>", () => {
         const doc = ProseNode.Document([
             ProseNode.Hr(),
-            ProseNode.Block([ProseNode.Text("a"), ProseNode.HardBreak(), ProseNode.Text("b")]),
-        ]) as Document;
-        const vn = projectDoc(doc, DEFAULT_EMBEDS);
-        const tags = tagsOf(vn);
+            ProseNode.Block([
+                ProseNode.Text("a"),
+                ProseNode.HardBreak(),
+                ProseNode.Text("b"),
+            ]),
+        ]);
+        const tags = tagsOf(projectDoc(doc, DEFAULT_EMBEDS));
         expect(tags).toContain("hr");
         expect(tags).toContain("br");
     });
@@ -125,11 +147,10 @@ describe("projectDoc — block variants map to native HTML tags", () => {
     it("Code carries language as a class on the inner <code>", () => {
         const doc = ProseNode.Document([
             ProseNode.Code("ts", [ProseNode.Text("hi")]),
-        ]) as Document;
-        const vn = projectDoc(doc, DEFAULT_EMBEDS);
-        const codeEl = findTag(vn, "code");
+        ]);
+        const codeEl = findTag(projectDoc(doc, DEFAULT_EMBEDS), "code");
         expect(codeEl).not.toBeNull();
-        expect((elProps(codeEl!) as { class?: string }).class).toBe("language-ts");
+        expect(elProps(codeEl!)["class"]).toBe("language-ts");
     });
 });
 
@@ -141,9 +162,8 @@ describe("projectDoc — text marks", () => {
                 ProseNode.Text("b", [MarkSet.Italic()]),
                 ProseNode.Text("c", [MarkSet.Code()]),
             ]),
-        ]) as Document;
-        const vn = projectDoc(doc, DEFAULT_EMBEDS);
-        const tags = tagsOf(vn);
+        ]);
+        const tags = tagsOf(projectDoc(doc, DEFAULT_EMBEDS));
         expect(tags).toContain("strong");
         expect(tags).toContain("em");
         expect(tags).toContain("code");
@@ -154,11 +174,10 @@ describe("projectDoc — text marks", () => {
             ProseNode.Block([
                 ProseNode.Text("link", [MarkSet.Link("https://example.com")]),
             ]),
-        ]) as Document;
-        const vn = projectDoc(doc, DEFAULT_EMBEDS);
-        const a = findTag(vn, "a");
+        ]);
+        const a = findTag(projectDoc(doc, DEFAULT_EMBEDS), "a");
         expect(a).not.toBeNull();
-        expect((elProps(a!) as { href?: string }).href).toBe("https://example.com");
+        expect(elProps(a!)["href"]).toBe("https://example.com");
     });
 
     it("Color/Font marks fold into a wrapping inline style", () => {
@@ -169,28 +188,17 @@ describe("projectDoc — text marks", () => {
                     MarkSet.FontSize(14),
                 ]),
             ]),
-        ]) as Document;
-        const vn = projectDoc(doc, DEFAULT_EMBEDS);
-        // Find the span carrying the style object.
-        let styled: Record<string, unknown> | null = null;
-        const walk = (n: unknown): void => {
-            if (styled || n === null || typeof n !== "object") return;
-            match(n as ViewNode, {
-                Element: ({ tag, props, children }) => {
-                    if (tag === "span" && typeof props["style"] === "object") {
-                        styled = props["style"] as Record<string, unknown>;
-                    }
-                    for (const c of children) walk(c);
-                },
-                Text:      () => {},
-                Component: () => {},
-                Fragment:  ({ children }) => { for (const c of children) walk(c); },
-            });
-        };
-        walk(vn);
+        ]);
+        const styled = findElementWhere(
+            projectDoc(doc, DEFAULT_EMBEDS),
+            (props, t) => t === "span" && typeof props["style"] === "object",
+        );
         expect(styled).not.toBeNull();
-        expect(styled!["color"]).toBe("#f00");
-        expect(styled!["fontSize"]).toBe("14px");
+        const style = elProps(styled!)["style"];
+        expect(style && typeof style === "object").toBe(true);
+        const styleObj = style as Record<string, unknown>;
+        expect(styleObj["color"]).toBe("#f00");
+        expect(styleObj["fontSize"]).toBe("14px");
     });
 });
 
@@ -198,44 +206,34 @@ describe("projectDoc — text marks", () => {
 // projectDoc — embed projection
 // ---------------------------------------------------------------------------
 
+// `EmbedDefinition.schema` is `Schema<P>` for the registered P; the registry
+// type widens P to `unknown`. We declare a small helper instead of writing
+// `as never` casts at every author registration in tests.
+const widenSchema = <P>(s: SchemaT<P>): SchemaT<unknown> =>
+    s as unknown as SchemaT<unknown>;
+
 describe("projectDoc — embed projection", () => {
     it("default `image` embed projects to a contenteditable=false wrapper around <img>", () => {
         const doc = ProseNode.Document([
             ProseNode.BlockEmbed("image", { src: "/cat.png", alt: "cat", caption: null }),
-        ]) as Document;
+        ]);
         const vn = projectDoc(doc, DEFAULT_EMBEDS);
-        const tags = tagsOf(vn);
-        expect(tags).toContain("img");
-        // Find the wrapping div for the embed.
-        let embedDiv: ViewNode | null = null;
-        const walk = (n: unknown): void => {
-            if (embedDiv || !n || typeof n !== "object") return;
-            match(n as ViewNode, {
-                Element: ({ tag, props, children }) => {
-                    if (tag === "div" && (props as Record<string, unknown>)["data-aljabr-embed"] === "image") {
-                        embedDiv = n as ViewNode;
-                        return;
-                    }
-                    for (const c of children) walk(c);
-                },
-                Text:      () => {},
-                Component: () => {},
-                Fragment:  ({ children }) => { for (const c of children) walk(c); },
-            });
-        };
-        walk(vn);
+        expect(tagsOf(vn)).toContain("img");
+        const embedDiv = findElementWhere(
+            vn,
+            (props, t) => t === "div" && props["data-aljabr-embed"] === "image",
+        );
         expect(embedDiv).not.toBeNull();
-        expect((elProps(embedDiv!) as { contentEditable?: string }).contentEditable).toBe("false");
+        expect(elProps(embedDiv!)["contentEditable"]).toBe("false");
     });
 
     it("rejects payloads that don't match the registered schema", () => {
         const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
         const doc = ProseNode.Document([
-            // Missing `src` field.
+            // src missing.
             ProseNode.BlockEmbed("image", { alt: "no src", caption: null }),
-        ]) as Document;
+        ]);
         const vn = projectDoc(doc, DEFAULT_EMBEDS);
-        // No <img> rendered — projection emitted a placeholder instead.
         expect(tagsOf(vn)).not.toContain("img");
         expect(warn).toHaveBeenCalled();
         warn.mockRestore();
@@ -245,7 +243,7 @@ describe("projectDoc — embed projection", () => {
         const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
         const doc = ProseNode.Document([
             ProseNode.BlockEmbed("not-registered", { x: 1 }),
-        ]) as Document;
+        ]);
         const vn = projectDoc(doc, DEFAULT_EMBEDS);
         expect(tagsOf(vn)).not.toContain("img");
         expect(warn).toHaveBeenCalled();
@@ -256,10 +254,13 @@ describe("projectDoc — embed projection", () => {
         const registry: EmbedRegistry = {
             ...DEFAULT_EMBEDS,
             reaction: {
-                schema:    Schema.object({ emoji: Schema.string() }) as never,
+                schema:    widenSchema(Schema.object({ emoji: Schema.string() })),
                 placement: "inline",
-                render: ({ emoji }) =>
-                    view("span", { class: "reaction" }, (emoji as string)),
+                // Renderer receives the schema-validated payload; the cast at
+                // the call site is the registry's documented widening point.
+                render: (payload) =>
+                    view("span", { class: "reaction" },
+                        (payload as { emoji: string }).emoji),
             },
         };
         const doc = ProseNode.Document([
@@ -267,26 +268,11 @@ describe("projectDoc — embed projection", () => {
                 ProseNode.Text("hi "),
                 ProseNode.InlineEmbed("reaction", { emoji: "🔥" }),
             ]),
-        ]) as Document;
-        const vn = projectDoc(doc, registry);
-        // The inline embed wrapper is a span with data-aljabr-embed="reaction".
-        let embedSpan: ViewNode | null = null;
-        const walk = (n: unknown): void => {
-            if (embedSpan || !n || typeof n !== "object") return;
-            match(n as ViewNode, {
-                Element: ({ tag, props, children }) => {
-                    if (tag === "span" && (props as Record<string, unknown>)["data-aljabr-embed"] === "reaction") {
-                        embedSpan = n as ViewNode;
-                        return;
-                    }
-                    for (const c of children) walk(c);
-                },
-                Text:      () => {},
-                Component: () => {},
-                Fragment:  ({ children }) => { for (const c of children) walk(c); },
-            });
-        };
-        walk(vn);
+        ]);
+        const embedSpan = findElementWhere(
+            projectDoc(doc, registry),
+            (props, t) => t === "span" && props["data-aljabr-embed"] === "reaction",
+        );
         expect(embedSpan).not.toBeNull();
     });
 
@@ -294,14 +280,14 @@ describe("projectDoc — embed projection", () => {
         const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
         const registry: EmbedRegistry = {
             inlineOnly: {
-                schema:    Schema.object({ x: Schema.string() }) as never,
+                schema:    widenSchema(Schema.object({ x: Schema.string() })),
                 placement: "inline",
                 render:    () => view("span", null, "x"),
             },
         };
         const doc = ProseNode.Document([
             ProseNode.BlockEmbed("inlineOnly", { x: "hi" }),
-        ]) as Document;
+        ]);
         projectDoc(doc, registry);
         expect(warn).toHaveBeenCalled();
         warn.mockRestore();
@@ -315,7 +301,7 @@ describe("projectDoc — embed projection", () => {
 const makeState = (): DocumentState => {
     const t1 = ProseNode.Text("hello", [], "t1");
     const b1 = ProseNode.Block([t1], "b1");
-    const doc = ProseNode.Document([b1], "d1") as Document;
+    const doc = ProseNode.Document([b1], "d1");
     const at = rangePointAt(doc, "t1", 2)!;
     return { doc, cursor: EditorRange.Cursor(at) };
 };
@@ -323,12 +309,12 @@ const makeState = (): DocumentState => {
 const fakeEvent = (
     inputType: string,
     data: string | null = null,
-): InputEvent =>
-    ({
-        inputType,
-        data,
-        preventDefault: () => {},
-    }) as unknown as InputEvent;
+): InputEvent => {
+    const ev = new Event("beforeinput", { cancelable: true });
+    Object.defineProperty(ev, "inputType", { value: inputType });
+    Object.defineProperty(ev, "data", { value: data });
+    return ev as InputEvent;
+};
 
 describe("translateBeforeInput", () => {
     it("insertText → Insert(text, point)", () => {
@@ -348,7 +334,7 @@ describe("translateBeforeInput", () => {
         const b1 = ProseNode.Block([t1], "b1");
         const li = ProseNode.ListItem([b1], "li1");
         const list = ProseNode.List(false, [li], "L1");
-        const doc = ProseNode.Document([list], "d1") as Document;
+        const doc = ProseNode.Document([list], "d1");
         const state: DocumentState = {
             doc,
             cursor: EditorRange.Cursor(rangePointAt(doc, "t1", 2)!),

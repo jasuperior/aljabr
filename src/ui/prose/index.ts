@@ -52,6 +52,8 @@ export {
     selectionToEditorRange,
 } from "./selection-binding.ts";
 
+export { parse } from "./parse.ts";
+
 export { Prose } from "./component.tsx";
 export type {
     ProseProps,

@@ -16,13 +16,19 @@ import {
     proseProtocol,
 } from "../../../src/ui/prose/commands.ts";
 import { rangePointAt } from "../../../src/ui/prose/tree-ops.ts";
-import { Prose } from "../../../src/ui/prose/component.tsx";
+import {
+    Prose,
+    type ProseProps,
+    type ProseInputEvent,
+    type ProseSelectEvent,
+    type ProseFocusEvent,
+} from "../../../src/ui/prose/component.tsx";
 import { view } from "../../../src/ui/view-node.ts";
 
 const makeState = (): { state: DocumentState; doc: Document } => {
     const t1 = ProseNode.Text("Hello, world.", [], "t1");
     const b1 = ProseNode.Block([t1], "b1");
-    const doc = ProseNode.Document([b1], "d1") as Document;
+    const doc = ProseNode.Document([b1], "d1");
     const state: DocumentState = {
         doc,
         cursor: EditorRange.Cursor(rangePointAt(doc, "t1", 0)!),
@@ -32,10 +38,26 @@ const makeState = (): { state: DocumentState; doc: Document } => {
 
 const mountProse = (
     container: HTMLElement,
-    proseProps: Record<string, unknown>,
+    proseProps: ProseProps,
 ): (() => void) => {
     const r = DomRenderer.create();
-    return r.mount(() => view(Prose as never, proseProps), container);
+    return r.mount(() => view(Prose, proseProps), container);
+};
+
+const editorEl = (host: HTMLElement): HTMLElement => {
+    const el = host.querySelector("[data-aljabr-prose]");
+    if (!(el instanceof HTMLElement)) throw new Error("editor not mounted");
+    return el;
+};
+
+const beforeInputEvent = (
+    inputType: string,
+    data: string | null = null,
+): Event => {
+    const ev = new Event("beforeinput", { cancelable: true });
+    Object.defineProperty(ev, "inputType", { value: inputType });
+    Object.defineProperty(ev, "data", { value: data });
+    return ev;
 };
 
 describe("<Prose> synthetic events", () => {
@@ -58,48 +80,41 @@ describe("<Prose> synthetic events", () => {
     });
 
     it("onInput fires after a successful beforeinput dispatch with the command + new range", () => {
-        const onInput = vi.fn();
+        const onInput = vi.fn<(e: ProseInputEvent) => void>();
         unmount = mountProse(host, { state: dispatcher, onInput });
-        const editorEl = host.querySelector("[data-aljabr-prose]") as HTMLElement;
-        const ev = new Event("beforeinput", { cancelable: true }) as InputEvent;
-        Object.defineProperty(ev, "inputType", { value: "insertText" });
-        Object.defineProperty(ev, "data", { value: "X" });
-        editorEl.dispatchEvent(ev);
+        editorEl(host).dispatchEvent(beforeInputEvent("insertText", "X"));
         expect(onInput).toHaveBeenCalledTimes(1);
-        const arg = onInput.mock.calls[0]![0] as { command: ProseCommand; range: EditorRange };
-        expect(getTag(arg.command)).toBe("Insert");
-        expect(getTag(arg.range)).toBe("Cursor");
+        const { command, range } = onInput.mock.calls[0]![0];
+        expect(getTag(command)).toBe("Insert");
+        expect(getTag(range)).toBe("Cursor");
     });
 
     it("onInput is not invoked for unhandled inputTypes", () => {
-        const onInput = vi.fn();
+        const onInput = vi.fn<(e: ProseInputEvent) => void>();
         unmount = mountProse(host, { state: dispatcher, onInput });
-        const editorEl = host.querySelector("[data-aljabr-prose]") as HTMLElement;
-        const ev = new Event("beforeinput", { cancelable: true }) as InputEvent;
-        Object.defineProperty(ev, "inputType", { value: "historyUndo" });
-        editorEl.dispatchEvent(ev);
+        editorEl(host).dispatchEvent(beforeInputEvent("historyUndo"));
         expect(onInput).not.toHaveBeenCalled();
     });
 
     it("onSelect fires with { range, prev } when the cursor changes", () => {
-        const onSelect = vi.fn();
+        const onSelect = vi.fn<(e: ProseSelectEvent) => void>();
         unmount = mountProse(host, { state: dispatcher, onSelect });
         const at = rangePointAt(doc, "t1", 5)!;
         dispatcher.dispatch(ProseCommand.SetCursor(EditorRange.Cursor(at)));
         expect(onSelect).toHaveBeenCalledTimes(1);
-        const arg = onSelect.mock.calls[0]![0] as { range: EditorRange; prev: EditorRange };
-        match(arg.range, {
-            Cursor: ({ point: p }) => { expect(p.offset).toBe(5); },
+        const { range, prev } = onSelect.mock.calls[0]![0];
+        match(range, {
+            Cursor: ({ point }) => { expect(point.offset).toBe(5); },
             [__]: () => { throw new Error("expected Cursor"); },
         });
-        match(arg.prev, {
-            Cursor: ({ point: p }) => { expect(p.offset).toBe(0); },
+        match(prev, {
+            Cursor: ({ point }) => { expect(point.offset).toBe(0); },
             [__]: () => { throw new Error("expected Cursor"); },
         });
     });
 
     it("onSelect does not fire when dispatch produces an identical cursor", () => {
-        const onSelect = vi.fn();
+        const onSelect = vi.fn<(e: ProseSelectEvent) => void>();
         unmount = mountProse(host, { state: dispatcher, onSelect });
         const at = rangePointAt(doc, "t1", 0)!;
         dispatcher.dispatch(ProseCommand.SetCursor(EditorRange.Cursor(at)));
@@ -107,31 +122,26 @@ describe("<Prose> synthetic events", () => {
     });
 
     it("onFocus fires on focus and carries the current range (or null)", () => {
-        const onFocus = vi.fn();
+        const onFocus = vi.fn<(e: ProseFocusEvent) => void>();
         unmount = mountProse(host, { state: dispatcher, onFocus });
-        const editorEl = host.querySelector("[data-aljabr-prose]") as HTMLElement;
-        editorEl.dispatchEvent(new Event("focus"));
+        editorEl(host).dispatchEvent(new Event("focus"));
         expect(onFocus).toHaveBeenCalledTimes(1);
     });
 
     it("onBlur fires on blur", () => {
-        const onBlur = vi.fn();
+        const onBlur = vi.fn<(e: ProseFocusEvent) => void>();
         unmount = mountProse(host, { state: dispatcher, onBlur });
-        const editorEl = host.querySelector("[data-aljabr-prose]") as HTMLElement;
-        editorEl.dispatchEvent(new Event("blur"));
+        editorEl(host).dispatchEvent(new Event("blur"));
         expect(onBlur).toHaveBeenCalledTimes(1);
     });
 
     it("authors who don't supply handlers see no listener overhead (gated on prop presence)", () => {
-        // Mount with no event props.
         unmount = mountProse(host, { state: dispatcher });
-        const editorEl = host.querySelector("[data-aljabr-prose]") as HTMLElement;
-        // Spy on addEventListener after the fact — listeners installed during
-        // mount won't be observable here, but the smoke test is: dispatching
-        // focus/blur with no handlers must not throw.
+        const el = editorEl(host);
+        // Smoke test: dispatching focus/blur with no handlers must not throw.
         expect(() => {
-            editorEl.dispatchEvent(new Event("focus"));
-            editorEl.dispatchEvent(new Event("blur"));
+            el.dispatchEvent(new Event("focus"));
+            el.dispatchEvent(new Event("blur"));
         }).not.toThrow();
     });
 });
