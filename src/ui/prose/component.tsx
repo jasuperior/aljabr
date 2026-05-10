@@ -32,23 +32,50 @@ import {
 import { projectDoc } from "./projection.ts";
 import { bindSelection, selectionToEditorRange } from "./selection-binding.ts";
 
+/**
+ * Payload passed to `<Prose onInput>`. Fires after each successfully
+ * dispatched `beforeinput`-translated command. `range` is the cursor *after*
+ * the command was applied.
+ */
 export type ProseInputEvent<Cmd extends ProseCommand = ProseCommand> = {
     command: Cmd;
     range: EditorRange;
 };
 
+/**
+ * Payload passed to `<Prose onSelect>`. Fires on every cursor transition
+ * that yields a distinct range (collapsed-cursor moves, drag selections,
+ * keyboard arrow nav, programmatic `SetCursor` dispatches). `prev` is the
+ * range immediately before this transition.
+ */
 export type ProseSelectEvent = {
     range: EditorRange;
     prev: EditorRange;
 };
 
+/**
+ * Payload passed to `<Prose onFocus>` and `<Prose onBlur>`. `range` reflects
+ * the browser selection at the moment of focus / blur, or `null` if the
+ * selection is outside the prose root.
+ */
 export type ProseFocusEvent = {
     range: EditorRange | null;
 };
 
+/**
+ * Props accepted by the `<Prose>` Component. `state` (the editor's
+ * `Dispatcher`) is the only required prop; everything else is optional.
+ *
+ * @typeParam Cmd - The command union type the dispatcher accepts. Defaults
+ *   to {@link ProseCommand}; pass an extended union (built via
+ *   `ProseCommand.merge({...})`) to type `onInput.command` against it.
+ */
 export type ProseProps<Cmd extends ProseCommand = ProseCommand> = {
+    /** The editor's dispatcher. Canonical variable name: `editor`. */
     state: Dispatcher<Document, DocumentState, Cmd>;
+    /** Registry merged over {@link DEFAULT_EMBEDS} for this surface. */
     embeds?: EmbedRegistry;
+    /** When true, drops `contenteditable`, hides the caret, and skips the `beforeinput` listener. */
     readonly?: boolean;
     onInput?:  (event: ProseInputEvent<Cmd>) => void;
     onSelect?: (event: ProseSelectEvent) => void;
@@ -65,6 +92,31 @@ const sameRange = (a: EditorRange | null, b: EditorRange | null): boolean => {
     return JSON.stringify(a) === JSON.stringify(b);
 };
 
+/**
+ * `<Prose>` — the prose author surface.
+ *
+ * Hand it a {@link ProseProps.state | state} `Dispatcher` plus optional
+ * embeds, `readonly`, and synthetic event handlers; the Component
+ * encapsulates everything else: its own {@link ProseRenderer}, the
+ * contenteditable DOM, the `beforeinput` translator, native selection
+ * binding, and a custom diff cycle from `editor.state().doc` to the DOM.
+ *
+ * @example
+ * ```tsx
+ * import { Dispatcher } from "aljabr/prelude";
+ * import { Prose, proseProtocol, ProseNode, EditorRange } from "aljabr/ui/prose";
+ *
+ * const editor = Dispatcher.create(
+ *   {
+ *     doc: ProseNode.Document([ProseNode.Block([ProseNode.Text("Hello")])]),
+ *     cursor: EditorRange.Cursor({ nodeId: "", offset: 0, line: 0, col: 0, absolute: 0 }),
+ *   },
+ *   proseProtocol,
+ * );
+ *
+ * <Prose state={editor} />
+ * ```
+ */
 export const Prose = <Cmd extends ProseCommand>(
     props: ProseProps<Cmd>,
 ): ViewNode => {

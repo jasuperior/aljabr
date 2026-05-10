@@ -19,10 +19,26 @@ import { DomHost } from "../dom/host.ts";
 import type { RendererHost } from "../types.ts";
 import type { EmbedRegistry } from "./embed-registry.ts";
 
+/**
+ * Configuration for {@link ProseHost.create}.
+ */
 export type ProseHostOptions = {
+    /**
+     * The embed registry consumed by the projection layer. The host carries
+     * it for future extension; in v0.4.0 it is unused inside the host
+     * itself.
+     */
     embeds: EmbedRegistry;
 };
 
+/**
+ * Factory for a prose-shaped {@link RendererHost}. In v0.4.0 the produced
+ * host delegates every method to {@link DomHost}; the registry is
+ * consulted by the projection (`projectDoc`), not by the host itself.
+ *
+ * Use through {@link ProseRenderer.create} unless you need a custom host
+ * wrapper.
+ */
 export const ProseHost = {
     create(_options: ProseHostOptions): RendererHost<Node, Element> {
         // The registry is consulted by `projectDoc`, not by the host. The

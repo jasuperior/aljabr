@@ -17,10 +17,26 @@ import type { Child, ViewNode, view } from "../view-node.ts";
 import { ProseHost } from "./host.ts";
 import { DEFAULT_EMBEDS, type EmbedRegistry } from "./embed-registry.ts";
 
+/**
+ * Configuration for {@link ProseRenderer.create}.
+ */
 export type ProseRendererOptions = {
+    /**
+     * Embed registry merged over {@link DEFAULT_EMBEDS}. Authors override or
+     * remove default registrations by supplying entries with the same key.
+     */
     embeds?: EmbedRegistry;
 };
 
+/**
+ * Convenience wrapper for prose-backed rendering.
+ *
+ * `ProseRenderer.create({ embeds })` is equivalent to
+ * `Renderer.create(ProseHost.create({ embeds }))` after merging `embeds`
+ * over {@link DEFAULT_EMBEDS}. Authors typically don't construct one
+ * directly — the `<Prose>` Component encapsulates lifecycle. Reach for it
+ * when driving a contenteditable surface manually.
+ */
 export const ProseRenderer = {
     create(options: ProseRendererOptions = {}): {
         view: typeof view;
@@ -39,8 +55,10 @@ export const ProseRenderer = {
 export type { EmbedRegistry };
 export { DEFAULT_EMBEDS };
 
-// Type-only marker so authors can name the renderer's return type without
-// reconstructing it.
+/**
+ * The shape returned by {@link ProseRenderer.create} — exposed as a named
+ * type so authors can spell the return type without reconstructing it.
+ */
 export type ProseRendererInstance = {
     view: typeof view;
     mount: (fn: () => ViewNode, container: Element) => () => void;

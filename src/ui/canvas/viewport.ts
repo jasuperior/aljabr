@@ -8,11 +8,12 @@
  *
  * ```tsx
  * const vp = Viewport(canvas);
- * const r = createCanvasRenderer(canvas, { viewport: vp });
- *
- * <group x={vp.x} y={vp.y} scale={vp.scale}>
- *   {/* world content *\/}
- * </group>
+ * const r = CanvasRenderer.create({ viewport: vp });
+ * r.mount(() => (
+ *   <group x={vp.x} y={vp.y} scale={vp.scale}>
+ *     {/* world content *\/}
+ *   </group>
+ * ), canvas);
  * ```
  *
  * Naming intentionally avoids a `use*` prefix — `Viewport` is a factory that
@@ -48,7 +49,7 @@ export interface ViewportHandle {
  * Create a {@link ViewportHandle} bound to the given canvas element.
  *
  * Initial values: `x = 0`, `y = 0`, `scale = 1` (no pan, no zoom). Pass the
- * resulting handle to {@link createCanvasRenderer} via its `viewport` option
+ * resulting handle to {@link CanvasRenderer.create} via its `viewport` option
  * to enable per-frame off-screen culling.
  *
  * @param canvas - The HTML canvas element whose pixel dimensions feed into
@@ -61,17 +62,17 @@ export interface ViewportHandle {
  *
  * @example
  * ```tsx
- * import { createCanvasRenderer, Viewport } from "aljabr/ui/canvas";
+ * import { CanvasRenderer, Viewport } from "aljabr/ui/canvas";
  *
  * const canvas = document.querySelector<HTMLCanvasElement>("#scene")!;
  * const vp = Viewport(canvas);
- * const r = createCanvasRenderer(canvas, { viewport: vp });
+ * const r = CanvasRenderer.create({ viewport: vp });
  *
  * r.mount(() => (
  *   <group x={vp.x} y={vp.y} scale={vp.scale}>
  *     <rect x={0} y={0} width={100} height={100} fill="red" />
  *   </group>
- * ));
+ * ), canvas);
  *
  * // Pan and zoom by writing the signals directly:
  * vp.x.set(150);
@@ -80,7 +81,7 @@ export interface ViewportHandle {
  * ```
  *
  * @see {@link ViewportHandle}
- * @see {@link createCanvasRenderer}
+ * @see {@link CanvasRenderer.create}
  */
 export function Viewport(canvas: HTMLCanvasElement): ViewportHandle {
     const x = Signal.create<number>(0);

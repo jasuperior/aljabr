@@ -4,7 +4,7 @@ Aljabr's canvas renderer is a retained-mode 2D scene graph that targets `<canvas
 
 This guide builds up incrementally: a single static rect, then reactive props, then a panning/zooming viewport, then layout-driven labels, then events. By the end you'll have authored a minimal interactive diagramming surface and know exactly which v0.3.8 affordances you're standing on.
 
-> If you're new to the renderer-agnostic core (`view`, `createRenderer`, `RendererHost`, `Signal`/`Store`), read the [DOM guide](./dom.md) first. The reactive layer is identical; this guide assumes you're past that and want canvas specifics.
+> If you're new to the renderer-agnostic core (`view`, `Renderer.create`, `RendererHost`, `Signal`/`Store`), read the [DOM guide](./dom.md) first. The reactive layer is identical; this guide assumes you're past that and want canvas specifics.
 
 ---
 
@@ -45,17 +45,17 @@ If your scene needs to fill the viewport, resize the canvas yourself (the render
 
 ```tsx
 /** @jsxImportSource aljabr/ui/canvas */
-import { createCanvasRenderer } from "aljabr/ui/canvas";
+import { CanvasRenderer } from "aljabr/ui/canvas";
 
 const canvas = document.querySelector<HTMLCanvasElement>("#scene")!;
-const r = createCanvasRenderer(canvas);
+const r = CanvasRenderer.create();
 
 const unmount = r.mount(() => (
   <rect x={50} y={50} width={200} height={100} fill="cornflowerblue" />
-));
+), canvas);
 ```
 
-`createCanvasRenderer(canvas)` does three things up-front: it gets the 2D context, allocates a synthetic root `<group>` to mount into, and attaches a single dispatcher per pointer event type to the canvas DOM element. `mount` runs the reconciler synchronously, then paints synchronously — by the time `mount` returns, the rect is on screen.
+`CanvasRenderer.create()` is `Renderer.create(CanvasHost)` under the hood. The work happens at `mount(fn, canvas)`: `CanvasHost.attach(canvas)` gets the 2D context, allocates a synthetic root `<group>` to mount into, attaches one dispatcher per pointer event type to the canvas DOM element, and installs the rAF batching protocol. The reconciler runs synchronously to populate the scene graph and `attach.onMounted` paints the first frame — by the time `mount` returns, the rect is on screen.
 
 Calling the returned `unmount()` removes every listener, disposes the reactive subscriptions, and clears the canvas.
 
@@ -81,12 +81,12 @@ Same model as the DOM renderer — pass a function or a readable, the renderer s
 
 ```tsx
 import { Signal } from "aljabr/prelude";
-import { createCanvasRenderer } from "aljabr/ui/canvas";
+import { CanvasRenderer } from "aljabr/ui/canvas";
 
 const x = Signal.create(50);
 const fill = Signal.create("cornflowerblue");
 
-const r = createCanvasRenderer(canvas);
+const r = CanvasRenderer.create();
 r.mount(() => (
   <rect
     x={() => x.get() ?? 0}
@@ -95,7 +95,7 @@ r.mount(() => (
     height={100}
     fill={() => fill.get() ?? "none"}
   />
-));
+), canvas);
 
 // Later — these mutations coalesce into a single rAF tick + repaint:
 x.set(120);
@@ -115,11 +115,11 @@ A few details that matter once you're animating:
 A diagram surface needs a viewport. The `Viewport` factory owns pan and zoom as signals, and exposes the visible world-space rectangle for off-screen culling:
 
 ```tsx
-import { Viewport, createCanvasRenderer } from "aljabr/ui/canvas";
+import { Viewport, CanvasRenderer } from "aljabr/ui/canvas";
 
 const canvas = document.querySelector<HTMLCanvasElement>("#scene")!;
 const vp = Viewport(canvas);
-const r = createCanvasRenderer(canvas, { viewport: vp });
+const r = CanvasRenderer.create({ viewport: vp });
 
 r.mount(() => (
   <group x={vp.x} y={vp.y} scale={vp.scale}>
@@ -127,7 +127,7 @@ r.mount(() => (
     <rect x={0} y={0} width={100} height={100} fill="red" />
     <rect x={5000} y={5000} width={100} height={100} fill="blue" />
   </group>
-));
+), canvas);
 
 // Pan and zoom by writing directly to the signals:
 vp.x.set(150);
@@ -138,7 +138,7 @@ vp.reset(); // back to (0, 0, 1)
 Two things just happened:
 
 1. **The root `<group>` applies the transform.** `<group x={vp.x} y={vp.y} scale={vp.scale}>` translates and scales the entire world relative to the canvas. Authors don't compose transforms manually; nesting `<group>`s composes them via `ctx.save()` / `ctx.restore()`.
-2. **Off-screen content is culled.** Because we passed `{ viewport: vp }` to `createCanvasRenderer`, the paint pass intersects each element's bounds against `vp.bounds()` and skips entire subtrees that don't overlap. The blue rect at `(5000, 5000)` doesn't paint when the viewport is anywhere near the origin.
+2. **Off-screen content is culled.** Because we passed `{ viewport: vp }` to `CanvasRenderer.create`, the paint pass intersects each element's bounds against `vp.bounds()` and skips entire subtrees that don't overlap. The blue rect at `(5000, 5000)` doesn't paint when the viewport is anywhere near the origin.
 
 ### Why `Viewport` is a factory, not a hook
 
@@ -292,12 +292,12 @@ Pulling everything together — a tiny pannable diagram with two clickable nodes
 ```tsx
 /** @jsxImportSource aljabr/ui/canvas */
 import { Signal } from "aljabr/prelude";
-import { createCanvasRenderer, Viewport } from "aljabr/ui/canvas";
+import { CanvasRenderer, Viewport } from "aljabr/ui/canvas";
 import type { CanvasSyntheticEvent } from "aljabr/ui/canvas";
 
 const canvas = document.querySelector<HTMLCanvasElement>("#scene")!;
 const vp = Viewport(canvas);
-const r = createCanvasRenderer(canvas, { viewport: vp });
+const r = CanvasRenderer.create({ viewport: vp });
 
 const selected = Signal.create<string | null>(null);
 
@@ -325,7 +325,7 @@ r.mount(() => (
     <Node id="a" x={50}  y={50} label="Node A" />
     <Node id="b" x={250} y={50} label="Node B" />
   </group>
-));
+), canvas);
 
 // Wheel-to-zoom — direct DOM listener, no synthetic event needed
 canvas.addEventListener("wheel", (e) => {
@@ -348,17 +348,17 @@ Things to notice:
 
 The two renderers happily coexist. A common pattern:
 
-- DOM toolbar / sidebar / menus, mounted into a normal `<div>` shell with `domHost`
-- Canvas surface mounted into a sibling `<canvas>` with `canvasHost`
+- DOM toolbar / sidebar / menus, mounted into a normal `<div>` shell with `DomRenderer.create()` (or `Renderer.create(DomHost)`)
+- Canvas surface either mounted into a sibling `<canvas>` with `CanvasRenderer.create({ viewport })`, or — when the canvas lives inside a DOM tree — dropped in as a `<Canvas viewport={vp}>{() => /* scene */}</Canvas>` Component child.
 - Both share signals (selection, current-tool, zoom level) — write from one renderer, read from the other; the reactive layer doesn't care which renderer owns the subscription
 
-For tooltip-style overlays (a DOM popover positioned over a canvas element), do the math against the canvas's bounding rect plus your `Viewport` transform. There's no built-in `createPortal` in v0.3.8 — that pattern stays in userland for now.
+For tooltip-style overlays (a DOM popover positioned over a canvas element), do the math against the canvas's bounding rect plus your `Viewport` transform.
 
 ---
 
 ## See also
 
-- [Canvas API reference](../../api/ui/canvas.md) — `createCanvasRenderer`, `Viewport`, `canvasHost`, JSX prop tables, `CanvasSyntheticEvent`
+- [Canvas API reference](../../api/ui/canvas.md) — `CanvasRenderer.create`, `<Canvas>` Component, `Viewport`, `CanvasHost`, JSX prop tables, `CanvasSyntheticEvent`
 - [DOM guide](./dom.md) — the renderer-agnostic reactive layer in detail (signals, components, lifecycle)
 - [Canvas internals](../advanced/canvas-internals.md) — paint-pass dispatch, hit-test inverse-transform walk, implicit text wrapping
 - [Renderer Protocol guide](../advanced/renderer-protocol.md) — bringing your own batching scheduler

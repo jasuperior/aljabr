@@ -36,9 +36,9 @@ active selection — that's already native behaviour and survives wrapping.
 ### Invariants
 
 - **`absolute`** is the sum of preceding nodes' content lengths plus this
-  node's local `offset`. The renderer's selection-binding layer (Phase 6)
-  produces fully-populated `RangePoint`s when translating browser
-  `Selection`s into the model.
+  node's local `offset`. The renderer's
+  [selection-binding layer](./selection-binding.md) produces fully-populated
+  `RangePoint`s when translating browser `Selection`s into the model.
 - **`line` / `col`** count *logical* newlines (`\n` inside `Text.content`,
   block boundaries, `HardBreak` nodes) — not visual wraps.
 
@@ -57,10 +57,13 @@ type EditorRange = Cursor | TextRange | NodeRange
 - **`Text`** — text selection; an `anchor` (where selection started) and
   `focus` (where selection ended). `focus` may precede `anchor` when the user
   drag-selects right-to-left.
-- **`Node`** — node selection; a single void node (e.g., an `<image>` clicked
-  once) is "selected" as a unit. Commands like `Delete` operate differently
-  in this mode (remove the whole node) versus text mode (remove the selected
-  range).
+- **`Node`** — node selection; a single void node (e.g., a `BlockEmbed` such
+  as the default-registered `image`, an `Hr`, or an `InlineEmbed`) is
+  "selected" as a unit. Clicking on a void block in the rendered DOM lands
+  here automatically — the selection-binding layer detects void targets and
+  surfaces them as `EditorRange.Node(id)` rather than a collapsed cursor.
+  Commands like `DeleteBackward` operate differently in this mode (remove
+  the whole node) versus text mode (remove the selected range).
 
 ### Construction
 
@@ -127,7 +130,11 @@ export { EditorRange, rangePointSchema, editorRangeSchema }
 export type { RangePoint, Cursor, TextRange, NodeRange }
 ```
 
-## Status
+## See also
 
-Phase 2 of v0.4.0. Phase 3 (`ProseCommand` + `defaultApply`) consumes
-`EditorRange` and `RangePoint` directly.
+- [Document model](./document-model.md) — the `Document` and `ProseNode`
+  types `RangePoint` references via `nodeId`.
+- [Commands](./commands.md) — the closed command vocabulary that consumes
+  `EditorRange`.
+- [Selection binding](./selection-binding.md) — the layer that translates
+  browser `Selection`s into `EditorRange` and back.

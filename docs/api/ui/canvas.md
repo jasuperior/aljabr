@@ -1,8 +1,8 @@
 # Canvas Renderer (`aljabr/ui/canvas`)
 
-A retained-mode 2D canvas renderer that implements `RendererHost<CanvasNode, CanvasElementNode>`. It composes with the same reconciler that drives `aljabr/ui/dom`, so JSX, function components, signals, `Store`, and lifecycle scopes all work identically — the only difference is the host's tag vocabulary and per-frame paint pass.
+A retained-mode 2D canvas renderer that implements `RendererHost<CanvasNode, CanvasElementNode, HTMLCanvasElement>`. It composes with the same reconciler that drives `aljabr/ui/dom` and `aljabr/ui/prose`, so JSX, function components, signals, `Store`, and lifecycle scopes all work identically — the only difference is the host's tag vocabulary and per-frame paint pass.
 
-> Reading this document assumes familiarity with the renderer-agnostic core (`view`, `createRenderer`, `RendererHost`, `RendererProtocol`, `ViewNode`, function components, reactive props). Those live in the [DOM reference](./dom.md); only the canvas-specific surface is covered here.
+> Reading this document assumes familiarity with the renderer-agnostic core (`view`, `Renderer.create`, `RendererHost`, `RendererProtocol`, `ViewNode`, function components, reactive props). Those live in the [DOM reference](./dom.md); only the canvas-specific surface is covered here.
 
 ---
 
@@ -31,7 +31,7 @@ Or per-file with a pragma — the right move when DOM and canvas component files
 
 ```tsx
 /** @jsxImportSource aljabr/ui/canvas */
-import { createCanvasRenderer, Viewport } from "aljabr/ui/canvas";
+import { CanvasRenderer, Viewport } from "aljabr/ui/canvas";
 ```
 
 DOM and canvas component files use different `jsxImportSource` values. The boundary type at interop points is `ViewNode`, which both runtimes produce — a function component written against one renderer can return JSX consumed by the other if the elements line up, but in practice the prop surfaces are different and you'd cross over by mounting a separate root.
@@ -43,49 +43,51 @@ DOM and canvas component files use different `jsxImportSource` values. The bound
 A canvas scene has three layers, each with a clear job:
 
 1. **`CanvasNode`** — a retained scene-graph node. Created by the host's `createElement` / `createText` (or via JSX). The reconciler mutates this graph as signals fire; the paint pass walks it on the next rAF tick.
-2. **`canvasHost`** — implements `RendererHost<CanvasNode, CanvasElementNode>`. The reconciler talks to this contract; the paint pass and hit-test walker read the resulting graph.
-3. **`createCanvasRenderer(canvas, options?)`** — wires `canvasHost` to a `requestAnimationFrame`-backed `RendererProtocol` that schedules a single coalesced flush + repaint per frame, and attaches the pointer-event dispatcher to the canvas DOM element.
+2. **`CanvasHost`** — implements `RendererHost<CanvasNode, CanvasElementNode, HTMLCanvasElement>`. The reconciler talks to this contract; `CanvasHost.attach(canvas)` adopts the supplied `<canvas>`, builds a synthetic `<group>` root, installs the rAF protocol, and attaches pointer/wheel listeners.
+3. **`CanvasRenderer.create(options?)`** — convenience wrapper for `Renderer.create(CanvasHost)`. With `{ viewport }` it threads `viewport.bounds()` into the per-frame culling closure.
+4. **`<Canvas>` Component** — drop-in surface for any parent renderer (typically DOM). Returns a `<canvas>` element with a `mounted` callback that spins up `CanvasRenderer.create({ viewport })` and disposes on unmount.
 
 Unlike the DOM renderer, **the scene graph is the source of truth** — the canvas itself is a presentation surface. The reconciler updates `CanvasElementNode` props synchronously; the paint pass projects the graph onto pixels on the next animation frame.
 
 ---
 
-## `createCanvasRenderer(canvas, options?)`
+## `CanvasRenderer.create(options?)`
 
-**Import:** `import { createCanvasRenderer } from "aljabr/ui/canvas"`
+**Import:** `import { CanvasRenderer } from "aljabr/ui/canvas"`
 
 ```ts
-function createCanvasRenderer(
-  canvas: HTMLCanvasElement,
-  options?: CanvasRendererOptions,
-): {
-  view: typeof view;
-  mount: (component: () => ViewNode) => () => void;
+const CanvasRenderer: {
+  create(options?: CanvasRendererOptions): {
+    view: typeof view;
+    mount: (fn: () => ViewNode, container: HTMLCanvasElement) => () => void;
+  };
 };
 ```
 
-Pre-wires `canvasHost` with the rAF batching protocol, allocates a synthetic root `<group>` once per renderer, and attaches a single dispatcher per pointer event type (`pointerdown`, `pointerup`, `pointermove`, `pointerenter`, `pointerleave`, `click`, `dblclick`, `contextmenu`, `wheel`). Throws if `canvas.getContext("2d")` is unavailable.
+Convenience wrapper. With no options, `CanvasRenderer.create()` is exactly `Renderer.create(CanvasHost)`. With `{ viewport }`, it builds a host wrapper whose `attach` threads `viewport.bounds()` through the rAF repaint closure.
 
-```ts
-import { createCanvasRenderer } from "aljabr/ui/canvas";
+`mount(fn, canvas)` calls `CanvasHost.attach(canvas)` (which throws if `canvas.getContext("2d")` is unavailable), allocates a synthetic root `<group>`, installs the rAF batching protocol, and attaches one dispatcher per pointer event type (`pointerdown`, `pointerup`, `pointermove`, `pointerenter`, `pointerleave`, `click`, `dblclick`, `contextmenu`, `wheel`).
+
+```tsx
+import { CanvasRenderer } from "aljabr/ui/canvas";
 
 const canvas = document.querySelector<HTMLCanvasElement>("#scene")!;
-const r = createCanvasRenderer(canvas);
+const r = CanvasRenderer.create();
 
 const unmount = r.mount(() => (
   <rect x={10} y={10} width={100} height={100} fill="cornflowerblue" />
-));
+), canvas);
 
 // Later — tears down listeners, disposes reactive subscriptions, clears the canvas:
 unmount();
 ```
 
-### `mount(component)` semantics
+### `mount(fn, canvas)` semantics
 
 - The reconciler runs synchronously to populate the scene graph.
-- An **initial paint** runs synchronously after the reconciler — by the time `mount` returns, the canvas has been cleared and painted.
+- An **initial paint** runs synchronously after the reconciler (via `attach.onMounted`) — by the time `mount` returns, the canvas has been cleared and painted.
 - Subsequent reactive prop updates flow through the rAF protocol: each batch of writes triggers a single `clearRect` + `paintNode` pass on the next animation frame.
-- The returned function unmounts: pointer listeners are removed, the reactive root is disposed (component owners cascade), and the canvas is cleared.
+- The returned function unmounts: pointer listeners are removed (via `attach.dispose`), the reactive root is disposed (component owners cascade), and the canvas is cleared.
 
 ### `CanvasRendererOptions`
 
@@ -99,7 +101,41 @@ interface CanvasRendererOptions {
 |---|---|
 | `viewport` | When provided, `viewport.bounds()` is read each frame and threaded into `paintNode`'s culling check. Off-screen subtrees skip their entire paint pass. Without a viewport, every element with non-empty bounds is painted unconditionally. |
 
-The rAF protocol is intentionally not exposed — author renderers that need a different scheduling discipline use `createRenderer(canvasHost, myProtocol)` from `aljabr/ui` directly and run the paint pass themselves.
+To bring your own scheduling discipline, wrap `CanvasHost.attach` with a different `protocol` (see the [DOM `RendererProtocol`](./dom.md#rendererprotocol) section for the wrapper pattern) and pass the wrapped host directly to `Renderer.create`.
+
+---
+
+## `<Canvas>` Component
+
+**Import:** `import { Canvas, type CanvasProps } from "aljabr/ui/canvas"`
+
+```tsx
+interface CanvasProps {
+  viewport?: ViewportHandle;
+  children: () => ViewNode;     // canvas scene as a function returning canvas JSX
+}
+```
+
+A renderer-agnostic Component that hosts a canvas-backed subtree inside any parent renderer. From the parent's perspective it looks like a `<canvas>` element; the Component spawns its own `CanvasRenderer.create({ viewport })` in a `mounted` callback and disposes on unmount.
+
+```tsx
+/** @jsxImportSource aljabr/ui/dom */
+import { Canvas, Viewport } from "aljabr/ui/canvas";
+
+function App() {
+  const vp = Viewport(/* canvas wired in by Component */ null!);
+  return (
+    <div class="app">
+      <header>Toolbar</header>
+      <Canvas viewport={vp}>
+        {() => <rect x={0} y={0} width={100} height={100} fill="red" />}
+      </Canvas>
+    </div>
+  );
+}
+```
+
+For escape-hatch use (Three.js, Pixi, raw 2d), the low-level `<canvas mounted={(el) => …}>` intrinsic remains available — `<Canvas>` is the high-level path.
 
 ---
 
@@ -122,18 +158,18 @@ interface ViewportHandle {
 A factory (intentionally not `useViewport` — `Viewport` is renderer-agnostic state, not a hook) that owns pan/zoom as `Signal<number>` instances and exposes the visible world-space rectangle for culling.
 
 ```tsx
-import { createCanvasRenderer, Viewport } from "aljabr/ui/canvas";
+import { CanvasRenderer, Viewport } from "aljabr/ui/canvas";
 
 const canvas = document.querySelector<HTMLCanvasElement>("#scene")!;
 const vp = Viewport(canvas);
-const r = createCanvasRenderer(canvas, { viewport: vp });
+const r = CanvasRenderer.create({ viewport: vp });
 
 r.mount(() => (
   <group x={vp.x} y={vp.y} scale={vp.scale}>
     {/* world-space content */}
     <rect x={0} y={0} width={100} height={100} fill="red" />
   </group>
-));
+), canvas);
 
 // Pan / zoom by writing the signals directly:
 vp.x.set(100);
@@ -166,20 +202,35 @@ The handle does not subscribe to canvas resize events. After resizing the underl
 
 ---
 
-## `canvasHost`
+## `CanvasHost`
 
-**Import:** `import { canvasHost } from "aljabr/ui/canvas"`
+**Import:** `import { CanvasHost } from "aljabr/ui/canvas"`
 
-The retained-mode implementation of `RendererHost<CanvasNode, CanvasElementNode>`. `createCanvasRenderer` wires it up automatically; you only reach for it directly when bringing your own protocol:
+The retained-mode implementation of `RendererHost<CanvasNode, CanvasElementNode, HTMLCanvasElement>`. `CanvasRenderer.create` wires it up automatically; you only reach for it directly when bringing your own protocol or replacing `attach`:
 
 ```ts
-import { createRenderer } from "aljabr/ui";
-import { canvasHost } from "aljabr/ui/canvas";
+import { Renderer, type RendererHost } from "aljabr/ui";
+import { CanvasHost } from "aljabr/ui/canvas";
 
-const { mount } = createRenderer(canvasHost, {
-  scheduleFlush(flush) { queueMicrotask(flush); },
-});
+const microtaskHost: typeof CanvasHost = {
+  ...CanvasHost,
+  attach(canvas) {
+    const inner = CanvasHost.attach(canvas);
+    return {
+      ...inner,
+      protocol: { scheduleFlush: (flush) => queueMicrotask(flush) },
+    };
+  },
+};
+const { mount } = Renderer.create(microtaskHost);
 ```
+
+`CanvasHost.attach(canvas)`:
+
+- builds a synthetic `<group>` root,
+- installs an rAF-backed `RendererProtocol` that clears + repaints once per flush,
+- attaches one dispatcher per pointer/wheel event type to `canvas`,
+- returns `{ root, protocol, onMounted: repaint, dispose }` — `dispose` removes the listeners and clears the canvas.
 
 ### Property mapping
 
@@ -240,7 +291,7 @@ interface CanvasBounds {
 }
 ```
 
-The variant **value** factory (`CanvasNode.Element({...})` / `CanvasNode.Text("…")`) lives at `aljabr/ui/canvas/node` — the public barrel exports the type only because `verbatimModuleSyntax: true` rejects exporting one identifier as both a type and a value through the same surface. In practice authors don't need the factory: `canvasHost.createElement` / `createText` and the JSX runtime cover all construction.
+The variant **value** factory (`CanvasNode.Element({...})` / `CanvasNode.Text("…")`) lives at `aljabr/ui/canvas/node` — the public barrel exports the type only because `verbatimModuleSyntax: true` rejects exporting one identifier as both a type and a value through the same surface. In practice authors don't need the factory: `CanvasHost.createElement` / `createText` and the JSX runtime cover all construction.
 
 ### `zeroBounds()`
 
@@ -404,7 +455,7 @@ The `on` prefix is intentional — it's what makes the reconciler treat the func
 
 ## See also
 
-- [DOM renderer reference](./dom.md) — the shared core API (`view`, `createRenderer`, `RendererHost`, `RendererProtocol`, `ViewNode`, function components, reactive props)
+- [DOM renderer reference](./dom.md) — the shared core API (`view`, `Renderer.create`, `RendererHost`, `RendererProtocol`, `ViewNode`, function components, reactive props)
 - [Canvas guide](../../guides/ui/canvas.md) — narrative walkthrough from primitives to interactive scenes
 - [Canvas internals](../../guides/advanced/canvas-internals.md) — paint pass dispatch, hit-test inverse-transform walk, implicit text wrapping
 - [Renderer Protocol guide](../../guides/advanced/renderer-protocol.md) — bringing your own batching scheduler

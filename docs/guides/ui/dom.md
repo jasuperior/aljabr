@@ -30,13 +30,15 @@ If you're not using JSX, everything in this guide works identically with the dir
 
 ## Part 1: Static tree
 
-The entry point for the UI layer is `createRenderer`. Pass it a host (the DOM host for browser apps) and you get back a `mount` function.
+The entry point for the UI layer is `Renderer.create`. Pass it a host (the DOM host for browser apps) and you get back a `mount` function. The `DomRenderer.create()` convenience wrapper is equivalent and a touch shorter.
 
 ```ts
-import { createRenderer, view } from "aljabr/ui";
-import { domHost } from "aljabr/ui/dom";
+import { Renderer, view } from "aljabr/ui";
+import { DomHost, DomRenderer } from "aljabr/ui/dom";
 
-const { mount } = createRenderer(domHost);
+const { mount } = Renderer.create(DomHost);
+// or
+const { mount } = DomRenderer.create();
 ```
 
 `mount` takes a factory function and a container element. The factory returns a `ViewNode` — the description of what to render.
@@ -300,7 +302,7 @@ The primary use case is mounting a secondary renderer (e.g. the canvas renderer)
 
 ```tsx
 import { defer } from "aljabr/prelude";
-import { createCanvasRenderer } from "aljabr/ui/canvas";
+import { CanvasRenderer } from "aljabr/ui/canvas";
 
 function Diagram() {
     return (
@@ -308,14 +310,22 @@ function Diagram() {
             width={800}
             height={500}
             mounted={(el) => {
-                const renderer = createCanvasRenderer(el as HTMLCanvasElement);
-                renderer.mount(() => <Scene />);
-                defer(() => renderer.dispose());
+                const r = CanvasRenderer.create();
+                const unmount = r.mount(() => <Scene />, el as HTMLCanvasElement);
+                defer(unmount);
             }}
         />
     );
 }
 ```
+
+For the common case, prefer the `<Canvas>` Component (`import { Canvas } from "aljabr/ui/canvas"`), which encapsulates this pattern:
+
+```tsx
+<Canvas viewport={vp}>{() => <Scene />}</Canvas>
+```
+
+`<canvas mounted=…>` is the right path when you need to integrate a non-aljabr renderer (Three.js, Pixi, raw 2d).
 
 `mounted` is stripped before DOM attribute application — it never appears as an HTML attribute. The scope is element-scoped: when the element is removed from the DOM, all `defer`'d callbacks fire in LIFO order.
 
@@ -390,11 +400,11 @@ tasks.splice("list", 1, 1);
 A complete task app with add, toggle, and filter — all reactive, all component-scoped:
 
 ```ts
-import { createRenderer, view, Fragment } from "aljabr/ui";
-import { domHost } from "aljabr/ui/dom";
+import { Renderer, view, Fragment } from "aljabr/ui";
+import { DomHost } from "aljabr/ui/dom";
 import { Store, Signal } from "aljabr/prelude";
 
-const { mount } = createRenderer(domHost);
+const { mount } = Renderer.create(DomHost);
 
 type Task = { id: number; text: string; done: boolean };
 let nextId = 1;
@@ -484,17 +494,24 @@ mount(() => view(App, {}), document.getElementById("root")!);
 
 By default, every reactive update flushes synchronously — a signal write is immediately reflected in the DOM. This is fine for most apps, but for high-frequency updates (rapid user input, animation ticks, bulk data loads) it can cause unnecessary layout thrash.
 
-Pass a `RendererProtocol` to `createRenderer` to defer and coalesce updates:
+Wrap `DomHost.attach` to return a `RendererProtocol` that defers and coalesces updates:
 
 ```ts
-import { createRenderer } from "aljabr/ui";
-import { domHost } from "aljabr/ui/dom";
+import { Renderer, type RendererHost } from "aljabr/ui";
+import { DomHost } from "aljabr/ui/dom";
 
-const { mount } = createRenderer(domHost, {
-  scheduleFlush(flush) {
-    requestAnimationFrame(flush);
+const rafHost: RendererHost<Node, Element> = {
+  ...DomHost,
+  attach(container) {
+    const inner = DomHost.attach(container);
+    return {
+      ...inner,
+      protocol: { scheduleFlush: (flush) => requestAnimationFrame(flush) },
+    };
   },
-});
+};
+
+const { mount } = Renderer.create(rafHost);
 ```
 
 Now every reactive update that fires within a single animation frame is queued. The renderer calls `scheduleFlush` once and applies all pending DOM mutations together on the next frame — one layout pass instead of many.
@@ -530,7 +547,7 @@ A few implementation details worth knowing as a consumer:
 
 ## See also
 
-- [API Reference: `aljabr/ui` (DOM renderer)](../../api/ui/dom.md) — full reference for `view`, `createRenderer`, `RendererHost`, `domHost`, JSX
+- [API Reference: `aljabr/ui` (DOM renderer)](../../api/ui/dom.md) — full reference for `view`, `Renderer.create`, `RendererHost`, `DomHost`, JSX
 - [Guide: Canvas renderer](./canvas.md) — sibling guide for retained-mode 2D canvas authoring
 - [Reactive UI patterns](../advanced/reactive-ui.md) — deep dive into `Store`, `Derived`, `AsyncDerived` composition for complex state
 - [Resource Lifetime](../advanced/resource-lifetime.md) — `Scope`, `Resource`, and bracket patterns for cleanup

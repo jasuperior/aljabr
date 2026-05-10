@@ -36,8 +36,8 @@ TypeScript will automatically import `jsx` and `Fragment` from `aljabr/ui/dom/js
 The UI layer has three layers:
 
 1. **`ViewNode`** — a typed description of what to render (element, component, fragment, text). Think of it as a lightweight, single-use instruction, not a persistent tree.
-2. **`createRenderer(host)`** — binds a `ViewNode` tree to a rendering target. Returns a `mount` function.
-3. **`RendererHost`** — the interface a rendering target implements. The included `domHost` targets the browser DOM; other targets (canvas, SSR, terminal) implement the same contract.
+2. **`Renderer.create(host)`** — binds a `ViewNode` tree to a rendering target. Returns `{ view, mount }`; `mount(fn, container)` adopts the container through `host.attach(container)` and returns an unmount function.
+3. **`RendererHost`** — the interface a rendering target implements. The included `DomHost` targets the browser DOM; other targets (canvas, prose, SSR, terminal) implement the same contract — including the new `attach(container)` method that bridges the user-supplied container to the host's internal root.
 
 Reactivity is provided by the signal layer. There is no diffing: static structure is rendered once; dynamic regions use function children (`() => Child`) as the boundary between the static tree and the reactive graph.
 
@@ -196,31 +196,30 @@ type ViewNode =
 
 ---
 
-## `createRenderer(host, protocol?)`
+## `Renderer.create(host)`
 
-**Import:** `import { createRenderer } from "aljabr/ui"`
+**Import:** `import { Renderer } from "aljabr/ui"`
 
-Binds the reconciler to a `RendererHost`. Returns `{ view, mount }`.
+Binds the reconciler to a `RendererHost`. Returns `{ view, mount }`. The optional `RendererProtocol` is no longer a positional argument — protocols come from the host's `attach()` (canvas's rAF protocol is wired this way).
 
 ```ts
-function createRenderer<N, E extends N>(
-  host: RendererHost<N, E>,
-  protocol?: RendererProtocol,
+function create<N, E extends N, Container>(
+  host: RendererHost<N, E, Container>,
 ): {
   view: typeof view;
-  mount: (fn: () => ViewNode, container: E) => () => void;
+  mount: (fn: () => ViewNode, container: Container) => () => void;
 }
 ```
 
 ### `mount(fn, container)`
 
-Renders the `ViewNode` returned by `fn` into `container`. Returns an unmount function that removes all nodes and disposes all reactive subscriptions.
+Calls `host.attach(container)` to obtain the internal root element, an optional batching protocol, and a per-mount disposer. The reconciler then mounts `fn()` into the root, coalescing updates through the protocol when one is supplied. Returns an unmount function that disposes reactive subscriptions and invokes the host's `dispose`.
 
 ```ts
-import { createRenderer, view } from "aljabr/ui";
-import { domHost } from "aljabr/ui/dom";
+import { Renderer, view } from "aljabr/ui";
+import { DomHost } from "aljabr/ui/dom";
 
-const { mount } = createRenderer(domHost);
+const { mount } = Renderer.create(DomHost);
 
 const unmount = mount(
   () => view("h1", null, "Hello world"),
@@ -231,16 +230,32 @@ const unmount = mount(
 unmount();
 ```
 
+### Convenience wrappers
+
+Each concrete renderer ships a thin static-method wrapper that's equivalent to `Renderer.create(<host>)`:
+
+```ts
+import { DomRenderer }    from "aljabr/ui/dom";
+import { CanvasRenderer } from "aljabr/ui/canvas";
+import { ProseRenderer }  from "aljabr/ui/prose";
+
+DomRenderer.create()                     // ≡ Renderer.create(DomHost)
+CanvasRenderer.create({ viewport? })     // viewport-aware host wrapper
+ProseRenderer.create({ embeds? })        // ProseHost.create({ embeds })
+```
+
+Use the wrapper when you don't need to touch the host directly; reach for `Renderer.create(host)` to plug in a custom host or a host wrapper.
+
 ---
 
-## `RendererHost<N, E>`
+## `RendererHost<N, E, Container>`
 
 **Import:** `import type { RendererHost } from "aljabr/ui"`
 
-The contract every rendering target must implement. `N` is the base node type; `E` extends `N` and represents element nodes.
+The contract every rendering target must implement. `N` is the base node type; `E` extends `N` and represents element nodes; `Container` is the user-facing surface passed to `mount` (defaults to `E` when the host's element type *is* the container, e.g. DOM and prose; canvas overrides it to `HTMLCanvasElement`).
 
 ```ts
-interface RendererHost<N, E extends N> {
+interface RendererHost<N, E extends N, Container = E> {
   createElement(tag: string): E;
   createText(text: string): N;
   insert(parent: E, child: N, anchor?: N | null): void;
@@ -249,6 +264,13 @@ interface RendererHost<N, E extends N> {
   setText(node: N, text: string): void;
   parentNode(node: N): E | null;
   nextSibling(node: N): N | null;
+
+  attach(container: Container): {
+    root: E;
+    protocol?: RendererProtocol;
+    onMounted?: () => void;
+    dispose: () => void;
+  };
 
   // Optional lifecycle hooks
   onMount?(el: E): void;
@@ -269,9 +291,19 @@ interface RendererHost<N, E extends N> {
 | `setText(node, text)` | Update a text node's content in place |
 | `parentNode(node)` | Return the parent element, or `null` |
 | `nextSibling(node)` | Return the next sibling, or `null` |
+| `attach(container)` | Adopt the user-supplied container; return `{ root, protocol?, onMounted?, dispose }` |
 | `onMount?(el)` | Called after an element is inserted |
 | `onUnmount?(el)` | Called before an element is removed |
 | `onUpdate?(el)` | Called after a property is updated |
+
+### `attach(container)` semantics
+
+`attach` runs once per `mount` call. The return record is consumed by the renderer:
+
+- `root` — the host's internal element the reconciler mounts into. For DOM and prose, this is typically `container` itself (identity). For canvas, the host builds a synthetic `<group>` root.
+- `protocol` — optional `RendererProtocol`. When present, reactive updates coalesce through `scheduleFlush`. Canvas supplies a `requestAnimationFrame`-backed protocol here.
+- `onMounted` — optional callback run synchronously after the initial reconciliation. Canvas paints its first frame here.
+- `dispose` — teardown chained into the `mount`-returned unmount. Canvas removes pointer listeners and clears the canvas; DOM is a no-op.
 
 ### `setProperty` convention
 
@@ -283,7 +315,7 @@ Event handlers (`on*` props) are passed as-is and never treated as reactive valu
 
 **Import:** `import type { RendererProtocol } from "aljabr/ui"`
 
-Optional batching escape hatch. When provided to `createRenderer`, the renderer defers reactive updates by calling `scheduleFlush` instead of applying them synchronously. Multiple writes that arrive before the next flush are coalesced — `scheduleFlush` is called once per pending batch, not once per write.
+Optional batching escape hatch returned from `host.attach(container)`. When supplied, the renderer defers reactive updates by calling `scheduleFlush` instead of applying them synchronously. Multiple writes that arrive before the next flush are coalesced — `scheduleFlush` is called once per pending batch, not once per write.
 
 ```ts
 interface RendererProtocol {
@@ -291,44 +323,39 @@ interface RendererProtocol {
 }
 ```
 
-Without a protocol, updates flush synchronously — the default for most applications.
+Without a protocol, updates flush synchronously — the default for `DomHost` and `ProseHost`. Custom hosts return one from `attach` to opt into batching.
 
-### rAF batching
+### Custom batching via a host wrapper
 
-```ts
-import { createRenderer } from "aljabr/ui";
-import { domHost } from "aljabr/ui/dom";
-
-const { mount } = createRenderer(domHost, {
-  scheduleFlush(flush) {
-    requestAnimationFrame(flush);
-  },
-});
-```
-
-All signal writes within a frame are batched into a single DOM pass on the next animation frame.
-
-### Microtask batching
+The protocol is no longer a positional argument to `Renderer.create`. To plug in a different scheduler, wrap a host's `attach`:
 
 ```ts
-const { mount } = createRenderer(domHost, {
-  scheduleFlush(flush) {
-    queueMicrotask(flush);
+import { Renderer, type RendererHost } from "aljabr/ui";
+import { DomHost } from "aljabr/ui/dom";
+
+const microtaskHost: RendererHost<Node, Element> = {
+  ...DomHost,
+  attach(container) {
+    const inner = DomHost.attach(container);
+    return {
+      ...inner,
+      protocol: { scheduleFlush: (flush) => queueMicrotask(flush) },
+    };
   },
-});
+};
+
+const { mount } = Renderer.create(microtaskHost);
 ```
 
-Defers the flush to the end of the current microtask queue — finer-grained than rAF but still avoids multiple synchronous DOM writes from a single event handler.
-
-See the [Renderer Protocol guide](../../guides/advanced/renderer-protocol.md) for a deeper walkthrough.
+Canvas's built-in `attach` already wires a `requestAnimationFrame`-backed protocol; see [Canvas](./canvas.md) for that pre-wired form. The [Renderer Protocol guide](../../guides/advanced/renderer-protocol.md) walks the wrapper pattern in depth.
 
 ---
 
-## `domHost`
+## `DomHost`
 
-**Import:** `import { domHost } from "aljabr/ui/dom"`
+**Import:** `import { DomHost } from "aljabr/ui/dom"`
 
-The production DOM implementation of `RendererHost<Node, Element>`. Pass it to `createRenderer` to target the browser DOM.
+The production DOM implementation of `RendererHost<Node, Element>`. Pass it to `Renderer.create` (or use `DomRenderer.create()` as a convenience) to target the browser DOM. `DomHost.attach(el)` is the identity: `{ root: el, dispose: () => {} }`.
 
 **Property mapping:**
 
@@ -341,6 +368,15 @@ The production DOM implementation of `RendererHost<Node, Element>`. Pass it to `
 | Known IDL property (`value`, `checked`, `disabled`, …) | Direct property assignment |
 | Anything else | `setAttribute(key, String(value))` |
 | Any prop set to `null` / `undefined` | `removeAttribute(key)` |
+
+### `DomRenderer.create()`
+
+```ts
+import { DomRenderer } from "aljabr/ui/dom";
+const { mount } = DomRenderer.create(); // ≡ Renderer.create(DomHost)
+```
+
+A thin static-method wrapper that keeps the `<Type>Renderer.create()` shape consistent across DOM, canvas, and prose. Returns the same `{ view, mount }` pair `Renderer.create(DomHost)` returns.
 
 ---
 
@@ -362,9 +398,9 @@ function Counter({ initial }: CounterProps) {
 mount(() => view(Counter, { initial: 0 }), document.body);
 ```
 
-### Lifecycle via `Scope`
+### Lifecycle via `Scope` and `mounted`
 
-Components do not have explicit lifecycle methods. Cleanup is handled by the owner tree: any `Signal`, `Derived`, or `Scope` created inside a component is owned by that component's computation owner and disposed when the component unmounts.
+Components do not have explicit lifecycle methods. Cleanup is handled by the owner tree: any `Signal`, `Derived`, or `Scope` created inside a component is owned by that component's computation owner and disposed when the component unmounts. For host-element-scoped lifecycle (e.g. attaching a DOM listener that needs the actual element), pass a `mounted={(el) => …}` prop on a host element. The callback runs inside an element-scoped `Scope` — `defer(...)` registered inside it runs when that element is removed.
 
 ```ts
 function Timer() {
@@ -451,7 +487,7 @@ to make the whole component reactive.
 
 ## JSX reference
 
-With `jsxImportSource: "aljabr/ui"` in your `tsconfig.json`, JSX compiles to identical `view()` calls:
+With `jsxImportSource: "aljabr/ui/dom"` in your `tsconfig.json`, JSX compiles to identical `view()` calls:
 
 ```tsx
 // JSX

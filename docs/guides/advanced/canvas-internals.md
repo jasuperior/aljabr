@@ -75,7 +75,7 @@ Why this pattern over a JS `switch`: it's the library's expressive form. Future 
 
 ## The host
 
-`canvasHost` (`src/ui/canvas/host.ts`) implements `RendererHost<CanvasNode, CanvasElementNode>`. Most methods are straightforward Element / Text dispatch — but two pieces deserve a look.
+`CanvasHost` (`src/ui/canvas/host.ts`) implements `RendererHost<CanvasNode, CanvasElementNode, HTMLCanvasElement>`. Most methods are straightforward Element / Text dispatch — but two pieces deserve a look.
 
 ### `recomputeBounds(node)` — eager geometry → bounds
 
@@ -210,7 +210,7 @@ This will be reconsidered in v0.3.9 once `<path>` and `<text>` grow real bounds 
 }
 ```
 
-Hardcoded — short and unambiguous, no string-mangling logic. Adding a new event type is one map entry plus a listener attach in `createCanvasRenderer`.
+Hardcoded — short and unambiguous, no string-mangling logic. Adding a new event type is one map entry plus a listener attach in `CanvasHost.attach` (via `makeCanvasAttach`).
 
 ### Why `onHitTest` is named `on*`
 
@@ -220,13 +220,13 @@ The `onHitTest` naming co-opts that reconciler rule. The host's `setProperty` re
 
 ### Listener attachment lifecycle
 
-`createCanvasRenderer.mount` attaches one dispatcher per event type to the canvas DOM element (9 listeners total). The unmount cleanup tears all 9 down before disposing the reactive root and clearing the canvas. Lifecycle is symmetric and tested by listener-count assertions in `event-integration.test.ts`.
+`CanvasHost.attach(canvas)` (via `makeCanvasAttach`) attaches one dispatcher per event type to the canvas DOM element (9 listeners total). The returned `dispose` callback tears all 9 down before clearing the canvas; the renderer chains it into the `mount`-returned unmount, after disposing the reactive root. Lifecycle is symmetric and tested by listener-count assertions in `event-integration.test.ts`.
 
 ---
 
 ## The rAF protocol
 
-`createCanvasRenderer` constructs an internal `RendererProtocol`:
+`CanvasHost.attach` constructs an internal `RendererProtocol` and returns it on the `attach` record:
 
 ```ts
 const protocol: RendererProtocol = {
@@ -239,9 +239,9 @@ const protocol: RendererProtocol = {
 };
 ```
 
-Single rAF per pending batch — multiple `Signal.set` calls within the same tick coalesce into one flush + one repaint. The initial paint after `mount` runs synchronously (the reconciler mounts synchronously and we paint at the end of the call) so authors don't have to wait a frame to see anything.
+Single rAF per pending batch — multiple `Signal.set` calls within the same tick coalesce into one flush + one repaint. The initial paint runs through `attach.onMounted`, which `Renderer.create` invokes synchronously after the first reconciliation completes — so authors don't have to wait a frame to see the first frame.
 
-The protocol is intentionally **not** exported from the canvas barrel. Authors who need a different scheduling discipline construct their own protocol and pass it to `createRenderer(canvasHost, myProtocol)` directly — `aljabr/ui` is the right level for protocol composition.
+The protocol is intentionally **not** exported from the canvas barrel. Authors who need a different scheduling discipline build a host wrapper around `CanvasHost.attach` (or `makeCanvasAttach`) that returns a different `protocol`, then pass the wrapper to `Renderer.create` directly — `aljabr/ui` is the right level for protocol composition.
 
 ---
 
@@ -250,17 +250,18 @@ The protocol is intentionally **not** exported from the canvas barrel. Authors w
 | File | Role |
 |---|---|
 | `src/ui/canvas/node.ts` | `CanvasNode` union + variant factory + types + `zeroBounds()` |
-| `src/ui/canvas/host.ts` | `canvasHost` implementing `RendererHost<CanvasNode, CanvasElementNode>` + the implicit-wrap WeakMaps + `recomputeBounds` |
+| `src/ui/canvas/host.ts` | `CanvasHost` implementing `RendererHost<CanvasNode, CanvasElementNode>` + the implicit-wrap WeakMaps + `recomputeBounds` |
 | `src/ui/canvas/paint.ts` | `paintNode` + `paintShape` per-tag `when` arms + culling + zIndex sort + transform composition |
 | `src/ui/canvas/paint-context.ts` | `PaintContext` reducer + `deriveContext` + `normalizePadding` + root defaults |
 | `src/ui/canvas/hit-test.ts` | `hitTest`, `bubbleEvent`, `EVENT_HANDLER_MAP`, `CanvasSyntheticEvent`, affine matrix math |
 | `src/ui/canvas/viewport.ts` | `Viewport(canvas)` factory + `ViewportHandle` |
-| `src/ui/canvas/renderer.ts` | `createCanvasRenderer` — rAF protocol + listener wiring + initial paint + unmount cleanup |
+| `src/ui/canvas/renderer.ts` | `CanvasRenderer.create({ viewport? })` — thin wrapper over `Renderer.create(CanvasHost)`; with `viewport`, builds a host wrapper whose `attach` threads `viewport.bounds()` into the rAF repaint closure |
 | `src/ui/canvas/jsx-runtime.ts` | `jsx` / `jsxs` / `jsxDEV` factory + `JSX.IntrinsicElements` namespace + per-tag prop interfaces |
 | `src/ui/canvas/jsx-dev-runtime.ts` | Re-exports from `jsx-runtime` |
-| `src/ui/canvas/index.ts` | Public barrel (types + `canvasHost` + `Viewport` + `createCanvasRenderer` + `CanvasSyntheticEvent`) |
+| `src/ui/canvas/component.tsx` | `<Canvas>` Component — drops a `CanvasRenderer.create({ viewport })` mount inside any parent renderer's tree |
+| `src/ui/canvas/index.ts` | Public barrel (types + `CanvasHost` + `Viewport` + `CanvasRenderer` + `Canvas` + `CanvasSyntheticEvent`) |
 
-`paint.ts`, `hit-test.ts`, and `paint-context.ts` are intentionally **not** re-exported from the barrel — they're internal compositions that `createCanvasRenderer` consumes. Custom-protocol authors who want to build their own `createRenderer(canvasHost, …)` use the public host + viewport surface and run paint themselves; they don't currently get a packaged `paintNode`. That's a deliberate scoping decision and could be revisited if a use case appears.
+`paint.ts`, `hit-test.ts`, and `paint-context.ts` are intentionally **not** re-exported from the barrel — they're internal compositions that `CanvasHost` consumes. Custom-protocol authors who want to build their own `Renderer.create(CanvasHostWrapper)` use the public host + viewport surface and run paint themselves; they don't currently get a packaged `paintNode`. That's a deliberate scoping decision and could be revisited if a use case appears.
 
 ---
 

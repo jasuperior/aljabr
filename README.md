@@ -21,9 +21,10 @@ aljabr ships independent entry points. Use what you need; ignore what you don't.
 | `aljabr/prelude`   | Result, Option, Validation, Signal, Derived, Store, List, DerivedArray, Dispatcher, Scope, Resource, watch, Effect |
 | `aljabr/schema`    | Type-safe decode/encode pipeline for external data; errors surface as a `Validation`                         |
 | `aljabr/signals`   | SolidJS-style convenience layer over the reactive primitives                                                 |
-| `aljabr/ui`        | Reactive UI layer — JSX, function components, pluggable renderer host                                        |
-| `aljabr/ui/dom`    | DOM rendering target (`domHost`) for browser apps                                                            |
-| `aljabr/ui/canvas` | Retained-mode 2D canvas renderer (`createCanvasRenderer`, `Viewport`, `canvasHost`) for diagramming / dataviz |
+| `aljabr/ui`        | Reactive UI layer — JSX, function components, `Renderer.create`, the pluggable `RendererHost` contract       |
+| `aljabr/ui/dom`    | DOM rendering target (`DomHost`, `DomRenderer.create()`) for browser apps                                    |
+| `aljabr/ui/canvas` | Retained-mode 2D canvas renderer (`CanvasRenderer.create`, `<Canvas>` Component, `Viewport`, `CanvasHost`)   |
+| `aljabr/ui/prose`  | Contenteditable prose editor (`<Prose>` Component, `ProseRenderer`, document model, commands, embed registry, `parse.jsx`) |
 
 See the [API Reference](#api-reference) below for the full per-module surface, and the [Guides](#guides) for narrative docs.
 
@@ -34,11 +35,11 @@ See the [API Reference](#api-reference) below for the full per-module surface, a
 A small reactive shape editor — touches unions, exhaustive matching, reactive state, and the UI layer in one go:
 
 ```tsx
-/** @jsxImportSource aljabr/ui */
+/** @jsxImportSource aljabr/ui/dom */
 import { union, match, type Union } from "aljabr";
 import { Store, Derived } from "aljabr/prelude";
-import { createRenderer } from "aljabr/ui";
-import { domHost } from "aljabr/ui/dom";
+import { Renderer } from "aljabr/ui";
+import { DomHost } from "aljabr/ui/dom";
 
 const Shape = union({
     Circle: (id: number, radius: number) => ({ id, radius }),
@@ -59,7 +60,7 @@ const rows = shapes.map(
     { key: s => s.id },
 );
 
-const { mount } = createRenderer(domHost);
+const { mount } = Renderer.create(DomHost);
 mount(() =>
     <div>
         <ul>{rows}</ul>
@@ -148,17 +149,24 @@ npm install aljabr
 ### UI (`aljabr/ui`)
 
 - [UI overview](docs/api/ui/index.md) — choosing a renderer, shared core vs. per-renderer surfaces
-- **DOM renderer (`aljabr/ui/dom`)**
+- **Core (`aljabr/ui`)**
     - [`view()` / `Fragment` / `ViewNode`](docs/api/ui/dom.md) — element, component, and fragment factories
-    - [`createRenderer()` / `mount()`](docs/api/ui/dom.md#createrendererhost-protocol) — renderer factory and mounting
-    - [`RendererHost<N, E>`](docs/api/ui/dom.md#rendererhost) — contract for custom rendering targets
-    - [`domHost`](docs/api/ui/dom.md#domhost) — production DOM implementation
+    - [`Renderer.create(host)`](docs/api/ui/dom.md#renderercreatehost) — bind the reconciler to a host
+    - [`RendererHost<N, E, Container>`](docs/api/ui/dom.md#rendererhost) — contract for custom rendering targets, including `attach(container)`
+- **DOM renderer (`aljabr/ui/dom`)**
+    - [`DomRenderer.create()` / `DomHost`](docs/api/ui/dom.md#domhost) — convenience wrapper and production DOM implementation
     - [JSX reference](docs/api/ui/dom.md#jsx-reference) — tsconfig setup and JSX/`view()` equivalence
 - **Canvas renderer (`aljabr/ui/canvas`)**
-    - [`createCanvasRenderer()` / `Viewport()` / `canvasHost`](docs/api/ui/canvas.md) — pre-wired renderer, pan/zoom factory, retained-mode host
+    - [`CanvasRenderer.create()` / `<Canvas>` / `Viewport()` / `CanvasHost`](docs/api/ui/canvas.md) — convenience wrapper, Component, pan/zoom factory, retained-mode host
     - [`CanvasNode` union + intrinsic elements](docs/api/ui/canvas.md#the-canvasnode-union) — `rect`, `circle`, `ellipse`, `line`, `path`, `group`, `text`
     - [Inherited paint props + text layout](docs/api/ui/canvas.md#inherited-paint-props) — `<group>` context, layout-driven labels
     - [Events + `onHitTest`](docs/api/ui/canvas.md#events) — bubbling synthetic events, pixel-perfect override
+- **Prose renderer (`aljabr/ui/prose`)**
+    - [Prose overview](docs/api/prose/index.md) — `<Prose>` Component, `ProseRenderer`, embed registry, end-to-end editing pipeline
+    - [Document model](docs/api/prose/document-model.md) — `ProseNode` primitives, `MarkSet`, lists, embeds, placement validation
+    - [Commands + `defaultApply`](docs/api/prose/commands.md) — closed command vocabulary, inverse-producing apply, `proseProtocol`
+    - [`EditorRange` / `RangePoint`](docs/api/prose/editor-range.md) — cursor / selection union with stable node IDs and logical line/col
+    - [`parse.jsx`](docs/api/prose/parse.md) — registry-aware JSX → `DocumentState` parser
 
 ### Prelude (`aljabr/prelude`)
 
@@ -188,6 +196,7 @@ npm install aljabr
 - [Building UI with aljabr](docs/guides/ui/index.md)
     - [DOM renderer](docs/guides/ui/dom.md) — static tree → reactive regions → components → lifecycle → reactive lists
     - [Canvas renderer](docs/guides/ui/canvas.md) — primitives, `Viewport` pan/zoom, layout-driven labels, events
+    - [Prose editor](docs/guides/ui/prose.md) — `<Prose>` Component, document model, commands & undo, embeds, parsing static JSX
 - [Getting Started](docs/guides/getting-started.md) — first union through real-world patterns
 - [Union Patterns](docs/guides/union-patterns.md) — `is.*`, `select()`, destructuring, guards
 - [Schema](docs/guides/schema.md) — decoding external data, error paths, object modes, variant mapping
